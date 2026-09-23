@@ -1,0 +1,14 @@
+[package]
+name = "defiance-plugin-example"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+defiance-api = { path = "../../crates/api" }
+
+[build-dependencies]
+defiance-build-support = { path = "../../crates/build-support" }

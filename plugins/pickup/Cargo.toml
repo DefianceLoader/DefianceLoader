@@ -1,0 +1,18 @@
+[package]
+name = "defiance-plugin-pickup"
+version = "0.3.0"
+license = "MPL-2.0"
+edition = "2021"
+[lib]
+name = "defiance_plugin_feature_pickup"
+crate-type = ["cdylib"]
+[dependencies]
+defiance-api = { path = "../../crates/api" }
+defiance-feature-sdk = { path = "../../crates/feature-sdk" }
+[build-dependencies]
+defiance-build-support = { path = "../../crates/build-support" }
+
+[features]
+default = ["rust-chooser"]
+rust-chooser = []
+parity-test = ["rust-chooser"]

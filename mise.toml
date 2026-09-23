@@ -1,0 +1,310 @@
+# Tools and one-command runs for the patch, from the repository root.
+#
+#   mise run setup    once: the Python libraries the tools use, into .venv
+#   mise run inject   assemble every patch, build the injector, then wait for
+#                     the game and patch it
+#   mise run test     assemble, build, run every native test and the injector's
+#                     self test
+#   mise run probe    read the selection trace from the running game
+#   mise run fmt      format every Rust workspace (default rustfmt); test and
+#                     loader-infra-test fail on unformatted code
+#   mise run bump     list component versions; `mise run bump patch loader`,
+#                     `mise run bump minor builtins`, `mise run bump check`
+#                     (tools/bump.py)
+#   mise run watch    rebuild what the tests build on every save burst, ahead
+#                     of time; results in out/watch/status.json
+#   mise run test-quick   format, Rust tests of every workspace, versions,
+#                     layouts and variants; minutes, not the full suite
+#
+# The injector embeds out/payload*.bin and .json when it is compiled, and out/
+# is not tracked, so a checkout leaves whatever was assembled last. `build`
+# therefore always runs `assemble` first, which reassembles unless its inputs
+# are unchanged since the last run (tools/stamp.py); nothing builds the
+# injector around a stale payload.
+
+[tools]
+python = "3.12"
+# rust-analyzer for editors; clippy for `bacon clippy`.
+rust = { version = "stable", components = "rust-analyzer,clippy,rustfmt" }
+# A background checker: `bacon` rebuilds on save (see bacon.toml).
+"cargo:bacon" = "3.25.0"
+# Rebuilds ahead of time on every save burst: `mise run watch` (tools/watch.py).
+"aqua:watchexec/watchexec" = "2.7.3"
+# The JDK Ghidra runs on (see the http:ghidra entry below).
+java = "21"
+
+# Ghidra, to read the game as decompiled C. It is an
+# application, not a single binary mise can fetch by name, so the http backend
+# takes the release zip directly. The URL names a build date, so it
+# is fixed for this version and the checksum pins it; changing the version means
+# a new URL. It needs the JDK above, which mise puts on PATH when it runs.
+[tools."http:ghidra"]
+version = "12.1.3"
+url = "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.3_build/ghidra_12.1.3_PUBLIC_20260817.zip"
+checksum = "sha256:93a5d11a9ad510622acaaf908c556a7b9b764d338e78a7567f3689bf5081fd54"
+strip_components = 1
+bin_path = "support"
+
+[env]
+_.python.venv = { path = ".venv", create = true }
+
+[tasks.setup]
+description = "Install the Python libraries the tools use into .venv"
+run = "python -m pip install capstone keystone-engine pefile"
+
+[tasks.assemble]
+description = "Assemble every patch: the file patch and both injector payloads (skipped when its inputs are unchanged)"
+# tools/stamp.py reruns build.py, payload.py and icon.py only when their modules,
+# patch/, tools/layouts or the reference DLLs changed; DEFIANCE_NO_STAMP=1 forces it.
+run = "python tools/stamp.py assemble"
+
+[tasks.variants]
+description = "Assemble and resolve the per-build payloads named in tools/layouts (needs those builds' DLLs)"
+run = [
+  "python tools/payload.py --layout gog-2026-09-14",
+  "python tools/icon.py --layout gog-2026-09-14",
+  "python tools/variant.py tools/layouts/gog-2026-09-14.json bin/gog/logic-updated.dll bin/gog/game-updated.dll",
+  "python tools/payload.py --layout steam-2026-09-22",
+  "python tools/icon.py --layout steam-2026-09-22",
+  "python tools/variant.py tools/layouts/steam-2026-09-22.json bin/steam/logic-updated.dll bin/steam/game-updated.dll",
+]
+
+# Six Cargo workspaces: the loader's, the three standalone plugins', the service
+# examples' and the crash test plugin's. The generators that write Rust
+# (tools/*_bindings.py, ammo_menu_sites.py, proxy.py) format their output too.
+[tasks.fmt]
+description = "Format every Rust workspace with default rustfmt"
+run = [
+  "cargo fmt --all --manifest-path Cargo.toml",
+  "cargo fmt --all --manifest-path plugins/regroup/Cargo.toml",
+  "cargo fmt --all --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
+  "cargo fmt --all --manifest-path plugins/squad-management-scroll/Cargo.toml",
+  "cargo fmt --all --manifest-path examples/services/Cargo.toml",
+  "cargo fmt --all --manifest-path tools/crash-plugin/Cargo.toml",
+]
+
+[tasks.fmt-check]
+description = "Fail if any Rust workspace is not rustfmt-formatted (mise run fmt fixes it)"
+run = [
+  "cargo fmt --all --check --manifest-path Cargo.toml",
+  "cargo fmt --all --check --manifest-path plugins/regroup/Cargo.toml",
+  "cargo fmt --all --check --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
+  "cargo fmt --all --check --manifest-path plugins/squad-management-scroll/Cargo.toml",
+  "cargo fmt --all --check --manifest-path examples/services/Cargo.toml",
+  "cargo fmt --all --check --manifest-path tools/crash-plugin/Cargo.toml",
+]
+
+# A component's version is in its Cargo.toml, its lockfile and the manifest the
+# loader checks it against (the built-in table or its .plugin.json); this
+# changes them together. Arguments pass through: `mise run bump patch loader`.
+[tasks.bump]
+description = "List component versions, or bump them together: mise run bump <major|minor|patch|X.Y.Z> <component...> (see tools/bump.py)"
+run = "python tools/bump.py"
+
+# Keep this running in a terminal while working: after each burst of saves it
+# runs the builds the test tasks run (tools/watch.py), so they start warm.
+# watchexec restarts a pass when files change again mid-build.
+[tasks.watch]
+description = "Rebuild ahead of time on every save burst; status in out/watch/status.json"
+run = "watchexec --shell=none --restart --debounce 3s --watch crates --watch plugins --watch patch --watch tools --watch injector --watch Cargo.toml --exts rs,toml,asm,py,json --ignore **/target/** --ignore **/__pycache__/** -- python tools/watch.py"
+raw = true
+
+# Rust unit tests of every workspace, without the payload-dependent native
+# suites. Pair it with `watch`, which has already built the test binaries.
+[tasks.test-rust]
+description = "Run the Rust tests of the main workspace and the three standalone plugin workspaces"
+depends = ["assemble"]
+run = [
+  "cargo test --workspace",
+  "cargo test --manifest-path plugins/regroup/Cargo.toml",
+  "cargo test --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
+  "cargo test --manifest-path plugins/squad-management-scroll/Cargo.toml",
+]
+
+[tasks.test-quick]
+description = "Format check, every workspace's Rust tests, versions, layouts and variants (cached); run the full test before committing"
+depends = ["fmt-check", "test-rust"]
+run = [
+  "python tools/test_versions.py",
+  "python tools/test_layout.py",
+  "python tools/test_variant.py",
+]
+
+[tasks.build]
+description = "Build the loader, feature plugins, injector and test host around fresh payloads"
+depends = ["assemble"]
+run = "cargo build --release"
+
+[tasks.inject]
+description = "Build everything, then wait for the game to start and patch it"
+depends = ["build"]
+run = 'target\release\defiance-pickup-inject.exe'
+raw = true
+
+[tasks.inject-scan]
+description = "As inject, but find every patch site by signature, even in the known build"
+depends = ["build"]
+run = 'target\release\defiance-pickup-inject.exe --force-scan'
+raw = true
+
+[tasks.test]
+description = "Build everything, then run every native test and the self test"
+depends = ["fmt-check", "build", "crash-test"]
+run = [
+  "python tools/test_versions.py",
+  "python tools/test_layout.py",
+  "python tools/test_variant.py",
+  "python tools/test_chooser.py",
+  "python tools/test_move.py",
+  "python tools/test_orders.py",
+  "python tools/test_icon.py",
+  "python tools/test_preview.py",
+  "python tools/test_building_tab.py",
+  "python tools/test_selection.py",
+  "python tools/test_region.py",
+  "python tools/test_trace.py",
+  "python tools/test_pose.py",
+  "python tools/test_posture.py",
+  "python tools/test_firing.py",
+  "cargo build --release --target-dir out/controls-parity -p defiance-plugin-core -p defiance-plugin-firing -p defiance-plugin-selection -p defiance-plugin-pickup --features defiance-plugin-core/parity-test,defiance-plugin-firing/parity-test,defiance-plugin-selection/parity-test,defiance-plugin-pickup/parity-test",
+  "python tools/test_pickup_rust.py out/controls-parity/release/defiance_plugin_feature_pickup.dll",
+  "python tools/test_firing_rust.py out/controls-parity/release",
+  "python tools/test_selection_rust.py out/controls-parity/release",
+  "python tools/test_ammo.py",
+  "python tools/test_stage.py",
+  "python tools/test_config.py",
+  "python tools/test_package.py",
+  "python tools/test_plugins.py",
+  "cargo test --workspace",
+  "python tools/sigs.py",
+  'target\release\defiance-pickup-inject.exe --self-test',
+  # the patch as built, against copies of the GOG DLLs it was written for, and
+  # the Steam DLLs; each only if its copy is kept in bin\<store> (not tracked)
+  'if exist bin\gog\logic.dll target\release\defiance-pickup-inject.exe --scan-check bin\gog',
+  'if exist bin\steam\logic.dll target\release\defiance-pickup-inject.exe --scan-check bin\steam',
+]
+
+[tasks.probe]
+description = "Read the selection trace from the running game"
+run = 'target\release\defiance-pickup-inject.exe --select-probe'
+raw = true
+
+# The loader branch: a proxy DLL that hosts plugins inside trm.exe. This is the
+# native answer to BepInEx. It needs out/payload*.json/.bin (the same files the
+# injector embeds). Player builds always assemble first; infrastructure tests
+# can run without game DLLs. See crates/loader/src/lib.rs for the design.
+[tasks.loader]
+description = "Build the loader, built-in plugins and the standalone regroup, expanded-ammo-menu and squad-management-scroll plugins"
+depends = ["assemble"]
+run = [
+  "cargo build --release",
+  "cargo build --release --manifest-path plugins/regroup/Cargo.toml",
+  "cargo build --release --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
+  "cargo build --release --manifest-path plugins/squad-management-scroll/Cargo.toml",
+  # the sidecar manifests come from the loader's authoritative built-in table
+  'target\release\manifest-gen.exe --out target\release',
+]
+
+[tasks.loader-test]
+description = "Run the loader workspace's tests with fresh payloads"
+depends = ["assemble"]
+run = "cargo test --workspace"
+
+[tasks.crash-test]
+description = "Verify crash reports using disposable native and Rust panic subprocesses"
+run = [
+  "cargo build --release --target-dir out/crash-tests -p defiance-loader --features test-host",
+  "cargo build --release --target-dir out/crash-tests --manifest-path tools/crash-plugin/Cargo.toml",
+  "python tools/test_crash.py",
+]
+
+[tasks.loader-infra-test]
+description = "Test loader infrastructure and standalone plugins without game DLLs"
+depends = ["fmt-check"]
+run = [
+  "cargo test --workspace --exclude defiance-plugin-core --exclude defiance-pickup-inject",
+  "cargo test -p defiance-loader --features test-host --test hook_lifecycle --test hook_regressions",
+  "python tools/test_versions.py",
+  "python tools/test_layout.py",
+  "python tools/test_variant.py",
+  "python tools/test_proxy.py",
+  "cargo test --manifest-path plugins/regroup/Cargo.toml",
+  "cargo test --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
+  "cargo test --manifest-path plugins/squad-management-scroll/Cargo.toml",
+  "python tools/test_package_squad_scroll.py",
+  "python tools/test_build_resources.py",
+  "python tools/test_stage.py",
+  "python tools/test_config.py",
+  "python tools/test_package.py",
+]
+
+[tasks.loader-proxy]
+description = "Choose a proxy DLL from trm.exe, regenerate its forwarders, and rebuild"
+depends = ["assemble"]
+run = [
+  "python tools/proxy.py --exe bin/trm.exe",
+  "cargo build --release",
+]
+
+[tasks.loader-stage]
+description = "Build, then copy the loader, built-ins, standalone plugins and the squad-scroll companion mod into the game (set DEFIANCE_GAME_DIR)"
+depends = ["loader"]
+run = "python tools/stage.py"
+
+[tasks.loader-package]
+description = "Package the loader, built-ins and standalone plugins, plus the squad-scroll companion mod when DEFIANCE_GAME_DIR is set"
+depends = ["loader"]
+run = "python tools/package.py"
+
+[tasks.loader-unstage]
+description = "Remove the loader and its plugins from the game (set DEFIANCE_GAME_DIR)"
+run = "python tools/stage.py --uninstall"
+
+[tasks.squad-scroll]
+description = "Build the optional squad-management scrolling plugin"
+run = "cargo build --release --manifest-path plugins/squad-management-scroll/Cargo.toml"
+
+[tasks.squad-scroll-test]
+description = "Validate squad scrolling against local GOG/Steam fixtures and UI packaging"
+depends = ["squad-scroll"]
+run = [
+  "cargo test --manifest-path plugins/squad-management-scroll/Cargo.toml",
+  "python tools/test_squad_scroll.py",
+  "python tools/test_package_squad_scroll.py",
+]
+
+[tasks.pickup-rust]
+description = "Verify the default Rust pickup in a separate build directory"
+depends = ["assemble"]
+run = [
+  "cargo test -p defiance-plugin-pickup --features rust-chooser",
+  "cargo build --release --target-dir out/pickup-rust --features defiance-plugin-pickup/rust-chooser",
+  "cargo build --release --target-dir out/pickup-parity -p defiance-plugin-pickup --features parity-test",
+  "python tools/test_chooser.py",
+  "python tools/test_pickup_rust.py out/pickup-parity/release/defiance_plugin_feature_pickup.dll",
+  "python tools/test_plugins.py --rust-pickup",
+]
+
+[tasks.services-test]
+description = "Build and test the game-independent plugin author/service examples"
+run = [
+  "cargo test -p defiance-loader -p defiance-api -p defiance-feature-sdk",
+  "cargo build --release -p defiance-plugin-host-test --bin service-host",
+  "cargo build --release --manifest-path examples/services/Cargo.toml",
+  "python tools/test_services.py",
+  "python tools/test_api_header.py",
+]
+
+[tasks.rust-controls-test]
+description = "Compare Rust firing controls and shared Core bindings with executable assembly"
+depends = ["assemble"]
+run = [
+  "cargo test --workspace",
+  "cargo build --release",
+  "cargo build --release --target-dir out/controls-parity -p defiance-plugin-core -p defiance-plugin-firing -p defiance-plugin-selection --features defiance-plugin-core/parity-test,defiance-plugin-firing/parity-test,defiance-plugin-selection/parity-test",
+  "python tools/test_firing.py",
+  "python tools/test_firing_rust.py out/controls-parity/release",
+  "python tools/test_selection_rust.py out/controls-parity/release",
+  "python tools/test_plugins.py",
+  "python tools/test_api_header.py",
+]

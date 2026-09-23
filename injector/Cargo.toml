@@ -1,0 +1,20 @@
+[package]
+name = "defiance-pickup-inject"
+version = "0.1.0"
+license = "MPL-2.0"
+edition = "2021"
+
+# The only dependency is the shared core; the Win32 calls are still declared
+# inline and SHA-256 still lives in the core, so nothing comes off crates.io.
+[dependencies]
+defiance-core = { path = "../crates/core" }
+
+[build-dependencies]
+defiance-build-support = { path = "../crates/build-support" }
+
+[[bin]]
+name = "defiance-pickup-inject"
+path = "src/main.rs"
+
+# The release profile is the workspace's (opt-level "s", lto, panic abort,
+# strip). A profile here would be ignored and warn, so there is none.

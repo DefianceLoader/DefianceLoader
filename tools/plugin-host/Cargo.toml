@@ -1,0 +1,9 @@
+[package]
+name = "defiance-plugin-host-test"
+version = "0.1.0"
+license = "MPL-2.0"
+edition = "2021"
+[dependencies]
+defiance-api = { path = "../../crates/api" }
+defiance-core = { path = "../../crates/core" }
+defiance-loader = { path = "../../crates/loader", features = ["test-host"] }

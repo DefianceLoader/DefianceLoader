@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "example.counter-user",
+  "dll": "defiance_example_counter_user.dll",
+  "version": "0.1.0",
+  "abi": 5,
+  "group": "examples",
+  "settings": [
+    { "key": "enabled", "type": "bool", "default": "true", "description": "Enable the example counter consumer." },
+    { "key": "service_version", "type": "int", "default": "1", "min": 1, "max": 2, "description": "Use 2 to demonstrate an unsupported service version." }
+  ],
+  "depends": [{ "id": "example.counter", "min": "0.1.0", "max": "0.1.0" }],
+  "conflicts": []
+}

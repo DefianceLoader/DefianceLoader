@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "example.counter",
+  "dll": "defiance_example_counter.dll",
+  "version": "0.1.0",
+  "abi": 5,
+  "group": "examples",
+  "settings": [
+    { "key": "enabled", "type": "bool", "default": "true", "description": "Enable the example counter provider." },
+    { "key": "fail_init", "type": "bool", "default": "false", "description": "Tutorial fault injection: register, then fail initialization." }
+  ],
+  "depends": [],
+  "conflicts": []
+}

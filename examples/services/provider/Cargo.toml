@@ -1,0 +1,12 @@
+[package]
+name = "example-counter-provider"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+[lib]
+name = "defiance_example_counter"
+crate-type = ["cdylib"]
+[dependencies]
+defiance-api = { path = "../../../crates/api" }
+defiance-feature-sdk = { path = "../../../crates/feature-sdk" }
+example-counter-contract = { path = "../contract" }

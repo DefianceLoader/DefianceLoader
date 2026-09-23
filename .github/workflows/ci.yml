@@ -1,0 +1,52 @@
+# Build and test what can be built without the game's DLLs.
+#
+# `plugins/core` and `injector` embed `out/payload*.bin/.json` at compile time.
+# Those are assembled from `bin/logic.orig.dll` and `bin/game.orig.dll`, which
+# are not tracked (they are the shipped game), so a fresh checkout cannot build
+# those two crates. Everything they share — the core, the ABI, the build
+# support, and the loader itself — builds and tests here. The local equivalent
+# is `mise run assemble` followed by the injector's `--self-test`.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test the payload-independent crates
+        run: cargo test --workspace --exclude defiance-plugin-core --exclude defiance-pickup-inject
+      - name: Test standalone plugins
+        run: |
+          cargo test --manifest-path plugins/regroup/Cargo.toml
+          cargo test --manifest-path plugins/expanded-ammo-menu/Cargo.toml
+          cargo test --manifest-path plugins/squad-management-scroll/Cargo.toml
+      - name: Test the native hook lifecycle with real thread suspension
+        run: cargo test -p defiance-loader --features test-host --test hook_lifecycle --test hook_regressions
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test staging paths and uninstall
+        run: python tools/test_stage.py
+      - name: Test release metadata enforcement
+        run: python tools/test_build_resources.py
+      - name: Test the explicit configuration migration
+        run: |
+          cargo build -p defiance-loader --bin defiance-config
+          python tools/test_config.py
+      - name: Test packaging
+        run: |
+          python tools/test_package.py
+          python tools/test_package_squad_scroll.py
+      - name: Generate built-in manifests from the authoritative table
+        run: cargo run -p defiance-loader --bin manifest-gen -- --out target/manifests
+      - name: Build the loader
+        run: cargo build -p defiance-loader
+      - name: Test proxy forwarding from DLL initialization
+        run: |
+          python -m pip install pefile
+          python tools/test_proxy.py target/debug/defiance_loader.dll

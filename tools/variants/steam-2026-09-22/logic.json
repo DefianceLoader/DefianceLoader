@@ -1,0 +1,1097 @@
+{
+  "feature_schema": 1,
+  "source_sha256": "30264904e1d5199b954bafbd7828cf7190930c246d35fa7b94eefa915e8f0c38",
+  "code_bytes": 412,
+  "block_bytes": 12288,
+  "cursor_offset": 12032,
+  "call_site": 4516708,
+  "call_before": "e847290000",
+  "move_offset": 1024,
+  "move_bytes": 433,
+  "move_call_site": 4508418,
+  "move_displaced": "488b7c2430",
+  "trace_offset": 4096,
+  "ammo_scratch": 9984,
+  "setter_offset": 2048,
+  "detours": [
+    {
+      "hook_rva": 4368848,
+      "hook_entry": 1536,
+      "hook_feature": 7,
+      "hook_displaced": "40534881ecc0000000"
+    },
+    {
+      "hook_rva": 4369504,
+      "hook_entry": 1611,
+      "hook_feature": 7,
+      "hook_displaced": "48895c2408"
+    },
+    {
+      "hook_rva": 4370544,
+      "hook_entry": 1680,
+      "hook_feature": 7,
+      "hook_displaced": "4883ec28488b02"
+    },
+    {
+      "hook_rva": 4370960,
+      "hook_entry": 1751,
+      "hook_feature": 7,
+      "hook_displaced": "48895c2408"
+    },
+    {
+      "hook_rva": 4571280,
+      "hook_entry": 2048,
+      "hook_feature": 2,
+      "hook_displaced": "488bc1488b49284885c97407488b0148ff6050885030c3cccccccc"
+    },
+    {
+      "hook_rva": 4571312,
+      "hook_entry": 2376,
+      "hook_feature": 2,
+      "hook_displaced": "40534883ec20"
+    },
+    {
+      "hook_rva": 1990576,
+      "hook_entry": 9585,
+      "hook_feature": 2,
+      "hook_displaced": "885130c3cc"
+    },
+    {
+      "hook_rva": 4365896,
+      "hook_entry": 9523,
+      "hook_feature": 2,
+      "hook_displaced": "498b06498bce"
+    },
+    {
+      "hook_rva": 2876208,
+      "hook_entry": 547,
+      "hook_feature": 4,
+      "hook_displaced": "40534883ec20"
+    },
+    {
+      "hook_rva": 2876304,
+      "hook_entry": 512,
+      "hook_feature": 4,
+      "hook_displaced": "40534883ec20"
+    },
+    {
+      "hook_rva": 1150304,
+      "hook_entry": 3328,
+      "hook_feature": 4,
+      "hook_displaced": "40534883ec20"
+    },
+    {
+      "hook_rva": 4495984,
+      "hook_entry": 5632,
+      "hook_feature": 5,
+      "hook_displaced": "889128020000c3"
+    },
+    {
+      "hook_rva": 4495968,
+      "hook_entry": 5840,
+      "hook_feature": 5,
+      "hook_displaced": "0fb68128020000c3"
+    },
+    {
+      "hook_rva": 2870704,
+      "hook_entry": 6162,
+      "hook_feature": 5,
+      "hook_displaced": "48895c2408"
+    },
+    {
+      "hook_rva": 2870892,
+      "hook_entry": 6251,
+      "hook_feature": 5,
+      "hook_displaced": "48ffa098030000"
+    },
+    {
+      "hook_rva": 1218048,
+      "hook_entry": 6656,
+      "hook_feature": 6,
+      "hook_displaced": "4889542410"
+    },
+    {
+      "hook_rva": 1218784,
+      "hook_entry": 7123,
+      "hook_feature": 6,
+      "hook_displaced": "40534883ec20"
+    },
+    {
+      "hook_rva": 2709328,
+      "hook_entry": 8399,
+      "hook_feature": 6,
+      "hook_displaced": "80b9e200000000"
+    },
+    {
+      "hook_rva": 2709376,
+      "hook_entry": 8450,
+      "hook_feature": 6,
+      "hook_displaced": "80b9e000000000"
+    },
+    {
+      "hook_rva": 2709408,
+      "hook_entry": 8501,
+      "hook_feature": 6,
+      "hook_displaced": "83b9dc00000000"
+    },
+    {
+      "hook_rva": 2709424,
+      "hook_entry": 8546,
+      "hook_feature": 6,
+      "hook_displaced": "8b81dc000000"
+    },
+    {
+      "hook_rva": 2533425,
+      "hook_entry": 8749,
+      "hook_feature": 6,
+      "hook_displaced": "48c7472800000000"
+    },
+    {
+      "hook_rva": 2533755,
+      "hook_entry": 8772,
+      "hook_feature": 6,
+      "hook_displaced": "48c7472800000000"
+    },
+    {
+      "hook_rva": 1183520,
+      "hook_entry": 7865,
+      "hook_feature": 6,
+      "hook_displaced": "837910007507"
+    },
+    {
+      "hook_rva": 1183577,
+      "hook_entry": 7906,
+      "hook_feature": 6,
+      "hook_displaced": "837a3c010f847c010000"
+    },
+    {
+      "hook_rva": 1183098,
+      "hook_entry": 7840,
+      "hook_feature": 6,
+      "hook_displaced": "488b70284885f6"
+    },
+    {
+      "hook_rva": 4495792,
+      "hook_entry": 5376,
+      "hook_feature": 7,
+      "hook_displaced": "8b8100020000c3"
+    }
+  ],
+  "trace_fixups": [
+    {
+      "trace_fix_offset": 1600,
+      "trace_fix_rva": 4368857
+    },
+    {
+      "trace_fix_offset": 1669,
+      "trace_fix_rva": 4369509
+    },
+    {
+      "trace_fix_offset": 1740,
+      "trace_fix_rva": 4370551
+    },
+    {
+      "trace_fix_offset": 1814,
+      "trace_fix_rva": 4370965
+    }
+  ],
+  "rel_fixups": [
+    {
+      "rel_offset": 543,
+      "rel_feature": 4,
+      "rel_target": 2876310
+    },
+    {
+      "rel_offset": 578,
+      "rel_feature": 4,
+      "rel_target": 2876214
+    },
+    {
+      "rel_offset": 3640,
+      "rel_feature": 4,
+      "rel_target": 1150310
+    },
+    {
+      "rel_offset": 6247,
+      "rel_feature": 5,
+      "rel_target": 2870709
+    },
+    {
+      "rel_offset": 7861,
+      "rel_feature": 6,
+      "rel_target": 1183105
+    },
+    {
+      "rel_offset": 7897,
+      "rel_feature": 6,
+      "rel_target": 1183526
+    },
+    {
+      "rel_offset": 7902,
+      "rel_feature": 6,
+      "rel_target": 1183533
+    },
+    {
+      "rel_offset": 7941,
+      "rel_feature": 6,
+      "rel_target": 1183587
+    },
+    {
+      "rel_offset": 7946,
+      "rel_feature": 6,
+      "rel_target": 1183967
+    },
+    {
+      "rel_offset": 8768,
+      "rel_feature": 6,
+      "rel_target": 2533433
+    },
+    {
+      "rel_offset": 8791,
+      "rel_feature": 6,
+      "rel_target": 2533763
+    },
+    {
+      "rel_offset": 9511,
+      "rel_feature": 2,
+      "rel_target": 4365600
+    },
+    {
+      "rel_offset": 9576,
+      "rel_feature": 2,
+      "rel_target": 4365902
+    },
+    {
+      "rel_offset": 9581,
+      "rel_feature": 2,
+      "rel_target": 4366067
+    },
+    {
+      "rel_offset": 11608,
+      "rel_feature": 9,
+      "rel_target": 414064
+    },
+    {
+      "rel_offset": 11762,
+      "rel_feature": 9,
+      "rel_target": 414064
+    },
+    {
+      "rel_offset": 11819,
+      "rel_feature": 9,
+      "rel_target": 415887
+    }
+  ],
+  "census_offset": 4864,
+  "pose_offset": 2560,
+  "pose_calls": [
+    {
+      "pose_site": 4517445,
+      "pose_entry": 11264,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 8,
+      "pose_before": "488b442450"
+    },
+    {
+      "pose_site": 4520541,
+      "pose_entry": 11293,
+      "pose_tail": "9090",
+      "pose_stock": 0,
+      "pose_feature": 9,
+      "pose_before": "498b7d004885ff"
+    },
+    {
+      "pose_site": 1106726,
+      "pose_entry": 11321,
+      "pose_tail": "9090",
+      "pose_stock": 0,
+      "pose_feature": 9,
+      "pose_before": "488b78504885ff"
+    },
+    {
+      "pose_site": 1108048,
+      "pose_entry": 11341,
+      "pose_tail": "9090",
+      "pose_stock": 0,
+      "pose_feature": 9,
+      "pose_before": "488b58504885db"
+    },
+    {
+      "pose_site": 1144422,
+      "pose_entry": 11341,
+      "pose_tail": "9090",
+      "pose_stock": 0,
+      "pose_feature": 9,
+      "pose_before": "488b58504885db"
+    },
+    {
+      "pose_site": 3312244,
+      "pose_entry": 11341,
+      "pose_tail": "9090",
+      "pose_stock": 0,
+      "pose_feature": 9,
+      "pose_before": "488b58504885db"
+    },
+    {
+      "pose_site": 1121791,
+      "pose_entry": 11558,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 9,
+      "pose_before": "e86c33f5ff"
+    },
+    {
+      "pose_site": 1122251,
+      "pose_entry": 11558,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 9,
+      "pose_before": "e8a031f5ff"
+    },
+    {
+      "pose_site": 716605,
+      "pose_entry": 11635,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 9,
+      "pose_before": "e82e62fbff"
+    },
+    {
+      "pose_site": 733475,
+      "pose_entry": 11663,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 9,
+      "pose_before": "e84820fbff"
+    },
+    {
+      "pose_site": 415814,
+      "pose_entry": 11784,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 9,
+      "pose_before": "4c3bff7544"
+    },
+    {
+      "pose_site": 414821,
+      "pose_entry": 11823,
+      "pose_tail": "90",
+      "pose_stock": 0,
+      "pose_feature": 9,
+      "pose_before": "482bc8492bce"
+    },
+    {
+      "pose_site": 4369215,
+      "pose_entry": 9472,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 2,
+      "pose_before": "e8dcf1ffff"
+    },
+    {
+      "pose_site": 4369847,
+      "pose_entry": 9472,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 2,
+      "pose_before": "e864efffff"
+    },
+    {
+      "pose_site": 4370000,
+      "pose_entry": 9472,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 2,
+      "pose_before": "e8cbeeffff"
+    },
+    {
+      "pose_site": 4370704,
+      "pose_entry": 9472,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 2,
+      "pose_before": "e80becffff"
+    },
+    {
+      "pose_site": 3333225,
+      "pose_entry": 3024,
+      "pose_tail": "",
+      "pose_stock": 1097440,
+      "pose_feature": 4,
+      "pose_before": "e872e2ddff"
+    },
+    {
+      "pose_site": 3333232,
+      "pose_entry": 3045,
+      "pose_tail": "",
+      "pose_stock": 1097792,
+      "pose_feature": 4,
+      "pose_before": "e8cbe3ddff"
+    },
+    {
+      "pose_site": 1144179,
+      "pose_entry": 3066,
+      "pose_tail": "c3",
+      "pose_stock": 1097440,
+      "pose_feature": 4,
+      "pose_before": "e96849ffffcc"
+    },
+    {
+      "pose_site": 1144195,
+      "pose_entry": 3093,
+      "pose_tail": "c3",
+      "pose_stock": 1097792,
+      "pose_feature": 4,
+      "pose_before": "e9b84affffcc"
+    },
+    {
+      "pose_site": 885686,
+      "pose_entry": 649,
+      "pose_tail": "9090",
+      "pose_stock": 0,
+      "pose_feature": 4,
+      "pose_before": "0fb6a99e020000"
+    },
+    {
+      "pose_site": 892489,
+      "pose_entry": 649,
+      "pose_tail": "9090",
+      "pose_stock": 0,
+      "pose_feature": 4,
+      "pose_before": "0fb6a99e020000"
+    },
+    {
+      "pose_site": 2987803,
+      "pose_entry": 6259,
+      "pose_tail": "90",
+      "pose_stock": 0,
+      "pose_feature": 5,
+      "pose_before": "ff9098030000"
+    },
+    {
+      "pose_site": 2724483,
+      "pose_entry": 8053,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 6,
+      "pose_before": "ff506085c0"
+    },
+    {
+      "pose_site": 2723100,
+      "pose_entry": 8013,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 6,
+      "pose_before": "ff506085c0"
+    },
+    {
+      "pose_site": 2722397,
+      "pose_entry": 7993,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 6,
+      "pose_before": "ff506085c0"
+    },
+    {
+      "pose_site": 2722042,
+      "pose_entry": 7993,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 6,
+      "pose_before": "ff506085c0"
+    },
+    {
+      "pose_site": 2730957,
+      "pose_entry": 7993,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 6,
+      "pose_before": "ff506085c0"
+    },
+    {
+      "pose_site": 2738965,
+      "pose_entry": 7993,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 6,
+      "pose_before": "ff506085c0"
+    },
+    {
+      "pose_site": 2726061,
+      "pose_entry": 8053,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 6,
+      "pose_before": "ff506085c0"
+    },
+    {
+      "pose_site": 2723415,
+      "pose_entry": 8033,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 6,
+      "pose_before": "ff506085c0"
+    },
+    {
+      "pose_site": 2723510,
+      "pose_entry": 8033,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 6,
+      "pose_before": "ff506085c0"
+    }
+  ],
+  "delta_fixups": [
+    {
+      "delta_offset": 3031,
+      "delta_from": 3333230,
+      "delta_to": 1097440
+    },
+    {
+      "delta_offset": 3052,
+      "delta_from": 3333237,
+      "delta_to": 1097792
+    },
+    {
+      "delta_offset": 3073,
+      "delta_from": 1144184,
+      "delta_to": 1097440
+    },
+    {
+      "delta_offset": 3100,
+      "delta_from": 1144200,
+      "delta_to": 1097792
+    }
+  ],
+  "stock_chooser": 4527280,
+  "module_bytes": 9212928,
+  "image_bytes": 9273344,
+  "anchor_rva": 4527280,
+  "anchor": "48895c240848896c2410488974241857415641574883ec204c63f233ff450fb6",
+  "select_is_rva": 4571328,
+  "select_is_before": "7410488b01ff505884c0741a807b1800eb0a",
+  "select_is_after": "7410488b01ff505884c0741a807b1800eb00",
+  "select_squad_rva": 4368890,
+  "select_squad_before": "488b03ba10000000488bcbff909800000084c00f84b4000000488b03488bcbff90b0000000488b48284885c90f849b000000488b01ff90d00300004885c00f8489000000488b10488bc8ff5268488b104c8b40084c2bc249c1f8034d85c0746d4e8d04c500000000488d4c2420e83ebc2600488b4c2420488b01eb3a",
+  "select_squad_after": "488b034889d9ff90b0000000488b48284885c90f84b4000000488b01ff90d00300004885c00f84a2000000488b104889c1ff5268488b18488b40084889442420483b5c24200f8382000000488b0b4883c3084885c974e9488b01ff90b0000000488b48504885c974d7488b01b201ff5050ebcd909090909090909090",
+  "select_toggle_rva": 4372931,
+  "select_toggle_before": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff5050",
+  "select_toggle_after": "488b1331c9e803f0ffff90909090909090909090909090909090909090",
+  "select_type_rva": 4370473,
+  "select_type_before": "488b06b201488bceff5050",
+  "select_type_after": "4c89f24c89e9e89cf9ffff",
+  "sites": [
+    {
+      "site_name": "chooser_call",
+      "site_start": 4516708,
+      "site_group": 4514576,
+      "site_pattern": "e8????????488bf84885c00f84????????488b10488bc8ff92b0000000",
+      "site_offset": 0
+    },
+    {
+      "site_name": "chooser",
+      "site_start": 4527280,
+      "site_group": 4527280,
+      "site_pattern": "48895c240848896c2410488974241857415641574883ec204c63f233ff450fb6f8",
+      "site_offset": 0
+    },
+    {
+      "site_name": "move_call",
+      "site_start": 4508418,
+      "site_group": 4508144,
+      "site_pattern": "488b7c2430483bf90f84????????0f57c0f30f7f45884c896598",
+      "site_offset": 0
+    },
+    {
+      "site_name": "setter",
+      "site_start": 4571280,
+      "site_group": 4571280,
+      "site_pattern": "488bc1488b49284885c97407488b0148ff6050885030c3cccccccc",
+      "site_offset": 0
+    },
+    {
+      "site_name": "is_selected",
+      "site_start": 4571312,
+      "site_group": 4571312,
+      "site_pattern": "40534883ec20488bd9488b49284885c97410488b01ff5058",
+      "site_offset": 0
+    },
+    {
+      "site_name": "select_trace",
+      "site_start": 4368848,
+      "site_group": 4368848,
+      "site_pattern": "40534881ecc0000000488bda4885d20f84????????488b02",
+      "site_offset": 0
+    },
+    {
+      "site_name": "toggle_trace",
+      "site_start": 4369504,
+      "site_group": 4369504,
+      "site_pattern": "48895c24084889542410574883ec40488bda488bf9488b02",
+      "site_offset": 0
+    },
+    {
+      "site_name": "deselect_trace",
+      "site_start": 4370544,
+      "site_group": 4370544,
+      "site_pattern": "4883ec28488b02488bcaff90b0000000488b48504885c9740d",
+      "site_offset": 0
+    },
+    {
+      "site_name": "clear_trace",
+      "site_start": 4370960,
+      "site_group": 4370960,
+      "site_pattern": "48895c2408574883ec20488b7930488b5928483bdf742f660f1f840000000000",
+      "site_offset": 0
+    },
+    {
+      "site_name": "select_is",
+      "site_start": 4571328,
+      "site_group": 4571312,
+      "site_pattern": "7410488b01ff505884c0741a807b1800eb0a807b1800740e807b30007408b0014883c4205bc3",
+      "site_offset": 0
+    },
+    {
+      "site_name": "select_squad",
+      "site_start": 4368890,
+      "site_group": 4368848,
+      "site_pattern": "488b03ba10000000488bcbff909800000084c00f84????????488b03488bcbff90b0000000488b48284885c90f84????????488b01ff90b80300004885c00f84????????488b10488bc8ff5268488b104c8b40084c2bc249c1f8034d85c0746d4e8d04c500000000488d4c2420e8????????488b4c2420488b01eb3a488bcbe8????????4885c07427488b80b00200004885c0741b488b48104885c97412488b01ff90b0000000488b48504885c97515488b03488bcbff90b0000000488b48504885c97408488b01b201ff5050",
+      "site_offset": 0
+    },
+    {
+      "site_name": "select_toggle",
+      "site_start": 4372931,
+      "site_group": 4372864,
+      "site_pattern": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff50504883c308483b5c2428",
+      "site_offset": 0
+    },
+    {
+      "site_name": "select_type",
+      "site_start": 4370473,
+      "site_group": 4370307,
+      "site_pattern": "488b06b201488bceff50504883c308483bdf0f85????????",
+      "site_offset": 0
+    },
+    {
+      "site_name": "lie_down_gate",
+      "site_start": 2876208,
+      "site_group": 2876208,
+      "site_pattern": "40534883ec70488b49104885c97409488b49104885c97502",
+      "site_offset": 0
+    },
+    {
+      "site_name": "stand_up_gate",
+      "site_start": 2876304,
+      "site_group": 2876304,
+      "site_pattern": "40534883ec60488b49104885c97409488b49104885c97502",
+      "site_offset": 0
+    },
+    {
+      "site_name": "prone_query",
+      "site_start": 1150304,
+      "site_group": 1150304,
+      "site_pattern": "40534883ec20488bda4885d2746d488b02488bcbba10000000",
+      "site_offset": 0
+    },
+    {
+      "site_name": "firing_set",
+      "site_start": 4495984,
+      "site_group": 4495984,
+      "site_pattern": "889128020000c3cccccccccccccccccc40534883ec20488bca",
+      "site_offset": 0
+    },
+    {
+      "site_name": "firing_ui",
+      "site_start": 4495968,
+      "site_group": 4495968,
+      "site_pattern": "0fb68128020000c3cccccccccccccccc889128020000c3cc",
+      "site_offset": 0
+    },
+    {
+      "site_name": "firing_soldier",
+      "site_start": 2870704,
+      "site_group": 2870704,
+      "site_pattern": "48895c2408574883ec20488b5910488bf94885db7455488b5b10",
+      "site_offset": 0
+    },
+    {
+      "site_name": "squad_flag",
+      "site_start": 2870892,
+      "site_group": 2870704,
+      "site_pattern": "48ffa080030000cccccccccccccccccccccccccc488b89f0010000",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_set",
+      "site_start": 1218048,
+      "site_group": 1218048,
+      "site_pattern": "488954241048894c2408555356574154415541564157488d6c24e14881ec98000000458bf8",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_get",
+      "site_start": 1218784,
+      "site_group": 1218784,
+      "site_pattern": "40534883ec20488b01488bdaff90b8010000488bc84c8b00",
+      "site_offset": 0
+    },
+    {
+      "site_name": "gun_ready",
+      "site_start": 2709328,
+      "site_group": 2709328,
+      "site_pattern": "80b9e200000000740c83b9dc000000007403b001c332c0c3",
+      "site_offset": 0
+    },
+    {
+      "site_name": "gun_can_fire",
+      "site_start": 2709376,
+      "site_group": 2709376,
+      "site_pattern": "80b9e000000000750c83b9dc000000007403b001c332c0c3",
+      "site_offset": 0
+    },
+    {
+      "site_name": "gun_empty",
+      "site_start": 2709408,
+      "site_group": 2709408,
+      "site_pattern": "83b9dc000000000f94c0c3cccccccccc8b81dc000000c3cc",
+      "site_offset": 0
+    },
+    {
+      "site_name": "gun_loaded",
+      "site_start": 2709424,
+      "site_group": 2709424,
+      "site_pattern": "8b81dc000000c3cccccccccccccccccc488d8104010000c3",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_init_new",
+      "site_start": 2533425,
+      "site_group": 2533184,
+      "site_pattern": "48c7472800000000c6473001c74734ffffffffeb0233ff48897c2420",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_init_load",
+      "site_start": 2533755,
+      "site_group": 2533504,
+      "site_pattern": "48c7472800000000c6473000488b06488bceff5008488b08",
+      "site_offset": 0
+    },
+    {
+      "site_name": "census_behaviour",
+      "site_start": 4495792,
+      "site_group": 4495792,
+      "site_pattern": "8b8100020000c3cccccccccccccccccc8b8104020000c3cc",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_reader_owner",
+      "site_start": 1183098,
+      "site_group": 1182893,
+      "site_pattern": "488b70284885f60f84????????410f28c3f3410f584668f3410f114668",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_reader_check1",
+      "site_start": 1183520,
+      "site_group": 1182893,
+      "site_pattern": "8379100075078b41fc3901750e48ffc24883c148493bd172e7",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_reader_check2",
+      "site_start": 1183577,
+      "site_group": 1182893,
+      "site_pattern": "837a3c010f84????????8b422839422c0f84????????488b06410f28d3488b12488bceff90d800000084c00f84????????498b0741b801000000488bce488b1407488b06f3440f10825c060000ff9098000000450f2fc18bd8764d498b4e104885c97409488b49104885c9750233c9488b01ff90b0000000488b48284885c9741c488b01ff9090020000488bc8488b10ff92d0010000f3410f5ec0eb0f410f28c1f3410f5ec0eb04410f28c24885db0f84????????410f2fc10f86????????498b4e104885c97409488b49104885c9750233c9488b01ff90b0000000488b48284885c9741a488b01ff9090020000488bc8488b10ff92d00100000f28f0eb04410f28f1488b0641b801000000488bce4c8b88a0000000498b07488b140741ffd10f57ff8bc0f3480f2af8f3410f59f8410f2ff976470f2ffe7742498b4e104885c97409488b49104885c9750233c9488b01ff90b0000000488b48284885c9741c488b01ff9090020000f30f5cf7488bc8488b100f28ceff92d801000048b9398ee3388ee3388e",
+      "site_offset": 0
+    },
+    {
+      "site_name": "pose_down",
+      "site_start": 3333225,
+      "site_group": 3333072,
+      "site_pattern": "e8????????eb05e8????????488b4c24404883c10448894c2440",
+      "site_offset": 0
+    },
+    {
+      "site_name": "pose_up",
+      "site_start": 3333232,
+      "site_group": 3333072,
+      "site_pattern": "e8????????488b4c24404883c10448894c2440483b4c2448",
+      "site_offset": 0
+    },
+    {
+      "site_name": "pose_down_direct",
+      "site_start": 1144179,
+      "site_group": 1144179,
+      "site_pattern": "e9????????cccccccccccccccc488bcae9????????ccccccccccccccccf30f105c2428",
+      "site_offset": 0
+    },
+    {
+      "site_name": "pose_up_direct",
+      "site_start": 1144195,
+      "site_group": 1144195,
+      "site_pattern": "e9????????ccccccccccccccccf30f105c2428498bc0488bca",
+      "site_offset": 0
+    },
+    {
+      "site_name": "move_posture_1",
+      "site_start": 885686,
+      "site_group": 884576,
+      "site_pattern": "0fb6a99e020000488b4e204885c97409488b49104885c97503488bcf488b01ba00020000ff507084c075734084ed746e488b4e104885c97414488b49104885c9740b488b01ff5050488bc8eb03488bcf488b01ff90b0000000488b48204885c9746d83b97801000000746480b95001000000755b488b4e104885c97411488b49104885c97408488b01ff5050eb03488bc7488bc8e8????????83f8067431488b4e104885c97412488b49104885c97409488b01ff5050488bf8488bcfe8????????4885c07409488bc8e8????????90488b9c2480000000",
+      "site_offset": 0
+    },
+    {
+      "site_name": "move_posture_2",
+      "site_start": 892489,
+      "site_group": 891664,
+      "site_pattern": "0fb6a99e020000488b4e204885c97409488b49104885c97503488bcf488b01ba00020000ff507084c075734084ed746e488b4e104885c97414488b49104885c9740b488b01ff5050488bc8eb03488bcf488b01ff90b0000000488b48204885c9746d83b97801000000746480b95001000000755b488b4e104885c97411488b49104885c97408488b01ff5050eb03488bc7488bc8e8????????83f8067431488b4e104885c97412488b49104885c97409488b01ff5050488bf8488bcfe8????????4885c07409488bc8e8????????90498b0e",
+      "site_offset": 0
+    },
+    {
+      "site_name": "firing_call",
+      "site_start": 2987803,
+      "site_group": 2987584,
+      "site_pattern": "ff908003000084c07527488b4f20488b01ff90b0000000488b4838",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_gate_0",
+      "site_start": 2724483,
+      "site_group": 2724320,
+      "site_pattern": "ff506085c0750e48395f50750e3987dc00000074064c8beb",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_gate_1",
+      "site_start": 2723100,
+      "site_group": 2722800,
+      "site_pattern": "ff506085c0488b442478740d4c8bfd4c8bf3eb05488b442478",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_gate_2",
+      "site_start": 2722397,
+      "site_group": 2722352,
+      "site_pattern": "ff506085c07441488b434041b80100000080b8a800000000",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_gate_3",
+      "site_start": 2722042,
+      "site_group": 2721968,
+      "site_pattern": "ff506085c0750b4883c710483bfe75d6eb07488b0748894350",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_gate_4",
+      "site_start": 2730957,
+      "site_group": 2729616,
+      "site_pattern": "ff506085c07421ff83d8000000488bcbe8????????c683e000000000",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_gate_5",
+      "site_start": 2738965,
+      "site_group": 2738912,
+      "site_pattern": "ff506085c07510b8080000000f287424204883c4305bc30f2fb334010000",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_gate_6",
+      "site_start": 2726061,
+      "site_group": 2725728,
+      "site_pattern": "ff506085c075204883c310483bdd75d332c0488b5c2438488b6c2440",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_gate_7",
+      "site_start": 2723415,
+      "site_group": 2723335,
+      "site_pattern": "ff506085c07406488bf54c8bf74883c310493bdc75a4eb5d",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_gate_8",
+      "site_start": 2723510,
+      "site_group": 2723335,
+      "site_pattern": "ff506085c07406488bf54c8bf74883c310493bdc75a4488b6c2450",
+      "site_offset": 0
+    },
+    {
+      "site_name": "attack_members",
+      "site_start": 4517445,
+      "site_group": 4514576,
+      "site_pattern": "488b442450488b304885f6740e488b761048897424384885f6",
+      "site_offset": 0
+    },
+    {
+      "site_name": "garrison_members",
+      "site_start": 4520541,
+      "site_group": 4514576,
+      "site_pattern": "498b7d004885ff7409488b7f104885ff7503498bfe498bf6",
+      "site_offset": 0
+    },
+    {
+      "site_name": "building_exit_point",
+      "site_start": 1106726,
+      "site_group": 1105952,
+      "site_pattern": "488b78504885ff0f84????????4c8b7740488b7f38493bfe",
+      "site_offset": 0
+    },
+    {
+      "site_name": "building_exit_target",
+      "site_start": 1108048,
+      "site_group": 1107552,
+      "site_pattern": "488b58504885db0f84????????488b7340488b5b38483bde",
+      "site_offset": 0
+    },
+    {
+      "site_name": "building_facing_direct",
+      "site_start": 1144422,
+      "site_group": 1144304,
+      "site_pattern": "488b58504885db0f84????????4c8b7340488b5b38493bde",
+      "site_offset": 0
+    },
+    {
+      "site_name": "building_facing_command",
+      "site_start": 3312244,
+      "site_group": 3311216,
+      "site_pattern": "488b58504885db0f84????????4c8b6340488b5b38493bdc",
+      "site_offset": 0
+    },
+    {
+      "site_name": "building_capacity_command",
+      "site_start": 1121791,
+      "site_group": 1121168,
+      "site_pattern": "e8????????84c07462488beb488b0780bc2450010000007422",
+      "site_offset": 0
+    },
+    {
+      "site_name": "building_capacity_transfer",
+      "site_start": 1122251,
+      "site_group": 1121984,
+      "site_pattern": "e8????????488b9c24d00000004881c4c00000005fc3488b9c24d0000000",
+      "site_offset": 0
+    },
+    {
+      "site_name": "building_capacity_approach",
+      "site_start": 716605,
+      "site_group": 714880,
+      "site_pattern": "e8????????84c00f85????????41c74720030000004885ff",
+      "site_offset": 0
+    },
+    {
+      "site_name": "building_capacity_enter",
+      "site_start": 733475,
+      "site_group": 733120,
+      "site_pattern": "e8????????84c00f84????????498bbe180300004885ff7409",
+      "site_offset": 0
+    },
+    {
+      "site_name": "building_reserve_occupant",
+      "site_start": 415814,
+      "site_group": 415008,
+      "site_pattern": "4c3bff7544488d8d88010000488d5310e8????????488b3b",
+      "site_offset": 0
+    },
+    {
+      "site_name": "building_capacity_subtract",
+      "site_start": 414821,
+      "site_group": 414064,
+      "site_pattern": "482bc8492bce483b4d770f93c34d85e4743b4d2bfc4983e7f8",
+      "site_offset": 0
+    },
+    {
+      "site_name": "region_individual_0",
+      "site_start": 4369215,
+      "site_group": 4369104,
+      "site_pattern": "e8????????84c07421488b55df483b55e7740a48893a488345df08",
+      "site_offset": 0
+    },
+    {
+      "site_name": "region_individual_1",
+      "site_start": 4369847,
+      "site_group": 4369728,
+      "site_pattern": "e8????????84c07425498b06498bceff90b0000000488b4820",
+      "site_offset": 0
+    },
+    {
+      "site_name": "region_individual_2",
+      "site_start": 4370000,
+      "site_group": 4369728,
+      "site_pattern": "e8????????84c07426488b542428483b542430740b48893a",
+      "site_offset": 0
+    },
+    {
+      "site_name": "region_individual_3",
+      "site_start": 4370704,
+      "site_group": 4370592,
+      "site_pattern": "e8????????84c0742f483bfe740e4c89374883c70848897c2428",
+      "site_offset": 0
+    },
+    {
+      "site_name": "building_has_places",
+      "site_start": 414064,
+      "site_group": 414064,
+      "site_pattern": "48895c24104c8944241848894c24085556574154415541564157488d6c24d94881eca0000000498bf8",
+      "site_offset": 0
+    },
+    {
+      "site_name": "building_reserve_next",
+      "site_start": 415887,
+      "site_group": 415008,
+      "site_pattern": "488b1beb42488b3b488b4308488938488b0b488b43084889410848ff8da0010000488b4b104885c9740d834108ff7507488b01ff501090ba18000000488bcbe8????????488bdf483b9d980100000f85????????",
+      "site_offset": 0
+    },
+    {
+      "site_name": "region_native_eligible",
+      "site_start": 4365600,
+      "site_group": 4365600,
+      "site_pattern": "488bc44889581048896818565741564881eca00000000f2970d8440f2940c8440f2948b8",
+      "site_offset": 0
+    },
+    {
+      "site_name": "region_icon_gate",
+      "site_start": 4365896,
+      "site_group": 4365600,
+      "site_pattern": "498b06498bceff5040488bc8e8????????488bd84885c00f84????????488b08488bb1a0000000488d9424d8000000488bcfff15????????488b0848898c24c00000004885c974148b51088d420189410885d27507488b01ff500890488b8c24d80000004885c9740d834108ff7507488b01ff5010904c8bc5488d9424c0000000488bcbffd60fb6d8488b8c24c00000004885c9740d834108ff7507488b11ff52109084db0f85????????",
+      "site_offset": 0
+    },
+    {
+      "site_name": "building_select",
+      "site_start": 1990576,
+      "site_group": 1990576,
+      "site_pattern": "885130c3cccccccccccccccccccccccc488bc44889580848896818",
+      "site_offset": 0
+    }
+  ],
+  "verified_sha": "",
+  "edit_fixups": [
+    {
+      "edit_rva": 4368890,
+      "edit_offset": 21,
+      "edit_target": 4369095
+    },
+    {
+      "edit_rva": 4368890,
+      "edit_offset": 39,
+      "edit_target": 4369095
+    },
+    {
+      "edit_rva": 4368890,
+      "edit_offset": 71,
+      "edit_target": 4369095
+    },
+    {
+      "edit_rva": 4372931,
+      "edit_offset": 6,
+      "edit_target": 4368848
+    },
+    {
+      "edit_rva": 4370473,
+      "edit_offset": 7,
+      "edit_target": 4368848
+    }
+  ]
+}

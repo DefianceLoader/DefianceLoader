@@ -1,0 +1,367 @@
+{
+  "feature_schema": 1,
+  "module": "game.dll",
+  "source_sha256": "bc2af42369f9f6fe70e206ae4846f8f0e46ac01cca9a325c8159ee04a9b5e405",
+  "module_bytes": 6581760,
+  "image_bytes": 6615040,
+  "code_bytes": 6761,
+  "block_bytes": 8192,
+  "trace_offset": 2048,
+  "anchor_rva": 2054992,
+  "anchor": "48895c2408574883ec20488b81180100004c8b8120010000493bc074180f1f00",
+  "hooks": [
+    {
+      "rva": 2055152,
+      "entry": 189,
+      "hook_feature": 2,
+      "displaced": "48895c24084889742410"
+    },
+    {
+      "rva": 2054784,
+      "entry": 299,
+      "hook_feature": 2,
+      "displaced": "4889742410574883ec40"
+    },
+    {
+      "rva": 3360700,
+      "entry": 382,
+      "hook_feature": 2,
+      "displaced": "ff5060488b5c2430"
+    },
+    {
+      "rva": 3360651,
+      "entry": 468,
+      "hook_feature": 2,
+      "displaced": "488b5c2430"
+    },
+    {
+      "rva": 3453316,
+      "entry": 660,
+      "hook_feature": 2,
+      "displaced": "498b064c8bc7488d542420498bceff9080000000"
+    },
+    {
+      "rva": 3494534,
+      "entry": 555,
+      "hook_feature": 2,
+      "displaced": "488b86a0000000"
+    },
+    {
+      "rva": 258571,
+      "entry": 808,
+      "hook_feature": 6,
+      "displaced": "4c8bc6488bd5488bcfe857010000"
+    },
+    {
+      "rva": 3466438,
+      "entry": 4096,
+      "hook_feature": 2,
+      "displaced": "ff9048050000"
+    },
+    {
+      "rva": 3466598,
+      "entry": 4125,
+      "hook_feature": 2,
+      "displaced": "e82585ceff"
+    },
+    {
+      "rva": 3268912,
+      "entry": 4151,
+      "hook_feature": 2,
+      "displaced": "ff9048050000"
+    },
+    {
+      "rva": 2195324,
+      "entry": 6677,
+      "hook_feature": 10,
+      "displaced": "85c075513883a9000000754d"
+    },
+    {
+      "rva": 2195400,
+      "entry": 6656,
+      "hook_feature": 10,
+      "displaced": "4c894d8f4d8be9eb04"
+    },
+    {
+      "rva": 2739472,
+      "entry": 6726,
+      "hook_feature": 10,
+      "displaced": "488b82b800000048894128"
+    }
+  ],
+  "fixups": [
+    {
+      "offset": 288,
+      "what": "resume fn_1f4370 + 0xa",
+      "fixup_feature": 2,
+      "target_rva": 2055162
+    },
+    {
+      "offset": 342,
+      "what": "fn_1f42d0, the row resolver",
+      "fixup_feature": 2,
+      "target_rva": 2054992
+    },
+    {
+      "offset": 371,
+      "what": "resume fn_1f4200 + 0x15",
+      "fixup_feature": 2,
+      "target_rva": 2054805
+    },
+    {
+      "offset": 457,
+      "what": "resume SmartCursorCmdSelect select + 8",
+      "fixup_feature": 2,
+      "target_rva": 3360708
+    },
+    {
+      "offset": 544,
+      "what": "resume SmartCursorCmdSelect toggle + 0xb",
+      "fixup_feature": 2,
+      "target_rva": 3360656
+    },
+    {
+      "offset": 797,
+      "what": "resume world same-type selection",
+      "fixup_feature": 2,
+      "target_rva": 3453336
+    },
+    {
+      "offset": 619,
+      "what": "ignore Ctrl squad-icon hits",
+      "fixup_feature": 2,
+      "target_rva": 3494678
+    },
+    {
+      "offset": 632,
+      "what": "the cursor's select-command builder",
+      "fixup_feature": 2,
+      "target_rva": 3494623
+    },
+    {
+      "offset": 1147,
+      "what": "resume ammunition menu fill",
+      "fixup_feature": 6,
+      "target_rva": 258585
+    },
+    {
+      "offset": 938,
+      "what": "AmmunitionMenu::fillSlot",
+      "fixup_feature": 6,
+      "target_rva": 258928
+    },
+    {
+      "offset": 1127,
+      "what": "AmmunitionMenu::hideSlot",
+      "fixup_feature": 6,
+      "target_rva": 260512
+    },
+    {
+      "offset": 1106,
+      "what": "text label setter",
+      "fixup_feature": 6,
+      "target_rva": 2939072
+    },
+    {
+      "offset": 4114,
+      "what": "resume building TAB collection",
+      "fixup_feature": 2,
+      "target_rva": 3466444
+    },
+    {
+      "offset": 4140,
+      "what": "resume building TAB selection",
+      "fixup_feature": 2,
+      "target_rva": 3466603
+    },
+    {
+      "offset": 4796,
+      "what": "UI raw-entity vector insertion",
+      "fixup_feature": 2,
+      "target_rva": 266272
+    },
+    {
+      "offset": 5160,
+      "what": "UI entity focus reference assignment",
+      "fixup_feature": 2,
+      "target_rva": 223888
+    },
+    {
+      "offset": 4161,
+      "what": "resume building cycle validation",
+      "fixup_feature": 2,
+      "target_rva": 3268918
+    },
+    {
+      "offset": 6715,
+      "what": "resume the preview gun scan",
+      "fixup_feature": 10,
+      "target_rva": 2195413
+    },
+    {
+      "offset": 6691,
+      "what": "resume the preview gun filter",
+      "fixup_feature": 10,
+      "target_rva": 2195336
+    },
+    {
+      "offset": 6750,
+      "what": "resume the squad preview gun scan",
+      "fixup_feature": 10,
+      "target_rva": 2739487
+    }
+  ],
+  "exports": [
+    {
+      "export_offset": 396,
+      "dll": "user32.dll",
+      "name": "GetAsyncKeyState"
+    },
+    {
+      "export_offset": 484,
+      "dll": "user32.dll",
+      "name": "GetAsyncKeyState"
+    },
+    {
+      "export_offset": 650,
+      "dll": "user32.dll",
+      "name": "GetAsyncKeyState"
+    }
+  ],
+  "sites": [
+    {
+      "site_name": "single_click",
+      "site_start": 2055152,
+      "site_group": 2055152,
+      "site_pattern": "48895c24084889742410574883ec20488bfa410fb6f0488b9140010000",
+      "site_offset": 0
+    },
+    {
+      "site_name": "double_click",
+      "site_start": 2054784,
+      "site_group": 2054784,
+      "site_pattern": "4889742410574883ec40488bf9e8????????488bf04885c00f84????????488b8f48010000",
+      "site_offset": 0
+    },
+    {
+      "site_name": "world_select",
+      "site_start": 3360690,
+      "site_group": 3360665,
+      "site_pattern": "4885d2750233d2488bcbff5060488b5c24304883c4205ec3",
+      "site_offset": 10
+    },
+    {
+      "site_name": "world_toggle",
+      "site_start": 3360641,
+      "site_group": 3360628,
+      "site_pattern": "4885d2750233d2488bcb488b5c24304883c4205e48ff6070",
+      "site_offset": 10
+    },
+    {
+      "site_name": "world_double",
+      "site_start": 3453316,
+      "site_group": 3452848,
+      "site_pattern": "498b064c8bc7488d542420498bceff9080000000e9????????",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ctrl_select",
+      "site_start": 3494534,
+      "site_group": 3493776,
+      "site_pattern": "488b86a0000000482b869800000048c1f8034883f8017741488b4e78488b01488b57104885d27409488b52104885d27503498bd7ff9040080000488bc84885c0740a488b00ff505884c07544488b07488bcfff505884c07537488d5577488bcee8????????488d4d67483bc8740a488b184c893848895d67488b4d774885c9740a488b01ba01000000ff104885db7523",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_panel",
+      "site_start": 258571,
+      "site_group": 257766,
+      "site_pattern": "4c8bc6488bd5488bcfe8????????eb0b488bd5488bcfe8????????",
+      "site_offset": 0
+    },
+    {
+      "site_name": "building_tab_collect",
+      "site_start": 3466438,
+      "site_group": 3466272,
+      "site_pattern": "ff9040050000488b4c2420488b542428483bca754b4885c9",
+      "site_offset": 0
+    },
+    {
+      "site_name": "building_tab_apply",
+      "site_start": 3466598,
+      "site_group": 3466272,
+      "site_pattern": "e8????????0f57c9488bcbe8????????90488b4c24204885c9",
+      "site_offset": 0
+    },
+    {
+      "site_name": "building_tab_refresh",
+      "site_start": 3268912,
+      "site_group": 3268848,
+      "site_pattern": "ff9040050000488b4c2430483b4c24387549488b8e28010000",
+      "site_offset": 0
+    },
+    {
+      "site_name": "preview_primary",
+      "site_start": 2195324,
+      "site_group": 2194736,
+      "site_pattern": "85c075513883a9000000754d488b83100200004c8b8318020000",
+      "site_offset": 0
+    },
+    {
+      "site_name": "preview_secondary",
+      "site_start": 2195400,
+      "site_group": 2194736,
+      "site_pattern": "4c894d8f4d8be9eb044c894d974883c608493bf60f85????????",
+      "site_offset": 0
+    },
+    {
+      "site_name": "preview_squad",
+      "site_start": 2739472,
+      "site_group": 2738224,
+      "site_pattern": "488b82b8000000488941284883c138493bc875ec4c8b7d68",
+      "site_offset": 0
+    },
+    {
+      "site_name": "anchor",
+      "site_start": 2054992,
+      "site_group": 2054992,
+      "site_pattern": "48895c2408574883ec20488b81180100004c8b8120010000493bc074180f1f00",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_fill_slot",
+      "site_start": 258928,
+      "site_group": 258928,
+      "site_pattern": "48895c241048897424185557415441564157488dac2460ffffff4881eca0010000",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_hide_slot",
+      "site_start": 260512,
+      "site_group": 260512,
+      "site_pattern": "48895c24084889742410574883ec204869f2b80000004803f1488bbe08020000",
+      "site_offset": 0
+    },
+    {
+      "site_name": "focus_append",
+      "site_start": 266272,
+      "site_group": 266272,
+      "site_pattern": "405355415541574883ec28488b41084c8bfa488b11498bef482bea482bc24d8be848c1fd03",
+      "site_offset": 0
+    },
+    {
+      "site_name": "focus_assign",
+      "site_start": 223888,
+      "site_group": 223888,
+      "site_pattern": "48895c2418565741564883ec204c8bc24c8bf133c0894424404885d27420488d542448",
+      "site_offset": 0
+    },
+    {
+      "site_name": "ammo_label_text",
+      "site_start": 2939072,
+      "site_group": 2939072,
+      "site_pattern": "48895c240848896c24104889742418574883ec2048837a1810488db9a8010000",
+      "site_offset": 0
+    }
+  ],
+  "verified_sha": ""
+}

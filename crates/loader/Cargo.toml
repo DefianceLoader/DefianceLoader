@@ -1,0 +1,29 @@
+[package]
+name = "defiance-loader"
+version = "0.1.0"
+license = "MPL-2.0"
+edition = "2021"
+
+# cdylib is the proxy DLL the game loads; rlib lets the loader's own tests run.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+defiance-api = { path = "../api" }
+defiance-core = { path = "../core" }
+
+[features]
+test-host = []
+
+[build-dependencies]
+defiance-build-support = { path = "../build-support" }
+
+[[bin]]
+name = "crash-fixture"
+path = "src/bin/crash-fixture.rs"
+required-features = ["test-host"]
+
+[[test]]
+name = "hook_lifecycle"
+path = "tests/hook_lifecycle.rs"
+required-features = ["test-host"]

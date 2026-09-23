@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "id": "author.demo",
+  "dll": "demo.dll",
+  "version": "1.2.3",
+  "abi": 5,
+  "group": "author.demo",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Toggle this third-party plugin."
+    }
+  ],
+  "depends": [
+    { "id": "defiance.core", "min": "0.1.0", "max": null }
+  ],
+  "conflicts": []
+}

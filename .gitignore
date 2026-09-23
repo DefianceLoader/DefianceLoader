@@ -1,0 +1,10 @@
+.venv/
+out/
+__pycache__/
+bin/*.dll
+injector/target/
+target/
+*.log
+bin/steam/
+bin/gog/
+mise.local.toml

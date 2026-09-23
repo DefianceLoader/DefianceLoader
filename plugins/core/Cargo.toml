@@ -1,0 +1,19 @@
+[package]
+name = "defiance-plugin-core"
+version = "0.1.0"
+license = "MPL-2.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+defiance-api = { path = "../../crates/api" }
+defiance-core = { path = "../../crates/core" }
+defiance-feature-sdk = { path = "../../crates/feature-sdk" }
+
+[features]
+parity-test = []
+
+[build-dependencies]
+defiance-build-support = { path = "../../crates/build-support" }

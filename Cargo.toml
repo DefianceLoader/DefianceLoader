@@ -1,0 +1,41 @@
+# The loader workspace. Three kinds of crate:
+#
+#   crates/api     the plugin ABI: a C struct of function pointers, and the
+#                  `defiance_plugin` entry point a plugin exports. No code that
+#                  is not part of that contract lives here, so third-party
+#                  plugins compile against this and nothing else.
+#   crates/core    the parts of the injector that do not need a target process:
+#                  PE mapping and the masked signature scan. Both the loader
+#                  and (later) the injector build on it.
+#   crates/loader  the proxy DLL that hosts plugins inside trm.exe.
+#   plugins/*      the game's own patches as the first plugin, and an example.
+[workspace]
+resolver = "2"
+members = [
+    "crates/api",
+    "crates/build-support",
+    "crates/core",
+    "crates/loader",
+    "injector",
+    "plugins/core",
+    "plugins/example",
+    "plugins/pickup",
+    "crates/feature-sdk",
+    "plugins/selection",
+    "plugins/movement",
+    "plugins/posture",
+    "plugins/firing",
+    "plugins/attack",
+    "plugins/garrison",
+    "plugins/ammunition",
+    "plugins/diagnostics",
+    "plugins/preview-weapon",
+    "tools/plugin-host",
+]
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"
+debug = 2
+strip = false

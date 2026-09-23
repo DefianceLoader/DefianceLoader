@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "id": "defiance.regroup",
+  "dll": "defiance_plugin_regroup.dll",
+  "version": "0.1.0",
+  "abi": 5,
+  "group": "infantry",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "false",
+      "description": "Form new infantry squads from selected soldiers, or split selected soldiers out of a squad. Experimental; single-player only, outside buildings and vehicles. Requires selection. Disabling removes regroup/restore hotkeys; it does not automatically put soldiers back. Restore history is lost when loading a save or leaving the current world. Restart required."
+    },
+    {
+      "key": "regroup_hotkey",
+      "type": "text",
+      "default": "Ctrl+Alt+R",
+      "description": "Combine the selected infantry into one squad, leaving unselected soldiers in their current squads. Use a key such as R or F6, optionally joined to Ctrl, Alt or Shift with + (for example Ctrl+Alt+R); hold exactly the configured modifiers. Requires regroup enabled. Restart required.\nKeys: A-Z, 0-9, F1-F24, Numpad0-Numpad9, Space, Tab, Enter, Escape, Backspace, Insert, Delete, Home, End, PageUp, PageDown, Left, Right, Up, Down, Multiply, Add, Subtract, Decimal, Divide. Key names are case-insensitive."
+    },
+    {
+      "key": "restore_hotkey",
+      "type": "text",
+      "default": "Ctrl+Alt+U",
+      "description": "Return selected regrouped soldiers to their recorded original squads in the current live world. Does not restore spent ammo or dead soldiers, and cannot restore groups from before a save reload. Uses the same key and modifier format as regroup_hotkey. Requires regroup enabled. Restart required.\nKeys: A-Z, 0-9, F1-F24, Numpad0-Numpad9, Space, Tab, Enter, Escape, Backspace, Insert, Delete, Home, End, PageUp, PageDown, Left, Right, Up, Down, Multiply, Add, Subtract, Decimal, Divide. Key names are case-insensitive."
+    },
+    {
+      "key": "max_soldiers",
+      "type": "int",
+      "default": "16",
+      "min": 1,
+      "max": 64,
+      "description": "Maximum soldiers allowed in a destination squad when regrouping or restoring. Values 1-64 are accepted, but the effective limit is currently 20; values above 16 remain experimental. This does not add soldiers or resize existing squads. Restart required."
+    },
+    {
+      "key": "max_weapon_types",
+      "type": "int",
+      "default": "0",
+      "min": 0,
+      "max": 126,
+      "description": "Maximum distinct ammunition types allowed when regrouping or restoring a squad, despite this setting name. It counts ammo types rather than weapon models. 0 uses the in-mission ammo-menu capacity (normally 9, larger with expanded ammo menu); an explicit limit cannot exceed that capacity. Operations exceeding the limit are refused. Restart required."
+    }
+  ],
+  "depends": [
+    {
+      "id": "defiance.core",
+      "min": "0.1.0"
+    },
+    {
+      "id": "defiance.selection",
+      "min": "0.3.0"
+    }
+  ],
+  "conflicts": []
+}

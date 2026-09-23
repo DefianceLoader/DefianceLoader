@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "id": "defiance.expanded-ammo-menu",
+  "dll": "defiance_plugin_expanded_ammo_menu.dll",
+  "version": "0.2.2",
+  "abi": 5,
+  "group": "weapons",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Show more than nine ammunition entries in the in-mission ammo menu by adding columns to its three rows. Enabled by default. Experimental. Requires selection and ammunition enabled. Disabling restores the normal menu size; it does not remove weapons or ammo. Does not affect out-of-mission squad-management scrolling. Restart required."
+    },
+    {
+      "key": "columns",
+      "type": "int",
+      "default": "12",
+      "min": 3,
+      "max": 42,
+      "description": "Number of columns in the in-mission ammo menu, with three entries per column. 3-42 columns show 9-126 entries; entries beyond that capacity stay hidden. Wide menus may extend off screen. Does not give squads more ammo or increase their carrying capacity. Requires expanded ammo menu enabled. Restart required."
+    },
+    {
+      "key": "all_selected_squads",
+      "type": "bool",
+      "default": "true",
+      "description": "Show ammunition from all selected infantry squads together, with ammo-level bars, average active reload progress, and enabled/total counts for mixed weapon states. Clicking a mixed or disabled type enables it for all selected users; clicking a fully enabled type disables it. Enabled by default. Experimental. False keeps the focused-squad view while retaining the larger menu. Individual-soldier overrides still cover only the first eight ammo slots; select whole squads for later slots. Requires expanded ammo menu enabled. Restart required."
+    }
+  ],
+  "depends": [
+    {
+      "id": "defiance.ammunition",
+      "min": "0.3.0"
+    },
+    {
+      "id": "defiance.core",
+      "min": "0.1.0"
+    },
+    {
+      "id": "defiance.selection",
+      "min": "0.3.0"
+    }
+  ],
+  "conflicts": []
+}

@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "id": "defiance.squad-management-scroll",
+  "dll": "defiance_plugin_squad_management_scroll.dll",
+  "version": "1.1.0",
+  "abi": 5,
+  "group": "weapons",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Scroll through more than six weapon or ammunition entries, the perk pick row, and the upgrade columns in out-of-mission infantry and vehicle management (army presets and squad management), using the mouse wheel or separate scrollbars. Keeps the original card sizes. Lets a unit take more than five upgrades: scroll an empty upgrade card into view and drop an upgrade on it. False restores the six-entry rows, five-card perk row and five-slot upgrade columns; it does not remove inventory, perks or installed upgrades. Does not change the in-mission ammo menu or require the selection/ammunition plugins. Enable the companion Defiance squad inventory scrolling mod in the game MODS menu; disable that companion too when removing this feature. Restart required."
+    },
+    {
+      "key": "perk_slots",
+      "type": "int",
+      "default": "5",
+      "min": 5,
+      "max": 20,
+      "description": "Most cards the infantry panel's perk pick row shows; the row scrolls when there are more than the five it shows at once. The row is as long as the squad's type has trainings, up to this. 5-20; five matches stock. Only changes how many perks the row displays and scrolls through; it does not grant perks or change the game's own perk and rank limits. Requires the companion Defiance squad inventory scrolling mod for the row's slider. Restart required."
+    },
+    {
+      "key": "upgrades",
+      "type": "bool",
+      "default": "true",
+      "description": "Scroll the upgrade columns in out-of-mission infantry and vehicle management and allow more than five upgrades per unit (see upgrade_slots). As an upgrade drag starts, the column scrolls to the card the drop will land on: the installed upgrade it would replace or duplicate, otherwise the first empty card. False leaves the stock five-slot columns and hides their scrollbars. Requires the companion Defiance squad inventory scrolling mod for the upgrade scrollbars. Restart required."
+    },
+    {
+      "key": "upgrade_slots",
+      "type": "int",
+      "default": "20",
+      "min": 5,
+      "max": 30,
+      "description": "Length of the upgrade columns: a unit's installed upgrades, then empty cards up to this count, five at a time with a scrollbar. Drop an upgrade on an empty card to install more than five. 5-30; default 20; five reproduces stock (five slots, no scrollbar). The game still rejects duplicates and replaces a conflicting upgrade (for example a second armor). Requires upgrades enabled and the companion Defiance squad inventory scrolling mod. Restart required."
+    },
+    {
+      "key": "vehicles",
+      "type": "bool",
+      "default": "true",
+      "description": "Apply independent scrolling to the out-of-mission vehicle panel (weapons, ammunition and upgrades). False leaves the vehicle panel entirely stock and hides its scrollbars, while the infantry panel keeps scrolling. Restart required."
+    }
+  ],
+  "depends": [],
+  "conflicts": []
+}
