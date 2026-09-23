@@ -38,7 +38,7 @@ experimental add-on and is disabled by default.
 Setup, once:
 
     mise exec python@3.12 "--" python -m venv .venv
-    ./.venv/Scripts/python.exe -m pip install capstone keystone-engine pefile
+    ./.venv/Scripts/python.exe -m pip install -r tools/requirements.txt
 
 ## Install and build the plugin loader
 

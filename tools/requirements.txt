@@ -1,0 +1,5 @@
+# Python packages the tools and tests use, pinned so local setups and CI agree.
+# Install: mise run setup (or python -m pip install -r tools/requirements.txt).
+capstone==5.0.9
+keystone-engine==0.9.2
+pefile==2024.8.26
