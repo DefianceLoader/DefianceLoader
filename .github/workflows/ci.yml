@@ -6,9 +6,21 @@
 # for the native tests that run the game's own code.
 name: ci
 
+# Only when something that can change a build or test result changes: a push or
+# pull request touching nothing but documentation, licences or .gitignore skips.
 on:
   push:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE*'
+      - '.gitignore'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE*'
+      - '.gitignore'
 
 jobs:
   test:
