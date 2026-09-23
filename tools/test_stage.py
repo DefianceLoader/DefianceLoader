@@ -15,7 +15,10 @@ class StagingTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = pathlib.Path(self.temp.name)
+        # Resolved, so expectations built from it compare equal to resolved
+        # results where the temp directory is a short 8.3 path (GitHub's
+        # Windows runners use C:\Users\RUNNER~1\...).
+        self.root = pathlib.Path(self.temp.name).resolve()
         self.game = self.root / "Game" / "bin"
         self.game.mkdir(parents=True)
         self.source = self.root / "build"

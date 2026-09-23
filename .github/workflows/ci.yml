@@ -30,6 +30,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install the Python test dependencies
+        run: python -m pip install pefile
       - name: Test staging paths and uninstall
         run: python tools/test_stage.py
       - name: Test release metadata enforcement
@@ -47,6 +49,4 @@ jobs:
       - name: Build the loader
         run: cargo build -p defiance-loader
       - name: Test proxy forwarding from DLL initialization
-        run: |
-          python -m pip install pefile
-          python tools/test_proxy.py target/debug/defiance_loader.dll
+        run: python tools/test_proxy.py target/debug/defiance_loader.dll
