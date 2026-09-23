@@ -2,7 +2,7 @@
 //!
 //! This is the injector's `apply`/`apply_game`, unchanged except that the
 //! payload block is a parameter rather than a compile-time include, so the same
-//! code serves the injector (which carries `out/payload.bin`) and the loader's
+//! code serves the injector (which carries the reference payload) and the loader's
 //! core plugin (which carries it too, but resolves the sites in-process).
 //!
 //! The memory is addressed the same way in both cases: `Process::open` on the

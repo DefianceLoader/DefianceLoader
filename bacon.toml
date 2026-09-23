@@ -8,8 +8,8 @@
 #                           expanded-ammo-menu, squad-management-scroll
 #
 # In the TUI, `c` switches to clippy, `t` to tests, `g`/`e`/`s` to the three
-# standalone plugins. plugins/core embeds out/payload*, so run
-# `mise run assemble` once in a fresh checkout.
+# standalone plugins. plugins/core embeds the committed payloads in
+# tools/variants/reference; `mise run assemble` refreshes them after patch edits.
 
 default_job = "check"
 

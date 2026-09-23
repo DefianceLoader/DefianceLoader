@@ -16,11 +16,11 @@
 #   mise run test-quick   format, Rust tests of every workspace, versions,
 #                     layouts and variants; minutes, not the full suite
 #
-# The injector embeds out/payload*.bin and .json when it is compiled, and out/
-# is not tracked, so a checkout leaves whatever was assembled last. `build`
-# therefore always runs `assemble` first, which reassembles unless its inputs
-# are unchanged since the last run (tools/stamp.py); nothing builds the
-# injector around a stale payload.
+# Core and the injector embed the reference payloads in tools/variants/reference,
+# which are tracked, so a checkout builds without the game's DLLs. `build` still
+# runs `assemble` first: with the reference DLLs in bin/ it reassembles when its
+# inputs changed (tools/stamp.py) and refreshes those files, so nothing builds
+# around a stale payload; without them it uses the committed payloads.
 
 [tools]
 python = "3.12"
@@ -190,9 +190,9 @@ run = 'target\release\defiance-pickup-inject.exe --select-probe'
 raw = true
 
 # The loader branch: a proxy DLL that hosts plugins inside trm.exe. This is the
-# native answer to BepInEx. It needs out/payload*.json/.bin (the same files the
-# injector embeds). Player builds always assemble first; infrastructure tests
-# can run without game DLLs. See crates/loader/src/lib.rs for the design.
+# native answer to BepInEx. It embeds the reference payloads the injector does
+# (tools/variants/reference). Player builds always assemble first; everything
+# builds without the game's DLLs from the committed payloads. See crates/loader/src/lib.rs for the design.
 [tasks.loader]
 description = "Build the loader, built-in plugins and the standalone regroup, expanded-ammo-menu and squad-management-scroll plugins"
 depends = ["assemble"]

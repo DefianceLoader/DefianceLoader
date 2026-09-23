@@ -220,11 +220,14 @@ fn main() {
             (targets[1].base as usize, targets[1].size),
         ])
         .unwrap();
-    let payload = std::fs::read(repo.join("out/payload.bin")).unwrap();
-    let game_payload = std::fs::read(repo.join("out/payload-game.bin")).unwrap();
-    let parsed = Patch::parse(&std::fs::read_to_string(repo.join("out/payload.json")).unwrap());
-    let parsed_game =
-        GamePatch::parse(&std::fs::read_to_string(repo.join("out/payload-game.json")).unwrap());
+    let payload = std::fs::read(repo.join("tools/variants/reference/logic.bin")).unwrap();
+    let game_payload = std::fs::read(repo.join("tools/variants/reference/game.bin")).unwrap();
+    let parsed = Patch::parse(
+        &std::fs::read_to_string(repo.join("tools/variants/reference/logic.json")).unwrap(),
+    );
+    let parsed_game = GamePatch::parse(
+        &std::fs::read_to_string(repo.join("tools/variants/reference/game.json")).unwrap(),
+    );
     let (p, relocated, logic_moves) =
         defiance_core::logic_for_build(&parsed, &targets[0], defiance_core::Scan::Default).unwrap();
     let (g, _, _) =

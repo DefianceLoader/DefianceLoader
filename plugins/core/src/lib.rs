@@ -25,10 +25,10 @@ pub extern "C" fn defiance_test_game_access() -> *const defiance_api::GameAccess
 static NAME: &[u8] = b"defiance.core\0";
 static VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "\0");
 
-const PAYLOAD: &[u8] = include_bytes!("../../../out/payload.bin");
-const DESCRIPTOR: &str = include_str!("../../../out/payload.json");
-const GAME_PAYLOAD: &[u8] = include_bytes!("../../../out/payload-game.bin");
-const GAME_DESCRIPTOR: &str = include_str!("../../../out/payload-game.json");
+const PAYLOAD: &[u8] = include_bytes!("../../../tools/variants/reference/logic.bin");
+const DESCRIPTOR: &str = include_str!("../../../tools/variants/reference/logic.json");
+const GAME_PAYLOAD: &[u8] = include_bytes!("../../../tools/variants/reference/game.bin");
+const GAME_DESCRIPTOR: &str = include_str!("../../../tools/variants/reference/game.json");
 
 /// A build whose classes gained members: its payload was assembled from the
 /// same source with that build's layout (`tools/layouts/*.json`) and resolved

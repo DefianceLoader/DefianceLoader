@@ -8,6 +8,13 @@ embeds out/payload* whenever those files are rewritten, even byte-identical.
 
     python tools/stamp.py assemble      the file patch and both payloads
 
+After assembling, the reference build's payloads (out/payload[-game].{bin,json})
+are copied into the tracked tools/variants/reference/, which is what Core, the
+injector and the test host embed: a checkout builds without the game's DLLs,
+and a patch change shows up as a change to those files. Without the reference
+DLLs (bin/logic.orig.dll, bin/game.orig.dll) assembling is skipped and the
+committed payloads are used as they are.
+
 `digest` and the stamp helpers are also used by tools/test_variant.py.
 """
 import hashlib
@@ -79,17 +86,46 @@ def record(name, key, outputs=()):
     (STAMPS / f"{name}.json").write_text(json.dumps(stamp, indent=2) + "\n", encoding="utf-8")
 
 
+# The reference payloads as assembled, and their tracked copies.
+REFERENCE = ROOT / "tools" / "variants" / "reference"
+REFERENCE_COPIES = {"out/payload.bin": "logic.bin", "out/payload.json": "logic.json",
+                    "out/payload-game.bin": "game.bin", "out/payload-game.json": "game.json"}
+REFERENCE_DLLS = ["bin/logic.orig.dll", "bin/game.orig.dll"]
+
+
+def sync_reference():
+    """Copy the assembled reference payloads into tools/variants/reference,
+    rewriting only what changed, so cargo does not rebuild for identical bytes."""
+    REFERENCE.mkdir(parents=True, exist_ok=True)
+    for source, name in REFERENCE_COPIES.items():
+        data = (ROOT / source).read_bytes()
+        target = REFERENCE / name
+        if not target.is_file() or target.read_bytes() != data:
+            target.write_bytes(data)
+            print(f"updated {target.relative_to(ROOT).as_posix()}")
+
+
 def run(name):
     job = JOBS[name]
+    if name == "assemble" and not all((ROOT / dll).is_file() for dll in REFERENCE_DLLS):
+        missing = [dll for dll in REFERENCE_DLLS if not (ROOT / dll).is_file()]
+        if all((REFERENCE / n).is_file() for n in REFERENCE_COPIES.values()):
+            print(f"assemble: {', '.join(missing)} not present; using the committed payloads in "
+                  "tools/variants/reference")
+            return 0
+        print(f"assemble: {', '.join(missing)} not present and no committed payloads", file=sys.stderr)
+        return 1
     key = digest(job["inputs"])
     if fresh(name, key):
         print(f"{name}: inputs unchanged since the last run; skipped (DEFIANCE_NO_STAMP=1 forces it)")
-        return 0
-    for command in job["commands"]:
-        result = subprocess.run([sys.executable if command[0] == "python" else command[0], *command[1:]], cwd=ROOT)
-        if result.returncode:
-            return result.returncode
-    record(name, key, job["outputs"])
+    else:
+        for command in job["commands"]:
+            result = subprocess.run([sys.executable if command[0] == "python" else command[0], *command[1:]], cwd=ROOT)
+            if result.returncode:
+                return result.returncode
+        record(name, key, job["outputs"])
+    if name == "assemble":
+        sync_reference()
     return 0
 
 

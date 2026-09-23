@@ -1,0 +1,75 @@
+# Build the release package on GitHub's runners, attest its provenance, and
+# attach it to a draft GitHub Release.
+#
+# A `v*` tag builds that tag and creates a draft release to review and publish
+# by hand. A manual run (Actions > release > Run workflow) builds and attests
+# the chosen branch and keeps the files as a workflow artifact, without a
+# release, to try the build.
+#
+# The package holds the loader, the plugins and their documentation, built from
+# the committed sources and payloads; no game files are needed. The squad-scroll
+# companion UI mod is derived from the game's own UI files, so it is built on a
+# machine with the game (`python tools/package.py --companion-only --game ...`)
+# and uploaded separately. Anyone can check a downloaded file against this run:
+#   gh attestation verify <file> -R DefianceLoader/DefianceLoader
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write      # create the draft release
+  id-token: write      # sign the provenance attestation
+  attestations: write  # store it
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install the Python tool dependencies
+        run: python -m pip install -r tools/requirements.txt
+      - name: Build the loader, the built-in plugins and the standalone plugins
+        run: |
+          cargo build --release
+          cargo build --release --manifest-path plugins/regroup/Cargo.toml
+          cargo build --release --manifest-path plugins/expanded-ammo-menu/Cargo.toml
+          cargo build --release --manifest-path plugins/squad-management-scroll/Cargo.toml
+          target\release\manifest-gen.exe --out target\release
+      - name: Package and checksum
+        id: package
+        shell: pwsh
+        run: |
+          $name = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 10))" }
+          python tools/package.py --out "out/release/defiance-loader-$name.zip"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # PowerShell does not expand globs for native commands; list the files.
+          python tools/checksums.py (Get-ChildItem out/release/*.zip).FullName --out out/release/SHA256SUMS.txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          "name=$name" >> $env:GITHUB_OUTPUT
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            out/release/*.zip
+            target/release/*.dll
+            target/release/*.exe
+            plugins/*/target/release/*.dll
+      - name: Keep the files (manual runs)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v7
+        with:
+          name: defiance-loader-${{ steps.package.outputs.name }}
+          path: out/release/
+      - name: Create the draft release (tags)
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release create $env:GITHUB_REF_NAME (Get-ChildItem out/release/*).FullName --draft --verify-tag --generate-notes --title $env:GITHUB_REF_NAME

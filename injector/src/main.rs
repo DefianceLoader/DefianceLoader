@@ -26,13 +26,13 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 // --- the patch, baked in at build time by tools/payload.py -----------------
-const PAYLOAD: &[u8] = include_bytes!("../../out/payload.bin");
-const DESCRIPTOR: &str = include_str!("../../out/payload.json");
+const PAYLOAD: &[u8] = include_bytes!("../../tools/variants/reference/logic.bin");
+const DESCRIPTOR: &str = include_str!("../../tools/variants/reference/logic.json");
 
 // The one patch that targets game.dll rather than logic.dll. It never becomes
 // a file patch, so this is the only way it installs.
-const GAME_PAYLOAD: &[u8] = include_bytes!("../../out/payload-game.bin");
-const GAME_DESCRIPTOR: &str = include_str!("../../out/payload-game.json");
+const GAME_PAYLOAD: &[u8] = include_bytes!("../../tools/variants/reference/game.bin");
+const GAME_DESCRIPTOR: &str = include_str!("../../tools/variants/reference/game.json");
 
 fn logic_patch() -> Patch {
     Patch::parse(DESCRIPTOR)

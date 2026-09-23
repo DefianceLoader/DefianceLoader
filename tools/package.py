@@ -24,6 +24,11 @@ launch; the archive contains no INI files.
 Without a game directory the squad-management-scroll plugin is still packaged,
 but without its companion UI mod; the plugin then logs a warning and leaves the
 stock panel in place until the mod is added.
+
+The companion UI mod alone (data files derived from the installed game's UI;
+no code), for releases whose loader package is built without the game:
+
+    python tools/package.py --companion-only --game "C:\\Games\\...\\Defiance"
 """
 import argparse
 import hashlib
@@ -69,7 +74,28 @@ def main(argv):
                         default=ROOT / "plugins/squad-management-scroll/target/release" / SQUAD_SCROLL_DLL)
     parser.add_argument("--game", default=os.environ.get("DEFIANCE_GAME_DIR"),
                         help="game directory (or its bin) for the squad-scroll companion UI mod")
+    parser.add_argument("--companion-only", action="store_true",
+                        help="package only the companion UI mod (needs --game); "
+                             "default --out out/defiance-squad-scroll-ui.zip")
     args = parser.parse_args(argv)
+
+    if args.companion_only:
+        game = game_root(args.game)
+        if game is None:
+            parser.error("--companion-only needs --game (or DEFIANCE_GAME_DIR): the mod is "
+                         "derived from the installed game's UI files")
+        try:
+            mod = package_squad_scroll.mod_entries(game)[0]
+        except ValueError as error:
+            parser.error(f"could not build the squad-scroll companion mod: {error}")
+        out = pathlib.Path(args.out if "--out" in (argv or []) else
+                           ROOT / "out" / "defiance-squad-scroll-ui.zip")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as package:
+            for name, data in mod.items():
+                package.writestr(name, data)
+        print(f"packaged the companion UI mod ({len(mod)} files) into {out}")
+        return 0
 
     source = pathlib.Path(args.source)
     if not source.is_dir():

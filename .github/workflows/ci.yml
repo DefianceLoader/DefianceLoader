@@ -1,11 +1,9 @@
-# Build and test what can be built without the game's DLLs.
+# Build and test everything that does not need the game itself.
 #
-# `plugins/core` and `injector` embed `out/payload*.bin/.json` at compile time.
-# Those are assembled from `bin/logic.orig.dll` and `bin/game.orig.dll`, which
-# are not tracked (they are the shipped game), so a fresh checkout cannot build
-# those two crates. Everything they share — the core, the ABI, the build
-# support, and the loader itself — builds and tests here. The local equivalent
-# is `mise run assemble` followed by the injector's `--self-test`.
+# `plugins/core` and `injector` embed the reference payloads committed in
+# `tools/variants/reference`, so every crate builds from a checkout; the game's
+# DLLs are needed only to reassemble those payloads (`mise run assemble`) and
+# for the native tests that run the game's own code.
 name: ci
 
 on:

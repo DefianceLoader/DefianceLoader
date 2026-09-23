@@ -10,7 +10,10 @@
    Each generated setting includes its description and default value.
    Close the game before editing settings, then restart to apply them.
 5. Adjust any `.ini` file values you want to customize.
-6. Enable the `Defiance squad inventory scrolling` mod in the in-game mod menu.
+6. For squad-management scrolling, also extract the separate
+   `defiance-squad-scroll-ui` download (its `mods` folder) into the base game
+   folder, then enable the `Defiance squad inventory scrolling` mod in the
+   in-game mod menu. Packages built with the game present already include it.
 
 Packages contain no INI files. The loader preserves existing values and comments
 and adds missing settings on later launches, including settings for disabled plugins.

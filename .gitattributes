@@ -1,0 +1,2 @@
+# Assembled payloads are machine code; never convert their line endings.
+*.bin binary
