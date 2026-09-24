@@ -3,6 +3,7 @@
 Run through mise after cargo build -p defiance-loader [--release].
 """
 import argparse
+import os
 import ctypes
 import pathlib
 import shutil
@@ -26,6 +27,13 @@ def run(loader):
     assert b"CreateDXGIFactory" in exports and b"PIXGetCaptureState" in exports, exports
     assert b"dxgi.dll" not in imports, "unqualified imports can recurse into the proxy"
     pe.close()
+    # What this machine's own dxgi.dll lacks: on Windows 10 and Server 2022 at
+    # least the Windows 11 exports. The proxy must load (below) regardless.
+    system_dxgi = pefile.PE(str(pathlib.Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/dxgi.dll"))
+    present = {item.name for item in system_dxgi.DIRECTORY_ENTRY_EXPORT.symbols if item.name}
+    system_dxgi.close()
+    absent = sorted(name.decode() for name in exports - present)
+    print(f"this Windows' dxgi.dll lacks {len(absent)} forwarded export(s): {', '.join(absent) or 'none'}")
     with tempfile.TemporaryDirectory(prefix="defiance-proxy-") as folder:
         folder = pathlib.Path(folder)
         shutil.copy2(loader, folder / "dxgi.dll")

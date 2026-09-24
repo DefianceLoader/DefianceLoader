@@ -63,3 +63,22 @@ jobs:
         run: cargo build -p defiance-loader
       - name: Test proxy forwarding from DLL initialization
         run: python tools/test_proxy.py target/debug/defiance_loader.dll
+
+  # The proxy stands in for a system DLL, so it must load on older Windows than
+  # the build machine's: windows-latest has the Windows 11 dxgi.dll exports, and
+  # a proxy that bound them at load time broke every Windows 10 player. Server
+  # 2022 (build 20348) has a Windows 10-generation dxgi.dll without them.
+  older-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install the Python test dependencies
+        run: python -m pip install -r tools/requirements.txt
+      - name: Build the loader
+        run: cargo build -p defiance-loader
+      - name: Test that the proxy loads and forwards on this Windows
+        run: python tools/test_proxy.py target/debug/defiance_loader.dll
