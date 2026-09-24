@@ -9,7 +9,9 @@ The package is a zip with
     mods/defiance_squad_scroll/  the scrolling companion UI mod, when the game
                                  directory is available to derive it
 
-The ZIP also includes README.md. Regroup is included disabled by default;
+The ZIP also includes README.md: the player guide (INSTALL.md), the only
+document shipped; the developer and plugin docs stay in the repository. Regroup
+is included disabled by default;
 expanded-ammo-menu and squad-management-scroll are enabled by default, and the
 latter needs its companion UI mod, which is derived from the installed game's
 paks. Extract to a
@@ -141,21 +143,15 @@ def main(argv):
         except ValueError as error:
             parser.error(f"could not build the squad-scroll companion mod: {error}")
 
-    for required in [*binaries, *symbols, ROOT / "INSTALL.md", ROOT / "docs/crash-reporting.md",
-                     ROOT / "plugins/regroup/README.md", ROOT / "plugins/expanded-ammo-menu/README.md",
-                     ROOT / "plugins/squad-management-scroll/README.md",
+    for required in [*binaries, *symbols, ROOT / "INSTALL.md",
                      *(path for pair in pairs for path in pair)]:
         if not required.is_file():
             parser.error(f"missing package input: {required}; run mise run loader")
 
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as package:
         package.write(ROOT / "INSTALL.md", "README.md")
-        package.write(ROOT / "plugins/regroup/README.md", "DefianceLoader/REGROUP.md")
-        package.write(ROOT / "plugins/expanded-ammo-menu/README.md", "DefianceLoader/EXPANDED-AMMO.md")
-        package.write(ROOT / "plugins/squad-management-scroll/README.md", "DefianceLoader/SQUAD-SCROLL.md")
         package.write(proxy, f"bin/{stage.proxy_name()}")
         package.write(helper, f"bin/{helper.name}")
-        package.write(ROOT / "docs/crash-reporting.md", "DefianceLoader/CRASH-REPORTING.md")
         for plugin, sidecar in pairs:
             package.write(plugin, f"DefianceLoader/plugins/{plugin.name}")
             package.write(sidecar, f"DefianceLoader/plugins/{sidecar.name}")

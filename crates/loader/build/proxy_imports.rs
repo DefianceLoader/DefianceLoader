@@ -63,15 +63,24 @@ pub fn generate() {
     // import descriptor symbol. Equal lengths preserve all archive offsets.
     let placeholder = format!("defiance_{}.dll", "x".repeat(path.len() - 13));
     assert_eq!(placeholder.len(), path.len());
-    let names: Vec<_> = generated
+    // Only the anchor is a load-time import (see src/proxy.rs): it loads the
+    // real DLL before ours, and DllMain resolves every other export at runtime,
+    // so an export an older Windows lacks cannot stop the proxy from loading.
+    let anchor = generated
         .lines()
-        .filter_map(|line| {
-            line.trim()
-                .strip_prefix("#[export_name = \"")
-                .and_then(|s| s.strip_suffix("\"]"))
+        .find_map(|line| {
+            line.strip_prefix("pub const ANCHOR: &str = \"")
+                .and_then(|s| s.strip_suffix("\";"))
         })
-        .collect();
-    assert!(!names.is_empty(), "proxy must export at least one function");
+        .expect("generated proxy anchor");
+    assert!(
+        !anchor.is_empty()
+            && anchor
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_'),
+        "invalid proxy anchor"
+    );
+    let names = [anchor];
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let def = out.join("system.def");
     let lib = out.join("defiance_system_proxy.lib");

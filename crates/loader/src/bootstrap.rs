@@ -10,9 +10,10 @@
 //! then start the game" with "double-click the game": the store's shortcut
 //! keeps working and there is no window to leave open.
 //!
-//! Windows resolves the real DLL as a load-time dependency before DllMain.
-//! The entry point disables thread notifications and starts the host worker;
-//! forwarding needs no initialization and works from another DLL's DllMain.
+//! Windows loads the real DLL as a load-time dependency before DllMain. The
+//! entry point first points every forwarded export at it (`proxy::resolve`,
+//! before any importer of this DLL runs, so forwarding works from another
+//! DLL's DllMain), then disables thread notifications and starts the host.
 
 use crate::win;
 use core::ffi::c_void;
@@ -29,6 +30,7 @@ pub unsafe extern "system" fn DllMain(
     _reserved: *mut c_void,
 ) -> i32 {
     if reason == win::DLL_PROCESS_ATTACH {
+        unsafe { crate::proxy::resolve() };
         unsafe { win::DisableThreadLibraryCalls(module) };
         let mut id = 0u32;
         let thread = unsafe {

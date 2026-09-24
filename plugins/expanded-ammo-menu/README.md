@@ -81,7 +81,7 @@ code into disposable processes and use fabricated UI objects.
 
 ## Regroup integration
 
-See REGROUP.md in this package. Set max_weapon_types = 0 in the
+See plugins/regroup/README.md. Set max_weapon_types = 0 in the
 [defiance.regroup] section of DefianceLoader/config/infantry.ini to use the
 installed menu capacity automatically. max_soldiers defaults to 16 and accepts
 1..64; larger squads remain experimental. Both optional plugins default disabled.

@@ -1,7 +1,7 @@
 # Building from source
 
 The release package — the loader (`bin/dxgi.dll`), its crash helper, the
-built-in and standalone plugins, and their documentation — builds from this
+built-in and standalone plugins, and the player guide — builds from this
 repository alone. No copy of the game is needed: the patch payloads Core embeds
 are committed under `tools/variants/`, and the per-build signatures are
 committed in the sources.

@@ -57,6 +57,14 @@ pub fn run() {
                     crate::log::info(&format!("build sha256={hash} {}", path.display()));
                 }
             }
+            let unavailable = crate::proxy::unavailable();
+            if !unavailable.is_empty() {
+                crate::log::info(&format!(
+                    "{}: not provided by this Windows, calls return E_NOTIMPL: {}",
+                    crate::proxy::REAL,
+                    unavailable.join(", ")
+                ));
+            }
         }
         Err(e) => crate::log::warn(&format!("crash reporting unavailable: {e}")),
     }

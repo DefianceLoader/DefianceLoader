@@ -1,4 +1,4 @@
-"""Verify the built proxy's load-time imports and calls from a real DllMain.
+"""Verify the built proxy's load-time import and calls from a real DllMain.
 
 Run through mise after cargo build -p defiance-loader [--release].
 """
@@ -20,7 +20,10 @@ def run(loader):
     assert system in imports, list(imports)
     exports = {item.name for item in pe.DIRECTORY_ENTRY_EXPORT.symbols if item.name and item.name != b"DllMain"}
     imported = {item.name for item in imports[system].imports}
-    assert exports == imported, (exports - imported, imported - exports)
+    # Only the anchor is bound at load time; DllMain resolves the rest, so an
+    # export an older Windows lacks cannot stop the proxy (and the game) loading.
+    assert imported == {b"CreateDXGIFactory"}, imported
+    assert b"CreateDXGIFactory" in exports and b"PIXGetCaptureState" in exports, exports
     assert b"dxgi.dll" not in imports, "unqualified imports can recurse into the proxy"
     pe.close()
     with tempfile.TemporaryDirectory(prefix="defiance-proxy-") as folder:

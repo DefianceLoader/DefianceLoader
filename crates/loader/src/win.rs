@@ -68,6 +68,7 @@ extern "system" {
     ) -> Handle;
     pub fn Sleep(milliseconds: u32);
     pub fn GetModuleHandleW(name: *const u16) -> Handle;
+    pub fn GetModuleHandleExW(flags: u32, name: *const u16, module: *mut Handle) -> i32;
     pub fn GetModuleFileNameW(module: Handle, name: *mut u16, size: u32) -> u32;
     pub fn LoadLibraryW(name: *const u16) -> Handle;
     pub fn GetProcAddress(module: Handle, name: *const u8) -> *mut c_void;

@@ -1,51 +1,53 @@
-# DefianceLoader - quick install
+# DefianceLoader
 
-1. Extract the contents of this zip file to your base game directory.
-2. `bin/dxgi.dll` should sit beside the game's `bin/trm.exe`.
-3. `DefianceLoader` should sit in the base game folder, beside `bin`.
-   On upgrades, replace the supplied DLLs/manifests but **keep existing `.ini`
-   files** if you want to keep your settings.
-4. Launch the game once however you usually launch it. The loader creates
-   `bin/defiance-loader.ini` and the grouped INIs in `DefianceLoader/config/`.
-   Each generated setting includes its description and default value.
-   Close the game before editing settings, then restart to apply them.
-5. Adjust any `.ini` file values you want to customize.
-6. For squad-management scrolling, also extract the separate
-   `defiance-squad-scroll-ui` download (its `mods` folder) into the base game
-   folder, then enable the `Defiance squad inventory scrolling` mod in the
-   in-game mod menu. Packages built with the game present already include it.
+Gameplay plugins for *Terminator: Dark Fate - Defiance*. Feature guide:
+https://github.com/DefianceLoader/DefianceLoader/blob/main/docs/features.md
 
-Packages contain no INI files. The loader preserves existing values and comments
-and adds missing settings on later launches, including settings for disabled plugins.
+## Install
 
-General layout:
+1. Extract this zip into the game folder (the one containing `bin`), so that
+   `bin/dxgi.dll` sits beside `bin/trm.exe` and `DefianceLoader` sits beside
+   `bin`.
+2. For squad-management scrolling, also extract the `defiance-squad-scroll-ui`
+   download into the game folder and enable **Defiance squad inventory
+   scrolling** in the game's mod menu.
+3. Start the game as usual.
 
-```text
-Game/bin/trm.exe
-Game/bin/dxgi.dll
-Game/bin/defiance-crash-helper.exe
-Game/DefianceLoader/plugins/...
-Game/DefianceLoader/config/...
-```
+When updating, overwrite the files but **keep existing `.ini` files** to keep
+your settings.
 
-**Regroup is included but disabled by default.** After the first launch, edit
-`DefianceLoader/config/infantry.ini` and add:
+## Settings
+
+The first launch creates `DefianceLoader/config/*.ini`, with every setting
+described. Close the game before editing and restart it afterwards. Any
+feature can be turned off with `enabled = false` in its section.
+
+**Regroup is included but disabled by default.** It is experimental and
+single-player only. To try it, add to `DefianceLoader/config/infantry.ini`:
 
 ```ini
 [defiance.regroup]
 enabled = true
 ```
 
-Restart after any config change. Regroup uses Ctrl+Alt+R; restore uses Ctrl+Alt+U.
-Read `DefianceLoader/REGROUP.md` for its limitations and controls. Existing
-explicit settings are preserved on upgrade.
+Then Ctrl+Alt+R forms a squad from the selected soldiers and Ctrl+Alt+U
+restores them to their original squads, within the same session only (it cannot
+restore after loading a save). Keep a save from before you tried it.
 
-**Troubleshooting:** check `DefianceLoader/logs/defiance-loader.log`.
-If Windows reports a missing DXGI entry point before a log appears, this loader
-build requires exports unavailable on your Windows installation. Remove the
-installed `bin/dxgi.dll` to restore normal game startup; do not replace Windows'
-system DLLs. The proxy uses the real system DLL as a load-time dependency.
-Crash reports are saved under `DefianceLoader/logs/crashes`.
+## Troubleshooting
 
-**Uninstall:** remove the `bin/dxgi.dll` installed
-from this package and `bin/defiance-crash-helper.exe`. Your config files can stay for later use.
+- Check `DefianceLoader/logs/defiance-loader.log`. It lists each feature and,
+  if one is inactive, why. On a game version it does not recognise, the loader
+  changes nothing.
+- If the game will not start, remove `bin/dxgi.dll` to play without the loader,
+  and report the problem with the log.
+- Crash reports are saved in `DefianceLoader/logs/crashes`. When reporting a
+  crash, send that crash's files and `defiance-loader.log`, what you were
+  doing, and your game store and version. The `.dmp` file can contain personal
+  data from memory, so share it privately.
+
+## Uninstall
+
+Delete `bin/dxgi.dll`, `bin/defiance-crash-helper.exe` and
+`bin/defiance-loader.ini`. The `DefianceLoader` folder can stay (it holds your
+settings) or be deleted.
