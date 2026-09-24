@@ -1,2 +1,8 @@
+# Text is stored and checked out with LF on every machine, whatever
+# core.autocrlf says, so git never converts line endings (and never warns that
+# it will). Windows tools here (Rust, Python, PowerShell, the game's resource
+# reader via the packaging scripts) all accept LF.
+* text=auto eol=lf
+
 # Assembled payloads are machine code; never convert their line endings.
 *.bin binary
