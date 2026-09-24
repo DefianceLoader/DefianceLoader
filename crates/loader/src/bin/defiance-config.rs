@@ -5,10 +5,12 @@
 //! writes through a temporary file plus replace, keeps a `.defiance-backup`
 //! copy, and records the schema version only after every write succeeds.
 //!
-//!     defiant-config --game "C:\Games\...\bin"            # preview
-//!     defiant-config --game "..." --apply                # write the changes
-//!     defiant-config --game "..." --report               # effective config
-//!     defiant-config --defaults DIR                      # explicit developer export
+//! ```text
+//! defiance-config --game "C:\Games\...\bin"    # preview
+//! defiance-config --game "..." --apply         # write the changes
+//! defiance-config --game "..." --report        # effective config
+//! defiance-config --defaults DIR               # explicit developer export
+//! ```
 //!
 //! It also reports a legacy `plugins` override that points at a missing
 //! directory while plugins exist at the new default, with the exact value to

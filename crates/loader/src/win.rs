@@ -19,7 +19,7 @@ pub const MEM_RELEASE: u32 = 0x8000;
 pub const MEM_DECOMMIT: u32 = 0x4000;
 pub const PAGE_GUARD: u32 = 0x100;
 
-/// Access rights used to suspend and read thread contexts.
+/// Access rights needed to suspend and read thread contexts.
 pub const THREAD_SUSPEND_RESUME: u32 = 0x0002;
 pub const THREAD_GET_CONTEXT: u32 = 0x0008;
 pub const THREAD_QUERY_INFORMATION: u32 = 0x0040;

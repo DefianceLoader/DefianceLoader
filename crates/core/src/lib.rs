@@ -1,11 +1,10 @@
 //! The patching machinery that does not need a target process, shared by the
 //! injector and the loader.
 //!
-//! It began as `injector/src/relocate.rs` and `injector/src/main.rs` mixed
-//! together. Now the descriptor types and parser (`descriptor`), the masked
-//! signature scan (`scan`, `pattern`), the signature relocation (`relocate`),
-//! the writes into a module (`apply`), the policy that picks between them
-//! (`install`) and the PE reader (`pe`) all live here once. The injector is a
+//! The descriptor types and parser (`descriptor`), the masked signature scan
+//! (`scan`, `pattern`), the signature relocation (`relocate`), the writes into a
+//! module (`apply`), the policy that picks between them (`install`) and the PE
+//! reader (`pe`) live here once, for both. The injector is a
 //! front-end that discovers the process and passes the payloads it embeds; the
 //! loader's core plugin does the same with the game's own modules.
 

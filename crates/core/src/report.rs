@@ -1,9 +1,9 @@
 //! Where the core's progress lines go.
 //!
-//! `apply` used to `println!` them, which is fine in the injector's console but
-//! not in the loader, where the same code runs inside a GUI process with no
-//! stdout. A sink is set once: the injector points it at `println!`, the loader
-//! at `defiance-loader.log`. Unset means the lines are dropped, which is safe.
+//! The same code runs in the injector's console and inside the game, a GUI
+//! process with no stdout, so it never prints. A sink is set once: the injector
+//! points it at `println!`, the loader at `defiance-loader.log`. Unset means the
+//! lines are dropped, which is safe.
 
 use std::sync::OnceLock;
 

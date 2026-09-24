@@ -15,6 +15,8 @@
 #                     of time; results in out/watch/status.json
 #   mise run test-quick   format, Rust tests of every workspace, versions,
 #                     layouts and variants; minutes, not the full suite
+#   mise run comment-audit   comments to review for staleness (report only;
+#                     the tests run its --check)
 #
 # Core and the injector embed the reference payloads in tools/variants/reference,
 # which are tracked, so a checkout builds without the game's DLLs. `build` still
@@ -125,10 +127,15 @@ run = [
 description = "Format check, every workspace's Rust tests, versions, layouts and variants (cached); run the full test before committing"
 depends = ["fmt-check", "test-rust"]
 run = [
+  "python tools/comment_audit.py --check",
   "python tools/test_versions.py",
   "python tools/test_layout.py",
   "python tools/test_variant.py",
 ]
+
+[tasks.comment-audit]
+description = "Report comments to review for staleness: history phrasing, code changed after its comment"
+run = "python tools/comment_audit.py"
 
 [tasks.build]
 description = "Build the loader, feature plugins, injector and test host around fresh payloads"
@@ -151,6 +158,7 @@ raw = true
 description = "Build everything, then run every native test and the self test"
 depends = ["fmt-check", "build", "crash-test"]
 run = [
+  "python tools/comment_audit.py --check",
   "python tools/test_versions.py",
   "python tools/test_layout.py",
   "python tools/test_variant.py",
@@ -222,6 +230,7 @@ run = [
 description = "Test loader infrastructure and standalone plugins without game DLLs"
 depends = ["fmt-check"]
 run = [
+  "python tools/comment_audit.py --check",
   "cargo test --workspace --exclude defiance-plugin-core --exclude defiance-pickup-inject",
   "cargo test -p defiance-loader --features test-host --test hook_lifecycle --test hook_regressions",
   "python tools/test_versions.py",

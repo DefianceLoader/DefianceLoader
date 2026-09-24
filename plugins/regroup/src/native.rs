@@ -2561,7 +2561,7 @@ mod tests {
         unsafe {
             let (p, dest) = fixture();
             CONTEXT.with(|v| *v.borrow_mut() = Some(p.clone()));
-            // No template claim: this used to call the stock soldier factory.
+            // No template claim, so the stock soldier factory must not run.
             create_members(dest.holder, 0);
             assert!(CREATION_ABORTED.with(Cell::get));
             assert!(!CONSTRUCTED.with(Cell::get));

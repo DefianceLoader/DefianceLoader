@@ -220,8 +220,8 @@ pub fn safe_group(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
 }
 
-/// Loader-owned settings, in `[loader]` of `core.ini`. These used to be
-/// unsectioned bootstrap keys and are read from the bootstrap as a fallback.
+/// Loader-owned settings, in `[loader]` of `core.ini`. Their legacy
+/// unsectioned bootstrap keys are read as a fallback.
 pub const LOADER_SECTION: &str = "loader";
 pub const LOADER_SETTINGS: &[SettingDecl] = &[
     SettingDecl {
@@ -252,7 +252,7 @@ pub const LOGGING_SETTINGS: &[SettingDecl] = &[SettingDecl {
     sensitive: false,
 }];
 
-/// The legacy bootstrap key that used to hold a loader setting, if there is
+/// The legacy unsectioned bootstrap key for a loader setting, if there is
 /// one. `wait` and `allow_unknown_build` were top-level keys; `level` was not
 /// configurable and has no legacy form.
 pub fn legacy_bootstrap_key(section: &str, key: &str) -> Option<&'static str> {

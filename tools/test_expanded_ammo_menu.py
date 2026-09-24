@@ -48,7 +48,7 @@ CONSTRUCTOR=("488b9620010000488b820801000048898618010000488b8a18010000"
              "48898638010000")
 # The same slice on a build whose owner object shifted a field: the reads
 # [rdx+0x100]/[rdx+0x108]/[rdx+0x118] became [rdx+0x120]/[rdx+0x128]/[rdx+0x138]
-# (both Steam builds), so the reference bytes no longer locate it.
+# (both Steam builds), so the reference bytes do not locate it.
 CONSTRUCTOR_SHIFTED=("488b9620010000488b822801000048898618010000488b8a38010000"
                      "48898e28010000488b822001000048898630010000488b01ff90d0000000"
                      "48898638010000")

@@ -416,7 +416,7 @@ fn select_probe(patch: &Patch, target: &Target) -> Result<(), String> {
     let at = |rva: usize| unsafe { target.base.add(rva) };
     let base = target.base as usize;
 
-    // In a build whose sites moved, the patched hook no longer holds the
+    // In a build whose sites moved, the patched hook does not hold the
     // signature, so the block is taken from the record the injector wrote.
     // Failing that, the build the patch was written for still has its hook.
     let block = match recorded_block(target, &process) {

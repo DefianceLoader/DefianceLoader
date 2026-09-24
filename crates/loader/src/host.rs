@@ -36,7 +36,7 @@ pub fn run() {
     }
     // The proxy is loaded into every process that imports it, and the embedded
     // browser's helpers are among them. Only the game should act, and the rest
-    // should do nothing at all, not even open the log: their entries used to
+    // should do nothing at all, not even open the log, or their entries would
     // sit in the same file as the game's and read like repeated starts.
     if !is_game_process() {
         return;

@@ -63,7 +63,7 @@ class SelectionTests(unittest.TestCase):
                 raise RuntimeError("unexpected selection patch bytes")
             region[off:off + len(before)] = after
         entry = n.code(bytes(region))
-        # setSelected is no longer edited in place: the jmp over it leads to
+        # setSelected is not edited in place: the jmp over it leads to
         # patch/soldier-mark.asm, which is position independent.
         mark, _ = b.assemble(
             pathlib.Path("patch/soldier-mark.asm").read_text().splitlines(), 0, 0)

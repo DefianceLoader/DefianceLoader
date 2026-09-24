@@ -1,7 +1,7 @@
 ; Replace only fn_418cb0's squad branch, [0x418cda, 0x418d56).
 ; The entry has already tested entity kind 0x10. RBX is the squad entity.
 ; Retain the original prologue/unwind record and the non-squad path.
-; The old branch copied the member vector then selected only its first item.
+; The stock branch copied the member vector then selected only its first item.
 ; Visit every member instead, using RBX (already saved) for the iterator and
 ; [rsp+0x20] for the end, outside the 32-byte outgoing shadow space.
 mov rax, qword ptr [rbx]

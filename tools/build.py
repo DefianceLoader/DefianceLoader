@@ -32,11 +32,11 @@ VERIFIED_BUILDS = {
     "d320f848508c45c9f04df235204b5fbc9ffbb1b7f869e4c5a58d80bb2ecc10ed": "Steam",
 }
 
-# The chooser used to live in .text's alignment padding, which was free but
-# capped at 417 bytes. It now gets a section of its own: a call rel32 reaches
-# anywhere within 2GB, and the cursor is addressed rip-relative at a fixed
-# offset inside the same block, so the block is self-contained and could sit
-# anywhere. The padding is left untouched.
+# The chooser gets a section of its own rather than .text's alignment padding
+# (free, but capped at 417 bytes): a call rel32 reaches anywhere within 2GB,
+# and the cursor is addressed rip-relative at a fixed offset inside the same
+# block, so the block is self-contained and could sit anywhere. The padding is
+# left untouched.
 BLOCK_SIZE = 0x3000
 STATE_CHARS = 0xE0000020              # code, execute, read, write
 CURSOR_OFFSET = 0x2f00                # clear of any plausible code size
@@ -522,7 +522,7 @@ def selection_edits():
     edits.append((SQUAD_SELECT_RVA, SQUAD_SELECT_BEFORE,
                   squad_code.ljust(len(SQUAD_SELECT_BEFORE), b"\x90")))
 
-    # Toggle-add and same-type selection used to write the squad flag directly.
+    # Stock toggle-add and same-type selection write the squad flag directly.
     # Keep their eligibility/type filters, but select accepted entities through
     # the manager so every member receives its mark. select (418cb0) does not
     # use RCX; the toggle bucket consumer has no manager pointer available.
