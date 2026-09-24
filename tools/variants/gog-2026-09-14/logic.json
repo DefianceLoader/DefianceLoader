@@ -12,6 +12,7 @@
   "move_displaced": "488b7c2430",
   "trace_offset": 4096,
   "ammo_scratch": 9984,
+  "preview_dim_cell": 9952,
   "setter_offset": 2048,
   "detours": [
     {
@@ -63,6 +64,24 @@
       "hook_displaced": "498b06498bce"
     },
     {
+      "hook_rva": 2167753,
+      "hook_entry": 9600,
+      "hook_feature": 2,
+      "hook_displaced": "450fb6742420"
+    },
+    {
+      "hook_rva": 2168608,
+      "hook_entry": 9620,
+      "hook_feature": 2,
+      "hook_displaced": "488b4588807820000f8499000000"
+    },
+    {
+      "hook_rva": 2168672,
+      "hook_entry": 9702,
+      "hook_feature": 2,
+      "hook_displaced": "488b0e488b01498d5720"
+    },
+    {
       "hook_rva": 2876064,
       "hook_entry": 547,
       "hook_feature": 4,
@@ -112,61 +131,61 @@
     },
     {
       "hook_rva": 1218640,
-      "hook_entry": 7123,
+      "hook_entry": 7272,
       "hook_feature": 6,
       "hook_displaced": "40534883ec20"
     },
     {
       "hook_rva": 2709184,
-      "hook_entry": 8399,
+      "hook_entry": 8548,
       "hook_feature": 6,
       "hook_displaced": "80b9e200000000"
     },
     {
       "hook_rva": 2709232,
-      "hook_entry": 8450,
+      "hook_entry": 8599,
       "hook_feature": 6,
       "hook_displaced": "80b9e000000000"
     },
     {
       "hook_rva": 2709264,
-      "hook_entry": 8501,
+      "hook_entry": 8650,
       "hook_feature": 6,
       "hook_displaced": "83b9dc00000000"
     },
     {
       "hook_rva": 2709280,
-      "hook_entry": 8546,
+      "hook_entry": 8695,
       "hook_feature": 6,
       "hook_displaced": "8b81dc000000"
     },
     {
       "hook_rva": 2533281,
-      "hook_entry": 8749,
+      "hook_entry": 8928,
       "hook_feature": 6,
       "hook_displaced": "48c7472800000000"
     },
     {
       "hook_rva": 2533611,
-      "hook_entry": 8772,
+      "hook_entry": 8951,
       "hook_feature": 6,
       "hook_displaced": "48c7472800000000"
     },
     {
       "hook_rva": 1183376,
-      "hook_entry": 7865,
+      "hook_entry": 8014,
       "hook_feature": 6,
       "hook_displaced": "837910007507"
     },
     {
       "hook_rva": 1183433,
-      "hook_entry": 7906,
+      "hook_entry": 8055,
       "hook_feature": 6,
       "hook_displaced": "837a3c010f847c010000"
     },
     {
       "hook_rva": 1182954,
-      "hook_entry": 7840,
+      "hook_entry": 7989,
       "hook_feature": 6,
       "hook_displaced": "488b70284885f6"
     },
@@ -217,37 +236,37 @@
       "rel_target": 2870565
     },
     {
-      "rel_offset": 7861,
+      "rel_offset": 8010,
       "rel_feature": 6,
       "rel_target": 1182961
     },
     {
-      "rel_offset": 7897,
+      "rel_offset": 8046,
       "rel_feature": 6,
       "rel_target": 1183382
     },
     {
-      "rel_offset": 7902,
+      "rel_offset": 8051,
       "rel_feature": 6,
       "rel_target": 1183389
     },
     {
-      "rel_offset": 7941,
+      "rel_offset": 8090,
       "rel_feature": 6,
       "rel_target": 1183443
     },
     {
-      "rel_offset": 7946,
+      "rel_offset": 8095,
       "rel_feature": 6,
       "rel_target": 1183823
     },
     {
-      "rel_offset": 8768,
+      "rel_offset": 8947,
       "rel_feature": 6,
       "rel_target": 2533289
     },
     {
-      "rel_offset": 8791,
+      "rel_offset": 8970,
       "rel_feature": 6,
       "rel_target": 2533619
     },
@@ -267,19 +286,49 @@
       "rel_target": 4365923
     },
     {
-      "rel_offset": 11608,
+      "rel_offset": 11802,
       "rel_feature": 9,
       "rel_target": 413920
     },
     {
-      "rel_offset": 11762,
+      "rel_offset": 11956,
       "rel_feature": 9,
       "rel_target": 413920
     },
     {
-      "rel_offset": 11819,
+      "rel_offset": 12013,
       "rel_feature": 9,
       "rel_target": 415743
+    },
+    {
+      "rel_offset": 9616,
+      "rel_feature": 2,
+      "rel_target": 2167759
+    },
+    {
+      "rel_offset": 9693,
+      "rel_feature": 2,
+      "rel_target": 2168622
+    },
+    {
+      "rel_offset": 9698,
+      "rel_feature": 2,
+      "rel_target": 2168775
+    },
+    {
+      "rel_offset": 9750,
+      "rel_feature": 2,
+      "rel_target": 2168682
+    },
+    {
+      "rel_offset": 9765,
+      "rel_feature": 2,
+      "rel_target": 2168682
+    },
+    {
+      "rel_offset": 9770,
+      "rel_feature": 2,
+      "rel_target": 2168685
     }
   ],
   "census_offset": 4864,
@@ -295,7 +344,7 @@
     },
     {
       "pose_site": 4520397,
-      "pose_entry": 11293,
+      "pose_entry": 11487,
       "pose_tail": "9090",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -303,7 +352,7 @@
     },
     {
       "pose_site": 1106582,
-      "pose_entry": 11321,
+      "pose_entry": 11515,
       "pose_tail": "9090",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -311,7 +360,7 @@
     },
     {
       "pose_site": 1107904,
-      "pose_entry": 11341,
+      "pose_entry": 11535,
       "pose_tail": "9090",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -319,7 +368,7 @@
     },
     {
       "pose_site": 1144278,
-      "pose_entry": 11341,
+      "pose_entry": 11535,
       "pose_tail": "9090",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -327,7 +376,7 @@
     },
     {
       "pose_site": 3312100,
-      "pose_entry": 11341,
+      "pose_entry": 11535,
       "pose_tail": "9090",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -335,7 +384,7 @@
     },
     {
       "pose_site": 1121647,
-      "pose_entry": 11558,
+      "pose_entry": 11752,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -343,7 +392,7 @@
     },
     {
       "pose_site": 1122107,
-      "pose_entry": 11558,
+      "pose_entry": 11752,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -351,7 +400,7 @@
     },
     {
       "pose_site": 716461,
-      "pose_entry": 11635,
+      "pose_entry": 11829,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -359,7 +408,7 @@
     },
     {
       "pose_site": 733331,
-      "pose_entry": 11663,
+      "pose_entry": 11857,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -367,7 +416,7 @@
     },
     {
       "pose_site": 415670,
-      "pose_entry": 11784,
+      "pose_entry": 11978,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -375,7 +424,7 @@
     },
     {
       "pose_site": 414677,
-      "pose_entry": 11823,
+      "pose_entry": 12017,
       "pose_tail": "90",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -471,7 +520,7 @@
     },
     {
       "pose_site": 2724339,
-      "pose_entry": 8053,
+      "pose_entry": 8202,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 6,
@@ -479,7 +528,7 @@
     },
     {
       "pose_site": 2722956,
-      "pose_entry": 8013,
+      "pose_entry": 8162,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 6,
@@ -487,7 +536,7 @@
     },
     {
       "pose_site": 2722253,
-      "pose_entry": 7993,
+      "pose_entry": 8142,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 6,
@@ -495,7 +544,7 @@
     },
     {
       "pose_site": 2721898,
-      "pose_entry": 7993,
+      "pose_entry": 8142,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 6,
@@ -503,7 +552,7 @@
     },
     {
       "pose_site": 2730813,
-      "pose_entry": 7993,
+      "pose_entry": 8142,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 6,
@@ -511,7 +560,7 @@
     },
     {
       "pose_site": 2738821,
-      "pose_entry": 7993,
+      "pose_entry": 8142,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 6,
@@ -519,7 +568,7 @@
     },
     {
       "pose_site": 2725917,
-      "pose_entry": 8053,
+      "pose_entry": 8202,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 6,
@@ -527,7 +576,7 @@
     },
     {
       "pose_site": 2723271,
-      "pose_entry": 8033,
+      "pose_entry": 8182,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 6,
@@ -535,7 +584,7 @@
     },
     {
       "pose_site": 2723366,
-      "pose_entry": 8033,
+      "pose_entry": 8182,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 6,
@@ -1028,6 +1077,27 @@
       "site_start": 4370560,
       "site_group": 4370448,
       "site_pattern": "e8????????84c0742f483bfe740e4c89374883c70848897c2428",
+      "site_offset": 0
+    },
+    {
+      "site_name": "dim_pose",
+      "site_start": 2167753,
+      "site_group": 2164976,
+      "site_pattern": "450fb67424204488b5280c0000448be3488b4570488b08488b4008",
+      "site_offset": 0
+    },
+    {
+      "site_name": "dim_mode",
+      "site_start": 2168608,
+      "site_group": 2164976,
+      "site_pattern": "488b4588807820000f84????????488b4c2440488b01488d5550ff90c8020000904c8b7558488b7550493bf674304c8bbd100c00006666660f1f840000000000488b0e488b01498d5720ff50584883c610493bf675ea4c8b7558488b75504885f67444498bd6488bcee8????????488b5560488b4d50482bd14883e2f0488bc14881fa0010000072194883c227488b49f8482bc14883c0f84883f81f0f87????????e8????????",
+      "site_offset": 0
+    },
+    {
+      "site_name": "dim_part",
+      "site_start": 2168672,
+      "site_group": 2164976,
+      "site_pattern": "488b0e488b01498d5720ff50584883c610493bf675ea4c8b7558",
       "site_offset": 0
     },
     {

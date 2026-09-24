@@ -55,6 +55,26 @@ pub fn is_executable(address: usize) -> bool {
     EXECUTE_PROTECTIONS.contains(&(info.protect & 0xff))
 }
 
+/// Whether `length` bytes at `address` are committed, readable and not a
+/// guard page: a stack walk reads a return address only after this.
+pub fn is_readable(address: usize, length: usize) -> bool {
+    let mut info: MemoryBasicInformation = unsafe { core::mem::zeroed() };
+    let asked = unsafe {
+        VirtualQuery(
+            address as *const c_void,
+            &mut info,
+            core::mem::size_of::<MemoryBasicInformation>(),
+        )
+    };
+    const COMMITTED: u32 = 0x1000;
+    const READABLE: [u32; 6] = [0x02, 0x04, 0x08, 0x20, 0x40, 0x80];
+    asked != 0
+        && info.state == COMMITTED
+        && info.protect & PAGE_GUARD == 0
+        && READABLE.contains(&(info.protect & 0xff))
+        && address + length <= info.base_address as usize + info.region_size
+}
+
 #[link(name = "kernel32")]
 extern "system" {
     pub fn DisableThreadLibraryCalls(module: Handle) -> i32;

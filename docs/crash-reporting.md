@@ -42,7 +42,8 @@ Windows loads DLLs at different addresses.
 
 The helper maps the instruction to a DLL or a registered allocation. Patch and
 trampoline mappings name their installing plugin; Core payload mappings identify
-the shared block. `payload-entry` rows in the session provide named logic entry
+the shared block. Plugins map their own allocations through the loader's
+crash-ranges service ([plugin-api.md](plugin-api.md)); log lines never map one. `payload-entry` rows in the session provide named logic entry
 addresses or game entry feature IDs for disassembly. A shared block address does
 not by itself identify the responsible feature. Fault location is not proof of
 who originally corrupted an object.

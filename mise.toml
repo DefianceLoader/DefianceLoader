@@ -167,6 +167,7 @@ run = [
   "python tools/test_orders.py",
   "python tools/test_icon.py",
   "python tools/test_preview.py",
+  "python tools/test_preview_subset.py",
   "python tools/test_building_tab.py",
   "python tools/test_selection.py",
   "python tools/test_region.py",
@@ -280,6 +281,14 @@ run = [
   "cargo test --manifest-path plugins/squad-management-scroll/Cargo.toml",
   "python tools/test_squad_scroll.py",
   "python tools/test_package_squad_scroll.py",
+]
+
+[tasks.ammo-menu-test]
+description = "Run the expanded-ammo-menu release DLL against every build's stock menu code"
+run = [
+  "cargo test --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
+  "cargo build --release --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
+  "python tools/test_expanded_ammo_menu.py",
 ]
 
 [tasks.pickup-rust]

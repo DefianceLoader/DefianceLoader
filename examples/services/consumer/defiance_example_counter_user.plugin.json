@@ -10,5 +10,6 @@
     { "key": "service_version", "type": "int", "default": "1", "min": 1, "max": 2, "description": "Use 2 to demonstrate an unsupported service version." }
   ],
   "depends": [{ "id": "example.counter", "min": "0.1.0", "max": "0.1.0" }],
-  "conflicts": []
+  "conflicts": [],
+  "multiplayer_safe": true
 }

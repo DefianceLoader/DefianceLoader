@@ -89,6 +89,13 @@ fn main() {
     crash::map(start, start + 256, "fixture.removed");
     crash::unmap(start);
     crash::map(start - 1, start + 256, "fixture.live");
+    // A log line that looks like a mapping is journaled as log text and must
+    // not map anything.
+    crash::note(&format!(
+        "[info] crash-map {:#x} {:#x} fixture.logtext\n",
+        start - 2,
+        start + 256
+    ));
     if mode == "removed-range" {
         crash::unmap(start - 1);
     }

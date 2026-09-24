@@ -154,6 +154,40 @@ pub fn plan_loader_keys(bootstrap: &Document, core_path: &Path, core_text: Optio
     .normalize(changed)
 }
 
+/// Plan removing a legacy `plugins` override that resolves to the default
+/// `root/plugins`: it changes nothing about discovery, but the loader warns
+/// about every override at startup. Conservative on purpose: `None` unless the
+/// bootstrap declares `plugins` exactly once and its resolved path equals the
+/// default exactly. A duplicate, or an override pointing anywhere else, is the
+/// user's to change. Only that one line goes; comments, the BOM, line endings
+/// and every other key are kept.
+pub fn plan_default_plugins_override(
+    paths: &super::paths::Paths,
+    bootstrap: &Document,
+    bootstrap_text: &str,
+) -> Option<Change> {
+    let (entry, earlier) = bootstrap.top("plugins")?;
+    if !earlier.is_empty()
+        || !paths.plugin_override
+        || paths.plugin_dir != paths.root.join(super::paths::DEFAULT_PLUGINS)
+    {
+        return None;
+    }
+    let body = parse::strip_bom(bootstrap_text);
+    let bom = &bootstrap_text[..bootstrap_text.len() - body.len()];
+    let mut after = bom.to_string();
+    for (index, line) in body.split_inclusive('\n').enumerate() {
+        if index + 1 != entry.line {
+            after.push_str(line);
+        }
+    }
+    Some(Change {
+        path: paths.bootstrap.clone(),
+        before: Some(bootstrap_text.to_string()),
+        after,
+    })
+}
+
 impl Plan {
     fn normalize(mut self, changed: bool) -> Plan {
         if !changed {
@@ -347,6 +381,46 @@ mod tests {
             None,
         );
         assert!(plan.is_empty());
+    }
+
+    fn override_plan(text: &str) -> Option<Change> {
+        let bootstrap = parse(text);
+        let (paths, _) =
+            crate::config::paths::Paths::resolve(&PathBuf::from("C:/Game/bin"), &bootstrap);
+        plan_default_plugins_override(&paths, &bootstrap, text)
+    }
+
+    #[test]
+    fn a_plugins_override_equal_to_the_default_is_removed_alone() {
+        let text = "\u{feff}; mine\r\nwait = 15\r\nplugins = ../DefianceLoader/plugins/\r\nroot = ../DefianceLoader\r\n";
+        let change = override_plan(text).expect("the default override is removed");
+        assert_eq!(
+            change.path,
+            PathBuf::from("C:/Game/bin/defiance-loader.ini")
+        );
+        assert_eq!(
+            change.after,
+            "\u{feff}; mine\r\nwait = 15\r\nroot = ../DefianceLoader\r\n"
+        );
+        // On the first line, without a trailing newline, the BOM stays.
+        let first = override_plan("\u{feff}plugins = ../DefianceLoader/plugins").unwrap();
+        assert_eq!(first.after, "\u{feff}");
+        // Replanning against the result changes nothing.
+        assert!(override_plan(&change.after).is_none());
+    }
+
+    #[test]
+    fn other_plugins_overrides_are_left_alone() {
+        for text in [
+            "wait = 15\n",
+            "plugins = ../old/plugins\n",
+            // Default for the default root, but `root` moved elsewhere.
+            "root = D:/Mods/Defiance\nplugins = ../DefianceLoader/plugins\n",
+            // Declared twice: which one the user means is theirs to settle.
+            "plugins = ../DefianceLoader/plugins\nplugins = ../DefianceLoader/plugins\n",
+        ] {
+            assert!(override_plan(text).is_none(), "{text:?}");
+        }
     }
 
     #[test]

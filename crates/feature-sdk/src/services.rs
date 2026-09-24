@@ -100,6 +100,34 @@ pub unsafe fn selection() -> Option<&'static defiance_api::SelectionV1> {
     unsafe { query(c"defiance.selection", c"selection", 1) }
 }
 
+/// Resolve the loader's crash-ranges-v1 table, which names mod code in crash
+/// reports. Needs no manifest dependency; None from a loader that predates it.
+/// # Safety
+/// Same lifecycle requirements as query; the table's calls may then be made
+/// from any thread.
+pub unsafe fn crash_ranges() -> Option<&'static defiance_api::CrashRangesV1> {
+    unsafe { query(defiance_api::LOADER_PROVIDER, c"crash-ranges", 1) }
+}
+
+/// Resolve the loader's trace-v1 table, for diagnostic call-stack tracing.
+/// Needs no manifest dependency; None from a loader that predates it.
+/// # Safety
+/// Same lifecycle requirements as query; the table's calls may then be made
+/// from any thread.
+pub unsafe fn trace() -> Option<&'static defiance_api::TraceV1> {
+    unsafe { query(defiance_api::LOADER_PROVIDER, c"trace", 1) }
+}
+
+/// Resolve the loader's multiplayer-v1 table: which active plugins block
+/// multiplayer. Needs no manifest dependency; None from a loader that
+/// predates it.
+/// # Safety
+/// Same lifecycle requirements as query; the table's call may then be made
+/// from any thread.
+pub unsafe fn multiplayer() -> Option<&'static defiance_api::MultiplayerV1> {
+    unsafe { query(defiance_api::LOADER_PROVIDER, c"multiplayer", 1) }
+}
+
 /// Resolve Core's game-thread access table. Declare a direct defiance.core dependency.
 /// # Safety
 /// Calls through this table require live objects on their owning game thread.

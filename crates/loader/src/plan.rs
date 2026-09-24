@@ -13,7 +13,9 @@ use super::config::builtin::{self, Builtin};
 use super::config::Snapshot;
 use super::manifest::{self, Dependency, Manifest};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 
 /// A discovered DLL and its sidecar, from the one catalog in `manifest`.
 pub use super::manifest::Entry as Discovered;
@@ -66,11 +68,18 @@ impl Plan {
     }
 }
 
-/// Scan a directory for plugin DLLs and their sidecar manifests, through the
-/// one catalog in `manifest`. Never loads a DLL. Returns the nodes and any
-/// discovery warnings (orphan manifests and the obsolete pilot).
+/// A fresh scan of `dir`, for tests that plan without a configuration;
+/// startup plans from the snapshot's [`crate::config::Snapshot::catalog`].
+#[cfg(test)]
 pub fn discover(dir: &Path) -> (Vec<Discovered>, Vec<String>) {
-    manifest::catalog(dir)
+    let catalog = manifest::catalog(dir);
+    (catalog.entries, catalog.warnings)
+}
+
+/// Whether a plugin may stay active in multiplayer: its manifest says so. A
+/// legacy plugin (no manifest) is not.
+pub fn multiplayer_safe(node: &Planned) -> bool {
+    node.manifest.as_ref().is_some_and(|m| m.multiplayer_safe)
 }
 
 /// Resolve the nodes into decisions and an initialization order.
@@ -375,12 +384,18 @@ fn find_cycles(planned: &[Planned], by_id: &BTreeMap<String, Vec<usize>>) -> Vec
 }
 
 /// A deterministic initialization order: dependencies first, ties broken by
-/// stable ID, with legacy (manifest-less) plugins after managed ones.
+/// stable ID, with legacy (manifest-less) plugins after managed ones. Every
+/// plugin that is not multiplayer-safe also comes after Core, which installs
+/// the multiplayer guard it needs.
 fn order_active(planned: &[Planned], by_id: &BTreeMap<String, Vec<usize>>) -> Vec<usize> {
     let active: Vec<usize> = (0..planned.len())
         .filter(|&i| planned[i].decision == Decision::Initialize)
         .collect();
     let active_set: BTreeSet<usize> = active.iter().copied().collect();
+    let core = by_id
+        .get(builtin::CORE_ID)
+        .map(|indices| indices[0])
+        .filter(|core| active_set.contains(core));
     let mut remaining: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
     for &index in &active {
         let mut needs = BTreeSet::new();
@@ -392,6 +407,11 @@ fn order_active(planned: &[Planned], by_id: &BTreeMap<String, Vec<usize>>) -> Ve
                         needs.insert(target);
                     }
                 }
+            }
+        }
+        if let Some(core) = core.filter(|&core| core != index) {
+            if !multiplayer_safe(&planned[index]) {
+                needs.insert(core);
             }
         }
         remaining.insert(index, needs);

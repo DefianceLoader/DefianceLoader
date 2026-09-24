@@ -11,7 +11,7 @@
 //! hook, and the loader keeps the bookkeeping (the trampoline, the original
 //! bytes, whether the site has already moved under an update).
 
-use core::ffi::{c_char, c_void};
+use core::ffi::{c_char, c_void, CStr};
 
 /// Bumped whenever a field changes meaning or position. The loader refuses a
 /// plugin whose `abi_version` it does not know, and a plugin that does not
@@ -49,13 +49,67 @@ pub struct ServiceApiV1 {
         size: usize,
     ) -> i32,
     /// Exact service version and at least min_size bytes; null on failure.
-    /// Provider is a manifest plugin ID listed in the consumer's dependencies.
+    /// Provider is a manifest plugin ID listed in the consumer's dependencies,
+    /// or [`LOADER_PROVIDER`].
     pub query: unsafe extern "C" fn(
         provider: *const c_char,
         name: *const c_char,
         version: u32,
         min_size: usize,
     ) -> *const c_void,
+}
+
+/// The provider ID of the services the loader itself provides. Any plugin may
+/// query them without declaring a dependency, since the loader is always
+/// present; no plugin may register under this ID.
+pub const LOADER_PROVIDER: &CStr = c"defiance.loader";
+
+/// `defiance.loader` / `crash-ranges`, service version 1. Names mod code in
+/// crash reports: a fault inside a mapped range is reported as `label+offset`.
+/// Attribution only; it changes no protection or handling. Both calls may be
+/// made from any thread at any time after the table is resolved.
+#[repr(C)]
+pub struct CrashRangesV1 {
+    /// Map `[start, end)` under `label`: UTF-8, 1..=128 bytes, printable, no
+    /// line breaks, copied. A range with the same start replaces the earlier
+    /// one. Returns 0, or 1 for an empty range or an invalid label.
+    pub map: unsafe extern "C" fn(start: usize, end: usize, label: *const c_char) -> i32,
+    /// Stop attributing faults to the range that starts at `start`. Returns 0,
+    /// or 1 for a zero start.
+    pub unmap: unsafe extern "C" fn(start: usize) -> i32,
+}
+
+/// `defiance.loader` / `trace`, service version 1. Diagnostic call-stack
+/// tracing with a hardware breakpoint: each hit at the address is logged to the
+/// loader log with its registers and stack, and execution resumes unchanged.
+/// Four sites at most, shared with `[trace] sites` in `core.ini`. Both calls may
+/// be made from any thread once the table is resolved. Leave it out of
+/// shipping builds; it is for finding callers while developing.
+#[repr(C)]
+pub struct TraceV1 {
+    /// Log the next `hits` (1..=1000) hits at `address`, executable code, under
+    /// `label` (as for [`CrashRangesV1::map`]); the site is then released.
+    /// Returns 0; 1 for an invalid argument; 2 when all four sites are in use;
+    /// 3 when `address` is already traced; 4 when tracing could not start.
+    pub trace: unsafe extern "C" fn(address: usize, hits: u32, label: *const c_char) -> i32,
+    /// Release `address` before its hits are logged. Returns 0, or 1 when it
+    /// is not traced.
+    pub stop: unsafe extern "C" fn(address: usize) -> i32,
+}
+
+/// `defiance.loader` / `multiplayer`, service version 1. Which active plugins
+/// block multiplayer: those whose manifest does not declare `multiplayer_safe`.
+/// Callable from any thread.
+#[repr(C)]
+pub struct MultiplayerV1 {
+    /// The blocking plugins' IDs, comma-separated, copied NUL-terminated into
+    /// `buffer` when `capacity` exceeds their length. Returns that length; 0
+    /// when nothing blocks. Before startup has finished it reports a
+    /// placeholder, never 0.
+    pub blockers: unsafe extern "C" fn(buffer: *mut c_char, capacity: usize) -> usize,
+    /// For Core: the guard is installed. Until it is called, the loader starts
+    /// no plugin that is not multiplayer-safe.
+    pub guard_installed: unsafe extern "C" fn(),
 }
 
 /// `defiance.selection` / `selection`, service version 1. Read-only, game-thread

@@ -449,8 +449,15 @@ for site, displaced, label in b.AMMO_GATE_CALLS:
         put(region + site, b"\xe8" + struct.pack("<i", labels[label] - site - 5))
 put(FIRE_DATA_VT + 0x88, struct.pack("<Q", region + 0x117680))
 put(FIRE_DATA_VT + 0x90, struct.pack("<Q", region + 0x117790))
-gun_vt = obj(0x150, [(0x148, region + 0x28a900)] + [(0x80, block + labels["gun_ready"]),
-                     (0xf0, region + 0x28a4d0), (0xf8, region + 0x28a510)])
+# The reload share reads each gun's loaded ammunition (vt+158; gun+0x50 holds
+# it) and reload progress (vt+c8; a stand-in float at gun+0x14c).
+gun_loaded = scratch(0x10)
+put(gun_loaded, asm("mov rax, [rcx+0x50]; ret"))
+gun_progress = scratch(0x10)
+put(gun_progress, asm("movss xmm0, dword ptr [rcx+0x14c]; ret"))
+gun_vt = obj(0x160, [(0x148, region + 0x28a900)] + [(0x80, block + labels["gun_ready"]),
+                     (0xf0, region + 0x28a4d0), (0xf8, region + 0x28a510),
+                     (0xc8, gun_progress), (0x158, gun_loaded)])
 gunner_vt = obj(0x100, [(0xd0, region + 0x296160), (0xe0, region + 0x2cb6d0),
                         (0xf0, region + 0x1be5e0), (0xf8, region + 0x1be5f0)])
 
@@ -474,10 +481,12 @@ print("\n== original ammunition-menu draw and click consumers\n")
 # actual hook site. Only rendering and entity lookup are replaced by sinks.
 game = Image("bin/game.orig.dll")
 game_region = scratch(0x600000)
-ui_code, ui_labels = b.assemble(pathlib.Path("patch/icon-squad.asm").read_text().splitlines(), 0, 0x800)
+from icon import TRACE_OFFSET
+ui_code, ui_labels = b.assemble(pathlib.Path("patch/icon-squad.asm").read_text().splitlines(), 0, TRACE_OFFSET,
+                               symbols=b.GAME_SYMBOLS)
 ui_block = scratch(0x1000)
 put(ui_block, ui_code)
-for placeholder, target in ((0xaaaaaaaaaaaaaaae, 0x3f079), (0xaaaaaaaaaaaaaaaf, 0x3f1d0), (0xaaaaaaaaaaaaaab0, 0x3f800), (0xaaaaaaaaaaaaaab1, 0x2cb730)):
+for placeholder, target in ((0xaaaaaaaaaaaaaaae, 0x3f079), (0xaaaaaaaaaaaaaaaf, 0x3f1d0), (0xaaaaaaaaaaaaaab0, 0x3f800), (0xaaaaaaaaaaaaaab1, 0x2cb730), (0xaaaaaaaaaaaaaab7, 0x2c3380)):
     put(ui_block + ui_code.index(struct.pack("<Q", placeholder)), struct.pack("<Q", game_region + target))
 put(game_region + 0x3f06b, game.read(0x3f06b, 14))
 put(game_region + 0x3f079, asm("add rsp, 0x20; pop r12; pop rdi; pop rbp; pop rsi; pop rbx; ret"))
@@ -497,6 +506,8 @@ put(game_region + 0x3b750, asm("mov [rcx+8], edx; mov [rcx+0x10], r8; "
                              "mov qword ptr [rax+0x90], 4; mov rax, [rcx+0x40]; test rax, rax; jz rendered; "
                              "mov rdx, [rax+0x1a8]; mov word ptr [rdx], 0x32; mov qword ptr [rax+0x1b8], 1; rendered: ret"))
 put(game_region + 0x3f800, game.read(0x3f800, 0x93))
+# The progress bar's geometry refresh: count the calls instead of drawing.
+put(game_region + 0x2c3380, asm("inc dword ptr [rcx+0x1b0]; ret"))
 # Execute the actual text-label setter. Its standard-library assign/memcmp
 # dependencies use preallocated string storage in the UI fixture.
 put(game_region + 0x2cb730, game.read(0x2cb730, 0x90))
@@ -589,7 +600,7 @@ put(rifle_slot + 0x80, struct.pack("<QQ", rifle_controls, rifle_controls + 8))
 DRAW(menu)
 check("mixed keeps weapon artwork and shows enabled/selected", ui_text(rifle_label) == b"1/2" and q(rifle_slot + 0x10) == weapons[0] + 0x148)
 check("mixed preserves the native tooltip resource key", ctypes.string_at(q(rifle_control + 0x80), q(rifle_control + 0x90)) == b"Ammo")
-check("mixed ammo quantity is amber and marked dirty", dword(rifle_quantity + 0x1a0) == 0xffffc04d and byte(rifle_quantity + 0x188) == 1)
+check("mixed ammo quantity keeps the native color", dword(rifle_quantity + 0x1a0) == 0xffbfbfbf)
 check("native text setter marks the mixed label dirty", byte(rifle_label + 0x188) == 1)
 CLICK(menu, rifle_control)
 check("clicking mixed enables all users and clears their slot overrides", state(0) == 1 and dword(rifle_slot + 8) == 0 and all(not (byte(m["facet"] + 0x1e) & 1) for m in men))
@@ -600,9 +611,8 @@ SET(sq["ai"], 0, 1)
 put(men[1]["facet"] + 0x30, b"\x01")
 put(sq["base"] + 0x2c, bytes(4))
 DRAW(menu)
-check("empty mixed slot still shows amber", dword(rifle_quantity + 0x1a0) == 0xffffc04d)
+check("empty mixed slot keeps the native empty color", dword(rifle_quantity + 0x1a0) == 0xffff3333)
 CLICK(menu, rifle_control)
-check("native redraw restores empty-ammo color after mixed resolves", dword(rifle_quantity + 0x1a0) == 0xffff3333)
 put(sq["base"] + 0x2c, struct.pack("<I", 12))
 DRAW(menu)
 check("whole rifle toggle preserves the individual launcher override", byte(men[0]["facet"] + 0x1e) & 2 and state(1) == 2)
@@ -711,8 +721,25 @@ CLICK(menu, rifle_control)
 check("mixed subset click enables only selected users", STATE(trio_entity, trio_sq["base"], 0) == 1 and byte(trio[2]["facet"] + 0x1f) & 1 and slot(trio_sq["data"], trio_sq["base"]) == 0)
 check("uniform subset label reports two selected users", ui_text(rifle_label) == b"2")
 put(trio[2]["facet"] + 0x30, b"\x01")
+rifle_reload = obj(0x200, [(0, control_vt)])
+put(rifle_slot + 0x48, struct.pack("<Q", rifle_reload))
+def reload_bar():
+    return struct.unpack("<f", ctypes.string_at(rifle_reload + 0x1a8, 4))[0]
 DRAW(menu)
 check("mixed whole squad shows two enabled of three users", ui_text(rifle_label) == b"2/3")
+check("two of three enabled and ready fill the reload bar two thirds",
+      abs(reload_bar() - 2 / 3) < 1e-6 and byte(rifle_reload + 0x5b) == 1 and dword(rifle_reload + 0x1b0) == 1)
+DRAW(menu)
+check("an unchanged share does not refresh the bar again", dword(rifle_reload + 0x1b0) == 1)
+put(trio_guns[0] + 0x50, struct.pack("<Q", weapons[0]))
+put(trio_guns[0] + 0x14c, struct.pack("<f", 0.5))
+DRAW(menu)
+check("a user reloading this ammunition adds his progress", abs(reload_bar() - 1.5 / 3) < 1e-6)
+put(trio_guns[0] + 0x50, struct.pack("<Q", weapons[1]))
+DRAW(menu)
+check("a reload of other ammunition does not count", abs(reload_bar() - 2 / 3) < 1e-6)
+put(trio_guns[0] + 0x50, struct.pack("<Q", weapons[0]))
+put(trio_guns[0] + 0x14c, struct.pack("<f", 1.0))
 # Count soldiers, not compatible guns, and continue past the first disagreement.
 gunner = q(q(trio[1]["ai"] + 0x1f0) + 0x10)
 second_gun = obj(0x150)
@@ -723,6 +750,7 @@ DRAW(menu)
 check("two compatible guns on one soldier still count him once", ui_text(rifle_label) == b"2/3")
 CLICK(menu, rifle_control)
 check("uniform whole squad shows three selected users", ui_text(rifle_label) == b"3")
+check("every user enabled and ready fills the reload bar", reload_bar() == 1.0)
 put(trio[1]["facet"] + 0x30, bytes(1))
 put(trio[2]["facet"] + 0x30, bytes(1))
 DRAW(menu)
@@ -730,8 +758,20 @@ check("single selected user is explicitly shown as one", ui_text(rifle_label) ==
 check("selection count never mutates shared weapon count", dword(trio_sq["base"] + 0x34) == 0)
 put(trio_sq["base"] + 0x34, struct.pack("<I", 5))
 put(menu + 8, struct.pack("<Q", trio[0]["entity"]))
+# A unit without a squad roster (a vehicle) keeps its native count and is one
+# user for the reload bar: its guns' readiness, or 0 with the ammo disabled.
+put(trio_sq["base"] + 0x3c, bytes(4))
 DRAW(menu)
 check("non-squad panel retains its native count", ui_text(rifle_label) == b"5")
+check("a unit that is not a squad fills its bar when ready", reload_bar() == 1.0)
+put(trio_guns[0] + 0x14c, struct.pack("<f", 0.25))
+DRAW(menu)
+check("its reload of this ammunition shows on the bar", reload_bar() == 0.25)
+put(trio_sq["base"] + 0x3c, struct.pack("<I", 1))
+DRAW(menu)
+check("ammunition it has disabled empties the bar", reload_bar() == 0.0)
+put(trio_sq["base"] + 0x3c, bytes(4))
+put(trio_guns[0] + 0x14c, struct.pack("<f", 1.0))
 
 # The decimal helper must handle more than one digit without buffer overwrite.
 number_buf = obj(32)
@@ -744,6 +784,91 @@ for value in (0, 1, 12, 100, 65535, 0xffffffff):
     put(number_buf, bytes([0xa5])*32)
     NUMBER(value)
     check(f"decimal count {value} fits its buffer", ctypes.string_at(number_buf) == str(value).encode() and byte(number_buf + 11) == 0xa5)
+
+
+print("\n== attack recipients need enabled ammunition\n")
+# Enter attack_recipient as its hook does (a jmp from the attack command's
+# execute, rcx the recipient's AI, rsi the command) and resume at a routine
+# that returns the al the stock test would see.
+resume = scratch(0x20)
+put(resume, asm("add rsp, 0x20; pop rsi; ret"))
+put(ui_block + ui_code.index(struct.pack("<Q", 0xaaaaaaaaaaaaaab8)), struct.pack("<Q", resume))
+enter = scratch(0x40)
+put(enter, asm(f"push rsi; sub rsp, 0x20; mov rsi, rdx; mov r11, {ui_block + ui_labels['attack_recipient']}; jmp r11"))
+RECIPIENT = ctypes.CFUNCTYPE(ctypes.c_uint8, ctypes.c_void_p, ctypes.c_void_p)(enter)
+# The recipient's AI: vt+368 the stock test (+8), ai_can_attack records what it
+# was asked and answers +9.
+stock_test = scratch(0x10)
+put(stock_test, asm("movzx eax, byte ptr [rcx + 8]; ret"))
+can_attack = scratch(0x20)
+put(can_attack, asm("mov dword ptr [rcx + 0x10], edx; mov byte ptr [rcx + 0x14], r8b; "
+                    "movzx eax, byte ptr [rcx + 9]; ret"))
+recipient_vt = obj(0x400, [(0x368, stock_test), (b.REFERENCE_GAME_SYMBOLS["ai_can_attack"], can_attack)])
+# The command's target: +130 a reference whose +10 is the entity; entity vt+b0
+# -> facets, facets+18 -> vt+68, the kind.
+kind_of = scratch(0x10)
+put(kind_of, asm("mov eax, 0x10; ret"))
+target_facet = obj(0x10, [(0, obj(0x70, [(0x68, kind_of)]))])
+target = obj(0x20, [(0, obj(0xc0, [(0xb0, RET8)])), (8, obj(0x20, [(0x18, target_facet)]))])
+command = obj(0x140, [(0x130, obj(0x18, [(0x10, target)]))])
+def recipient(stock, capable):
+    ai = obj(0x20, [(0, recipient_vt)])
+    put(ai + 8, bytes([int(stock), int(capable)]))
+    return ai
+ai = recipient(True, True)
+check("a recipient that can attack with enabled ammunition is ordered", RECIPIENT(ai, command) == 1)
+check("it is asked about the target's kind with enabled ammunition only",
+      dword(ai + 0x10) == 0x10 and byte(ai + 0x14) == 1)
+check("one whose every usable weapon is disabled is left out", RECIPIENT(recipient(True, False), command) == 0)
+ai = recipient(False, True)
+check("the stock recipient test still decides first", RECIPIENT(ai, command) == 0 and dword(ai + 0x10) == 0)
+no_target = obj(0x140)
+check("a point target keeps the native test", RECIPIENT(recipient(True, False), no_target) == 1)
+lost = obj(0x140, [(0x130, obj(0x18))])
+check("a target that has gone keeps the native test", RECIPIENT(recipient(True, False), lost) == 1)
+
+print("\n== the attack button follows any selected unit, not the last\n")
+# Enter attack_button as its hook does: rbp the order buttons' frame, whose
+# rbp-49/-41 bound the selection, edi their flags; resume returns edi.
+button_resume = scratch(0x20)
+put(button_resume, asm("mov eax, edi; add rsp, 0x28; pop rbp; pop rdi; ret"))
+put(ui_block + ui_code.index(struct.pack("<Q", 0xaaaaaaaaaaaaaab9)), struct.pack("<Q", button_resume))
+button_enter = scratch(0x40)
+put(button_enter, asm(f"push rdi; push rbp; sub rsp, 0x28; mov edi, ecx; lea rbp, [rdx + 0x49]; "
+                      f"mov r11, {ui_block + ui_labels['attack_button']}; jmp r11"))
+BUTTON = ctypes.CFUNCTYPE(ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p)(button_enter)
+# A unit: entity vt+b0 -> facets, +28 its AI; the AI's pool has one record;
+# ai_attack_ready answers +8, ai_can_attack +9 (recording the kind and flag).
+pool_vt = obj(0x60, [(0x48, RET8)])
+ready_test = scratch(0x10)
+put(ready_test, asm("movzx eax, byte ptr [rcx + 8]; ret"))
+button_vt = obj(0x400, [(b.REFERENCE_GAME_SYMBOLS["ammo_pool_get"], RET20),
+                        (b.REFERENCE_GAME_SYMBOLS["ai_can_attack"], can_attack),
+                        (b.REFERENCE_GAME_SYMBOLS["ai_attack_ready"], ready_test)])
+def button_unit(capable, ready=True):
+    ai = obj(0x30, [(0, button_vt)])
+    put(ai + 8, bytes([int(ready), int(capable)]))
+    records = scratch(0x48)
+    put(ai + 0x20, struct.pack("<Q", obj(0x10, [(0, pool_vt), (8, obj(0x10, [(0, records), (8, records + 0x48)]))])))
+    facets = obj(0x30, [(0x28, ai)])
+    return obj(0x10, [(0, obj(0xc0, [(0xb0, RET8)])), (8, facets)]), ai
+def selection(units):
+    vector = obj(8 * max(1, len(units)), [(i * 8, u) for i, (u, _) in enumerate(units)])
+    frame = obj(0x10, [(0, vector), (8, vector + 8 * len(units))])
+    return frame
+FLAGS = 0x8207  # bit 1 the attack button, among others
+for capable, expected in [([True, False], True), ([False, True], True), ([False, False], False),
+                          ([True], True), ([False], False)]:
+    units = [button_unit(c) for c in capable]
+    flags = BUTTON(FLAGS, selection(units))
+    check(f"units able {capable}: button {'shown' if expected else 'hidden'}",
+          bool(flags & 2) == expected and flags & ~2 == FLAGS & ~2, f"{flags:#x}")
+units = [button_unit(True)]
+BUTTON(FLAGS, selection(units))
+check("asks about every kind, counting disabled ammunition as the stock test does",
+      dword(units[0][1] + 0x10) == 0xffffe7ff and byte(units[0][1] + 0x14) == 0)
+check("a unit that fails the stock readiness test does not count",
+      not BUTTON(FLAGS, selection([button_unit(True, ready=False)])) & 2)
 
 
 print("\n== native gun enumeration, release, weapon choice, and reserve\n")
@@ -786,6 +911,33 @@ check("disabling both leaves no loaded round", dword(guns[0] + 0xdc) == 0)
 SET(sq["ai"], 1, 0)
 CHOOSE(guns[0], 1)
 check("enabling launcher recovers from both disabled", q(guns[0] + 0x50) == weapons[1] and dword(guns[0] + 0xdc) == 1)
+
+print("\n== disabling through the shared flag releases loaded rounds too\n")
+# A gun keeps a round of a weapon disabled by the shared flag and fires it once
+# on an attack order; the pins already released theirs.
+men, sq, weapons, guns = gun_case(marked=False)
+wire_guns(men, guns, [weapons[:2], weapons[:2]])
+put(guns[1] + 0x50, struct.pack("<Q", weapons[0]))
+put(guns[1] + 0xdc, struct.pack("<I", 1))
+put(sq["base"] + 0x30, struct.pack("<I", 1))
+put(sq["base"] + 0x48 + 0x30, struct.pack("<I", 2))
+SET(sq["ai"], 1, 1)
+check("a whole-squad disable writes the shared flag", slot(sq["data"], sq["base"], 1) == 1)
+check("and releases the loaded launcher", dword(guns[0] + 0xdc) == 0)
+check("its reservation returns, no ammunition spent",
+      dword(sq["base"] + 0x48 + 0x30) == 0 and dword(sq["base"] + 0x48 + 0x2c) == 12)
+check("a gun holding another weapon keeps it", q(guns[1] + 0x50) == weapons[0] and dword(guns[1] + 0xdc) == 1)
+SET(sq["ai"], 0, 0)
+check("enabling releases nothing", dword(guns[1] + 0xdc) == 1)
+SET(sq["ai"], 1, 0)
+men, sq, weapons, guns = gun_case(marked=False)
+wire_guns(men, guns, [weapons[:2], weapons[:2]])
+put(sq["base"] + 0x48 + 0x30, struct.pack("<I", 4))
+# A unit that is not a squad (a vehicle, or a lone soldier) writes its own
+# slots and releases only its own guns.
+SET(men[0]["ai"], 1, 1)
+check("a single unit's disable releases its loaded launcher", dword(guns[0] + 0xdc) == 0)
+check("and no other unit's", dword(guns[1] + 0xdc) == 2)
 
 
 print()

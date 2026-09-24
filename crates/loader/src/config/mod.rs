@@ -79,6 +79,7 @@ struct Discovered {
     inputs: Vec<GroupInput>,
     extras: Vec<Declared>,
     failures: Vec<String>,
+    catalog: manifest::Catalog,
 }
 
 /// Load the whole configuration, once. Writes a missing bootstrap and missing
@@ -133,6 +134,7 @@ fn read(exe_dir: &Path, generate: bool) -> Discovered {
     // Do not create or interpret configuration owned by an unsupported schema.
     if !failures.is_empty() {
         return Discovered {
+            catalog: manifest::catalog(&paths.plugin_dir),
             paths,
             bootstrap,
             inputs: Vec::new(),
@@ -159,7 +161,8 @@ fn read(exe_dir: &Path, generate: bool) -> Discovered {
     // Third-party managed plugins declare their settings and config group in
     // their manifests; core resolves them from the same group files as the
     // built-ins, so a shared group's sections all live in one file.
-    let (extras, extra_groups) = manifest_declarations(&paths.plugin_dir);
+    let catalog = manifest::catalog(&paths.plugin_dir);
+    let (extras, extra_groups) = manifest_declarations(&catalog);
     let mut groups: Vec<String> = builtin::GROUPS
         .iter()
         .map(|group| (*group).to_string())
@@ -232,6 +235,7 @@ fn read(exe_dir: &Path, generate: bool) -> Discovered {
         inputs,
         extras,
         failures,
+        catalog,
     }
 }
 
@@ -239,12 +243,11 @@ fn read(exe_dir: &Path, generate: bool) -> Discovered {
 /// declarations and group names. An invalid or orphan manifest contributes
 /// nothing; the catalog reports those to the planner. Strings are leaked once,
 /// for the process's life.
-fn manifest_declarations(plugin_dir: &Path) -> (Vec<Declared>, Vec<String>) {
+fn manifest_declarations(catalog: &manifest::Catalog) -> (Vec<Declared>, Vec<String>) {
     let mut extras = Vec::new();
     let mut groups = BTreeSet::new();
-    let (entries, _) = manifest::catalog(plugin_dir);
-    for entry in entries {
-        let Some(manifest) = entry.manifest else {
+    for entry in &catalog.entries {
+        let Some(manifest) = &entry.manifest else {
             continue;
         };
         // Built-ins come from the authoritative table, not the packaged file.
@@ -335,8 +338,10 @@ fn build_snapshot(
     bootstrap: &parse::Document,
     extras: &[Declared],
     failures: &[String],
+    catalog: manifest::Catalog,
 ) -> Snapshot {
     let mut snapshot = Snapshot::build_with_extras(paths, inputs, bootstrap, extras);
+    snapshot.catalog = catalog;
     for message in failures {
         snapshot.blocked.insert(builtin::LOADER_SECTION.into());
         snapshot.problems.push(snapshot::Problem {
@@ -362,8 +367,9 @@ pub fn inspect(exe_dir: &Path) -> Snapshot {
         inputs,
         extras,
         failures,
+        catalog,
     } = read(exe_dir, false);
-    build_snapshot(paths, &inputs, &bootstrap, &extras, &failures)
+    build_snapshot(paths, &inputs, &bootstrap, &extras, &failures, catalog)
 }
 
 fn load_once() -> Snapshot {
@@ -373,6 +379,7 @@ fn load_once() -> Snapshot {
         inputs,
         extras,
         failures,
+        catalog,
     } = discover(&game_dir());
 
     // From here the log directory is known; switch the sink to it.
@@ -394,7 +401,14 @@ fn load_once() -> Snapshot {
         ));
     }
 
-    let snapshot = build_snapshot(paths.clone(), &inputs, &bootstrap, &extras, &failures);
+    let snapshot = build_snapshot(
+        paths.clone(),
+        &inputs,
+        &bootstrap,
+        &extras,
+        &failures,
+        catalog,
+    );
     for warning in &snapshot.warnings {
         crate::log::warn(warning);
     }
@@ -737,10 +751,11 @@ mod startup_regressions {
                 inputs,
                 extras,
                 failures,
+                catalog,
             } = read(&self.0.join("bin"), true);
             let pending = legacy_pending(&bootstrap, &inputs);
             (
-                build_snapshot(paths, &inputs, &bootstrap, &extras, &failures),
+                build_snapshot(paths, &inputs, &bootstrap, &extras, &failures, catalog),
                 pending,
             )
         }

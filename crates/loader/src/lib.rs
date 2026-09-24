@@ -29,6 +29,7 @@ mod host;
 mod json;
 mod log;
 mod manifest;
+mod multiplayer;
 mod plan;
 mod plugin;
 mod proxy;
@@ -37,6 +38,7 @@ mod resolve;
 mod rtti;
 mod services;
 mod threads;
+mod trace;
 mod win;
 
 /// In-process regression harness; not enabled in the shipped proxy build.

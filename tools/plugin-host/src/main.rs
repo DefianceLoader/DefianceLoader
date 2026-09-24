@@ -668,6 +668,42 @@ fn main() {
                 }
             }
         }
+        // Core hooks the lobby connection for the multiplayer guard whenever it
+        // initializes: the one game.dll write no feature owns. Before startup
+        // has recorded the blocking plugins the guard fails closed, so calling
+        // the connection through the hook returns a failure without touching
+        // the network.
+        // Found in the original image: the hook has changed the loaded one.
+        let site = parsed_game
+            .sites
+            .iter()
+            .find(|site| site.name == "lobby_connect")
+            .unwrap();
+        let lobby = defiance_core::Moves::locate(core::slice::from_ref(site), &originals[1])
+            .and_then(|moves| moves.at(site.start))
+            .unwrap();
+        if actual[1][lobby] != expected[1][lobby] {
+            assert!(
+                matches!(actual[1][lobby], 0xe9 | 0xff),
+                "the lobby connection holds Core's hook"
+            );
+            let span = (0..16)
+                .rev()
+                .find(|&i| actual[1][lobby + i] != expected[1][lobby + i])
+                .unwrap()
+                + 1;
+            expected[1][lobby..lobby + span].copy_from_slice(&actual[1][lobby..lobby + span]);
+            let connect: unsafe extern "system" fn(*mut c_void, *mut u8) -> *mut u8 =
+                unsafe { core::mem::transmute(targets[1].base as usize + lobby) };
+            let mut out = [0xaau8; 0x48];
+            assert_eq!(
+                unsafe { connect(core::ptr::null_mut(), out.as_mut_ptr()) },
+                out.as_mut_ptr()
+            );
+            assert_eq!(out[0], 0, "the guarded connection fails");
+            let size = usize::from_le_bytes(out[0x20..0x28].try_into().unwrap());
+            assert!(size > 15, "with the message, on the game's heap");
+        }
         // The disabled ammunition site stays corrupted in memory; expected
         // carries the same byte so the rest of the comparison is meaningful.
         if let Some((at, byte)) = corrupted {
@@ -691,6 +727,17 @@ fn main() {
             old_code[fix.offset..fix.offset + 4]
                 .copy_from_slice(&i32::try_from(old as isize - delta).unwrap().to_le_bytes());
         }
+        // Core fills the preview's material callback cell with the selection
+        // feature; the injector leaves it zero.
+        let cell = p.preview_dim_cell..p.preview_dim_cell + 8;
+        let callback = snapshot(new_logic + cell.start, 8);
+        if !failed.contains(&2)
+            && !skipped(scenario).contains(&2)
+            && !omitted(scenario).contains(&2)
+        {
+            assert_ne!(callback, [0; 8], "the preview callback is written");
+        }
+        old_code[cell].copy_from_slice(&callback);
         if partial_block {
             // Every differing block byte must lie in a disabled feature's fixup
             // slot: the enabled reachable code and its fixups are unchanged.

@@ -28,14 +28,71 @@ class ConfigToolTests(unittest.TestCase):
         self.root = pathlib.Path(self.temp.name)
         self.bin = self.root / "bin"
         self.bin.mkdir()
+        # A placeholder: the tool only checks that the executable is there.
+        (self.bin / "trm.exe").write_bytes(b"")
         self.bootstrap = self.bin / "defiance-loader.ini"
         self.plugins = self.root / "DefianceLoader" / "plugins"
         self.plugins.mkdir(parents=True)
         (self.plugins / "defiance_plugin_core.dll").write_bytes(b"defiance.core plugin")
 
-    def run_tool(self, *args):
-        return subprocess.run([str(tool()), "--game", str(self.bin), *args],
+    def run_tool(self, *args, game=None):
+        return subprocess.run([str(tool()), "--game", str(game or self.bin), *args],
                               capture_output=True, text=True)
+
+    def test_the_game_root_is_resolved_to_bin(self):
+        self.bootstrap.write_text("wait = 15\nallow_unknown_build = yes\n")
+        result = self.run_tool(game=self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"using {self.bin}", result.stdout)
+        self.assertIn("wait = 15", result.stdout)
+        self.assertNotIn("up to date", result.stdout)
+        report = self.run_tool("--report", game=self.root)
+        self.assertEqual(report.returncode, 0, report.stderr)
+        self.assertIn(f"using {self.bin}", report.stdout)
+
+    def test_help_names_the_game_directory(self):
+        result = subprocess.run([str(tool()), "--help"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("trm.exe", result.stdout)
+
+    def test_a_directory_without_the_game_is_refused(self):
+        self.bootstrap.write_text("wait = 15\n")
+        (self.bin / "trm.exe").unlink()
+        before = {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        for game in (self.root, self.bin, self.root / "DefianceLoader"):
+            for args in ((), ("--apply",), ("--report",)):
+                with self.subTest(game=game.name, args=args):
+                    result = self.run_tool(*args, game=game)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn("trm.exe", result.stderr)
+                    self.assertNotIn("up to date", result.stdout)
+        after = {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        self.assertEqual(after, before)
+
+    def test_apply_removes_a_plugins_override_equal_to_the_default(self):
+        self.bootstrap.write_bytes(
+            b"; keep me\r\nwait = 15\r\nplugins = ../DefianceLoader/plugins\r\n")
+        preview = self.run_tool()
+        self.assertEqual(preview.returncode, 0, preview.stderr)
+        self.assertIn("equals the default", preview.stdout)
+        self.assertIn("  - plugins = ../DefianceLoader/plugins", preview.stdout)
+        self.assertIn(b"plugins", self.bootstrap.read_bytes())
+        applied = self.run_tool("--apply")
+        self.assertEqual(applied.returncode, 0, applied.stderr)
+        self.assertEqual(self.bootstrap.read_bytes(), b"; keep me\r\nwait = 15\r\n")
+        self.assertTrue((self.bin / "defiance-loader.defiance-backup").is_file())
+        again = self.run_tool("--apply")
+        self.assertIn("up to date", again.stdout)
+
+    def test_apply_keeps_a_plugins_override_that_is_not_the_default(self):
+        override = self.root / "old" / "plugins"
+        override.mkdir(parents=True)
+        (override / "defiance_plugin_core.dll").write_bytes(b"defiance.core")
+        self.bootstrap.write_text("plugins = ../old/plugins\n")
+        applied = self.run_tool("--apply")
+        self.assertEqual(applied.returncode, 0, applied.stderr)
+        self.assertIn("up to date", applied.stdout)
+        self.assertEqual(self.bootstrap.read_text(), "plugins = ../old/plugins\n")
 
     def test_preview_reports_the_mismatch_and_writes_nothing(self):
         self.bootstrap.write_text("wait = 15\nallow_unknown_build = yes\nplugins = ../old/plugins\n")

@@ -22,9 +22,16 @@ DESCRIPTOR = pathlib.Path("out/payload-game.json")
 
 BLOCK_SIZE = 0x2000
 BUILDING_TAB_OFFSET = 0x1000  # keep existing code and diagnostic storage stable
-BUILDING_STATE_OFFSET = 0x1fe0  # engine-owned reference + world/context/player identities
+# engine-owned reference, world/context/player identities, the narrowed squad
+# (+20, compared only), the squad TAB modifier's virtual key (+28, which Core
+# writes from the selection feature's setting) and the preview's shown entity
+# and selection signature (+30, +38)
+BUILDING_STATE_OFFSET = 0x1fc0
+TAB_MODIFIER_OFFSET = BUILDING_STATE_OFFSET + 0x28
+SUBSET_STATE_OFFSET = BUILDING_STATE_OFFSET + 0x30
 PREVIEW_OFFSET = 0x1a00  # between the building TAB code and the engine-owned state
-TRACE_OFFSET = 0x800   # squad_of records each hop here for --probe
+SUBSET_OFFSET = 0x1b00   # the preview's selection marks, after the weapon guard
+TRACE_OFFSET = 0xf00   # squad_of records each hop here for --probe (0x60 bytes)
 EXPECT_SOURCE_SHA = "f0184b9fe358172c83261419c8ba3d822a0aa6b06ed3cddb2f7aa3ebb9653db4"
 # Other builds the signatures have been checked against (tools/sigs.py and
 # --scan-check), which the injector then relocates to without --scan. Steam:
@@ -47,9 +54,15 @@ HOOKS = [
     # Replace the already-selected shortcut; Ctrl rejects squad-container hits.
     (0x352de6, "488b86a0000000", "ctrl_select"),
     (0x3f06b, "4c8bc6488bd5488bcfe857010000", "ammo_panel"),
+    # The attack command's per-recipient test: also require enabled ammunition.
+    (0x3274d2, "488b01ff9068030000", "attack_recipient"),
+    # The order buttons' attack test: any selected unit, not the last one.
+    (0x23f781, "498b4500498bcd", "attack_button"),
     (0x34c2e6, "ff9040050000", "building_tab_collect"),
     (0x34c386, "e865a5ceff", "building_tab_apply"),
     (0x31bfa0, "ff9040050000", "building_tab_refresh"),
+    # The building panel's squad icons: select only the members inside.
+    (0x364b97, "488bc8488bd84c8b00", "building_icon_select"),
     # The squad preview's per-soldier weapon: keep the first match instead of
     # the last one the provider's scan leaves behind.
     (0x216d8c, "85c075513883a9000000754d", "preview_primary"),
@@ -57,6 +70,10 @@ HOOKS = [
     # The out-of-mission squad-management panel builds its own descriptors and
     # overwrote every one with the last weapon; keep the first.
     (0x29acf0, "488b82b800000048894128", "preview_squad"),
+    # The squad preview's unselected soldiers, and its rebuild when the
+    # squad's selection changes.
+    (0x216c94, "c64587000f57c0", "subset_mark"),
+    (0x36449c, "498b064885c07409", "subset_refresh"),
 ]
 
 # placeholder -> the rva the injector should resolve into that slot, and the
@@ -75,14 +92,21 @@ FIXUPS = [
     (0xaaaaaaaaaaaaaaaf, 0x3f1d0, "AmmunitionMenu::fillSlot", 6),
     (0xaaaaaaaaaaaaaab0, 0x3f800, "AmmunitionMenu::hideSlot", 6),
     (0xaaaaaaaaaaaaaab1, 0x2cb730, "text label setter", 6),
+    (0xaaaaaaaaaaaaaab7, 0x2c3380, "progress bar refresh", 6),
+    (0xaaaaaaaaaaaaaab8, 0x3274db, "resume the attack recipient test", 6),
+    (0xaaaaaaaaaaaaaab9, 0x23f7df, "resume the order buttons after the attack test", 6),
     (0xaaaaaaaaaaaaaab2, 0x34c2ec, "resume building TAB collection", 2),
     (0xaaaaaaaaaaaaaab3, 0x34c38b, "resume building TAB selection", 2),
     (0xaaaaaaaaaaaaaab4, 0x40e80, "UI raw-entity vector insertion", 2),
     (0xaaaaaaaaaaaaaab5, 0x368f0, "UI entity focus reference assignment", 2),
     (0xaaaaaaaaaaaaaab6, 0x31bfa6, "resume building cycle validation", 2),
+    (0xaaaaaaaaaaaaaaba, 0x364bb4, "resume the building panel icon click", 2),
     (0xaaaaaaaaaaaaaac1, 0x216de5, "resume the preview gun scan", 10),
     (0xaaaaaaaaaaaaaac2, 0x216d98, "resume the preview gun filter", 10),
     (0xaaaaaaaaaaaaaac3, 0x29acff, "resume the squad preview gun scan", 10),
+    (0xaaaaaaaaaaaaaac4, 0x216c9b, "resume the preview soldier's descriptor", 2),
+    (0xaaaaaaaaaaaaaac5, 0x3644b2, "resume the panel's shown-entity test", 2),
+    (0xaaaaaaaaaaaaaac6, 0x364563, "the panel's preview rebuild", 2),
 ]
 
 # placeholder -> a Win32 export the injector resolves by name, since the
@@ -91,14 +115,19 @@ EXPORTS = [
     (0xaaaaaaaaaaaaaaa6, "user32.dll", "GetAsyncKeyState"),   # world_select
     (0xaaaaaaaaaaaaaaa8, "user32.dll", "GetAsyncKeyState"),   # world_toggle
     (0xaaaaaaaaaaaaaaad, "user32.dll", "GetAsyncKeyState"),   # ctrl_select
+    (0xaaaaaaaaaaaaaabb, "user32.dll", "GetAsyncKeyState"),   # squad TAB modifier
 ]
 
 # read by the injector before it writes anything, as a version check on a part
 # of the module the patch does not touch
 ANCHOR_RVA = 0x1f42d0
+# Named functions with their own signatures: fixup targets, and the lobby
+# connection (Leonardo::Network::connectToLobbyServer), which Core hooks in Rust
+# to keep a game with gameplay plugins offline (plugins/core/src/multiplayer.rs).
 CALLEE_SITES = {0x3f1d0: "ammo_fill_slot", 0x3f800: "ammo_hide_slot", 0x40e80: "focus_append",
                 0x368f0: "focus_assign",
-                0x2cb730: "ammo_label_text"}
+                0x2cb730: "ammo_label_text", 0x2c3380: "ammo_progress_refresh",
+                0x1b30a0: "lobby_connect"}
 
 
 def main():
@@ -137,6 +166,13 @@ def main():
         raise SystemExit("the preview weapon code does not fit before the engine state")
     code += bytes(PREVIEW_OFFSET - len(code)) + preview
     labels.update(preview_labels)
+    subset, subset_labels = b.assemble(
+        pathlib.Path("patch/preview-subset.asm").read_text().splitlines(), SUBSET_OFFSET, TRACE_OFFSET,
+        SUBSET_STATE_OFFSET, layout=b.GAME_LAYOUT, symbols=b.GAME_SYMBOLS)
+    if len(code) > SUBSET_OFFSET or SUBSET_OFFSET + len(subset) > BUILDING_STATE_OFFSET:
+        raise SystemExit("the preview subset code does not fit before the engine state")
+    code += bytes(SUBSET_OFFSET - len(code)) + subset
+    labels.update(subset_labels)
 
     hooks = []
     for rva, displaced, label in HOOKS:
@@ -146,7 +182,8 @@ def main():
             raise SystemExit(f"{rva:#x} holds {actual.hex()}, not {displaced}")
         if label not in labels:
             raise SystemExit(f"the payload has no {label} label")
-        feature = 6 if label == "ammo_panel" else (10 if label.startswith("preview_") else 2)
+        feature = (6 if label in ("ammo_panel", "attack_recipient", "attack_button")
+                   else 10 if label.startswith("preview_") else 2)
         hooks.append({"rva": rva, "displaced": displaced, "entry": labels[label], "hook_feature": feature})
 
     fixups = []
@@ -206,6 +243,7 @@ def main():
         "code_bytes": len(code),
         "block_bytes": BLOCK_SIZE,
         "trace_offset": TRACE_OFFSET,
+        "tab_modifier_offset": TAB_MODIFIER_OFFSET,
         "anchor_rva": ANCHOR_RVA,
         "anchor": img.read(ANCHOR_RVA, 32).hex(),
         "hooks": hooks,
@@ -229,4 +267,5 @@ def main():
     print(f"descriptor {descriptor_path}")
 
 
-main()
+if __name__ == "__main__":
+    main()

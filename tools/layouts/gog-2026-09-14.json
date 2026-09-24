@@ -188,7 +188,14 @@
     "mov|rsi|0x93c": 2388
   },
   "game_sha256": "bc2af42369f9f6fe70e206ae4846f8f0e46ac01cca9a325c8159ee04a9b5e405",
+  "game_sites": {
+    "attack_recipient": 3315379
+  },
   "game_symbols": {
+    "ai_attack_order": 896,
+    "ai_attack_ready": 904,
+    "ai_can_attack": 936,
+    "ammo_pool_get": 456,
     "gunner_count": 320,
     "gunner_get": 304,
     "squad_roster": 976
@@ -285,6 +292,7 @@
     "stand_up_gate": 2876160
   },
   "logic_symbols": {
+    "ai_can_attack": 936,
     "ammo_pool_get": 456,
     "gunner_count": 320,
     "gunner_get": 304,

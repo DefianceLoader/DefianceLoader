@@ -128,20 +128,24 @@ by any selected squad do not consume a visible card. One selected squad uses
 the ordinary focused view.
 
 Cards show the selected users of each type. When only some allow it, the card
-uses the single-squad amber highlight and enabled/total count (for example,
-2/5). Clicking a mixed or fully disabled type enables it for all selected
+shows the single-squad enabled/total count (for example, 2/5). Clicking a mixed or fully disabled type enables it for all selected
 users; clicking a fully enabled type disables it. Each squad's own ammo
 index is looked up by type identity. Partial-squad selections retain the
 ammunition plugin's selected-soldier rules (including its eight-slot pin limit).
 A selection change invalidates old card clicks before any toggle is applied.
-Vehicles are not aggregated in this initial infantry implementation.
+Selected vehicles join the view: each is one user of its ammunition types,
+enabled or disabled as a whole (vehicles have no per-soldier pins), and a
+click toggles it with the squads. A selected building without guns of its
+own does not contribute.
 
 This view is experimental and intended for single-player use. It does not emit
 the native per-unit replay/recording commands; replay/network synchronization is
 not supported. The ammo-level bar shows summed rounds divided by summed
-capacity. The reload bar shows the average native progress of active reloads
-among selected users of that type, and hides when none are active. It is a
-group indicator, not a prediction of when every soldier will finish reloading.
+capacity. The reload bar shows the ready share of the selected users of that
+type, as the single-squad panel does: each enabled user counts 1 when ready or
+his native reload progress while reloading, a disabled user 0, divided by the
+users. It is full when all are enabled and ready, and is a group indicator, not
+a prediction of when every soldier will finish reloading.
 
 The display limit is columns * 3: 36 types by default, up to 126. Extra types
 are not displayed. This is independent of regroup's temporary 20-soldier

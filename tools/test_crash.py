@@ -56,6 +56,7 @@ class CrashTests(unittest.TestCase):
         self.assertIn("fault location:", details)
         self.assertIn("fault mapping: fixture.live", details)
         self.assertNotIn("fault mapping: fixture.removed", details)
+        self.assertNotIn("fault mapping: fixture.logtext", details)
         self.assertIn("NOT an unwound call stack", details)
 
     def test_loader_and_separate_dll_panics(self):

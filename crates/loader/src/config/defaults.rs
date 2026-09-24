@@ -5,6 +5,7 @@
 
 use super::builtin::{
     self, BUILTINS, LOADER_SECTION, LOADER_SETTINGS, LOGGING_SECTION, LOGGING_SETTINGS,
+    TRACE_SECTION, TRACE_SETTINGS,
 };
 use super::schema::SettingDecl;
 
@@ -15,6 +16,7 @@ pub fn blocks(group: &str) -> Vec<(&'static str, &'static [SettingDecl])> {
         "core" => {
             blocks.push((LOADER_SECTION, LOADER_SETTINGS));
             blocks.push((LOGGING_SECTION, LOGGING_SETTINGS));
+            blocks.push((TRACE_SECTION, TRACE_SETTINGS));
         }
         _ => {
             for builtin in BUILTINS {

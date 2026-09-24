@@ -1,11 +1,24 @@
 """Game-independent tests for the companion layout/package transformation."""
+import json
 import struct
 import tempfile
 import unittest
 from pathlib import Path
 import zipfile
-from package_squad_scroll import (layout, vehicle_layout, resources, dds,
+from package_squad_scroll import (layout, vehicle_layout, ammo_info_layout, resources, dds,
+                                  dim_material, dim_materials, DIM_ALBEDO, DIM_EMISSION,
                                   RESOURCE, VEHICLE_RESOURCE)
+
+
+# The stock ammo card's rows, in the game's CRLF and property-row format.
+AMMO_INFO = '\r\n'.join([
+    'name\ttype\tregion\tlink\ttip\tproperty\tvalue',
+    'ammoShootersCount\ttext\t 69, 2, 89, 22\t\t\t\t',
+    '\t\t\t\t\tfont\tDINPro_bold_16_o.fnt',
+    '\t\t\t\t\tsingle_line\ttrue',
+    'weaponType\ttext\t 2, 40, 88, 54\thcenter|vcenter\t\t\t',
+    '\t\t\t\t\talign\thcenter|vcenter',
+    '']).encode()
 
 
 def fixture(vehicle=False):
@@ -51,6 +64,19 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(after.count(b'\tdirection\tvertical'), 1)
         self.assertNotIn(b'df_perks', after)
         self.assertEqual(after[len(before):].count(b'\tenabled\ttrue'), 3)
+
+    def test_ammo_card_count_is_right_aligned_in_a_wider_box(self):
+        after = ammo_info_layout(AMMO_INFO).decode().split('\r\n')
+        self.assertEqual(after[1], 'ammoShootersCount\ttext\t 30, 2, 88, 22\t\t\t\t')
+        # The alignment joins the count's own properties, before the next row.
+        self.assertEqual(after[4], '\t\t\t\t\talign\tright')
+        self.assertTrue(after[5].startswith('weaponType\t'))
+        self.assertEqual(after[6], '\t\t\t\t\talign\thcenter|vcenter')
+        for data in [AMMO_INFO.replace(b'69, 2', b'68, 2'),
+                     AMMO_INFO.replace(b'ammoShootersCount', b'other'),
+                     ammo_info_layout(AMMO_INFO)]:
+            with self.assertRaises(ValueError):
+                ammo_info_layout(data)
 
     def test_rejects_changed_geometry_missing_slots_and_second_application(self):
         for data in [fixture().replace(b'465', b'464'), fixture().replace(b'weapon_slot_6', b'other'), layout(fixture())]:
@@ -105,6 +131,32 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from('<II', data, 12), (4, 32))
         self.assertEqual(len(data), 128 + 32 * 4 * 4)
         self.assertEqual(data[128:132], bytes([56, 34, 12, 255]))
+
+    def test_standard_materials_get_a_dimmed_copy(self):
+        standard = {'_Material': 'StandardMaterial', 'PS': 'standard',
+                    'Colors': {'albedo': 'ffffff', 'specular': '808080'},
+                    'Floats': {'emission_power': 2.0}, 'Textures': {'albedo': 'a.dds'}}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with zipfile.ZipFile(root / 'basis.pak', 'w') as z:
+                z.writestr('materials/units/a.material', json.dumps(standard))
+                z.writestr('materials/units/old.material', json.dumps(dict(standard, PS='other')))
+                z.writestr('materials/sky.material', json.dumps({'_Material': 'SkyMaterial'}))
+                z.writestr('materials/broken.material', b'{')
+                z.writestr('textures/b.material', json.dumps(standard))
+            with zipfile.ZipFile(root / 'patch_001.pak', 'w') as z:
+                # a newer definition wins, whatever its case, under its own name
+                z.writestr('Materials\\Units\\Old.material', json.dumps(standard))
+            dimmed = dim_materials(root)
+        self.assertEqual(sorted(dimmed), ['materials/defiance_dim/Units/Old.material',
+                                          'materials/defiance_dim/units/a.material'])
+        copy = json.loads(dimmed['materials/defiance_dim/units/a.material'])
+        self.assertEqual(copy['Colors'], {'albedo': DIM_ALBEDO, 'specular': '808080'})
+        self.assertEqual(copy['Floats'], {'emission_power': 2.0 * DIM_EMISSION})
+        self.assertEqual(copy['Textures'], standard['Textures'])
+        self.assertEqual(json.loads(dim_material(json.dumps({**standard, 'Floats': None}).encode()))
+                         ['Floats'], {'emission_power': DIM_EMISSION})
+        self.assertIsNone(dim_material(b'[]'))
 
 
 if __name__ == '__main__': unittest.main()

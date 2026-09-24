@@ -218,7 +218,7 @@ image = Image('bin/game.orig.dll')
 for start, end in ((0x34c240, 0x34c3dd), (0x31bf60, 0x31c04b)):
     put(game + start, image.read(start, end-start))
 source = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else 'patch/building-control.asm')
-STATE_OFFSET = 0x1fe0
+from icon import BUILDING_STATE_OFFSET as STATE_OFFSET
 code, labels = b.assemble(source.read_text(encoding='utf-8-sig').splitlines(), 0, 0x800, STATE_OFFSET)
 assert len(code) < STATE_OFFSET
 block = alloc(0x2000)
@@ -228,7 +228,8 @@ for placeholder, target in ((0xaaaaaaaaaaaaaab2, game + 0x34c2ec),
                             (0xaaaaaaaaaaaaaab3, game + 0x34c38b),
                             (0xaaaaaaaaaaaaaab4, c.cast(grow, c.c_void_p).value),
                             (0xaaaaaaaaaaaaaab5, game + 0x368f0),
-                            (0xaaaaaaaaaaaaaab6, game + 0x31bfa6)):
+                            (0xaaaaaaaaaaaaaab6, game + 0x31bfa6),
+                            (0xaaaaaaaaaaaaaaba, game + 0x364bb4)):
     setq(block, code.index(struct.pack('<Q', placeholder)), target)
 
 
@@ -309,12 +310,16 @@ for target, expected_men in ((squad_a, men_a[:2] + men_b[:2]), (squad_b, men_a[:
     check('intermediate TAB never resolves or clears the manager', q(lookup_calls) - previous_calls, int(changes_selection))
     check('native building reference count balances focus plus anchor', q(q(building, 0x100), 8), 1 + int(bool(q(state))) + int(q(ui, 0x2d8) == q(building, 0x100)))
 # Test the actual existing ammunition UI query using these same marks.
-ui_code, ui_labels = b.assemble(pathlib.Path('patch/icon-squad.asm').read_text().splitlines(), 0, 0x800)
-ui_block = blob(ui_code)
+from icon import TRACE_OFFSET
+ui_code, ui_labels = b.assemble(pathlib.Path('patch/icon-squad.asm').read_text().splitlines(), 0, TRACE_OFFSET,
+                               symbols=b.GAME_SYMBOLS)
+ui_block = blob(ui_code.ljust(TRACE_OFFSET + 0x100, bytes(1)))
 one = blob(asm('mov eax,1; ret'))
 get_child = blob(asm('mov rax,[rcx+8]; ret'))
+# The ready share asks each gun what it has loaded (vt+158): nothing here.
+nothing = blob(asm('xor eax,eax; ret'))
 for man in men_a + men_b:
-    ai, ai_vt, gunner, gunner_vt, gun, gun_vt = alloc(16), alloc(0x138), alloc(16), alloc(0x100), alloc(8), alloc(0x150)
+    ai, ai_vt, gunner, gunner_vt, gun, gun_vt = alloc(16), alloc(0x138), alloc(16), alloc(0x100), alloc(8), alloc(0x160)
     for obj, vt in ((ai, ai_vt), (gunner, gunner_vt), (gun, gun_vt)):
         setq(obj, 0, vt)
     setq(ai, 8, gunner)
@@ -324,6 +329,7 @@ for man in men_a + men_b:
     setq(gunner_vt, 0xf0, one)
     setq(gunner_vt, 0xf8, get_child)
     setq(gun_vt, 0x148, one)
+    setq(gun_vt, 0x158, nothing)
     setq(q(man, 0x110), 0x28, ai)
 record = alloc(0x48)
 setq(record, 0, alloc(8))
@@ -461,4 +467,101 @@ tab(ui, 0, 0, event)
 check('unavailable player retains building selection', selection(), [building])
 check('unavailable player retains building focus', focused(), building)
 check('failed lookup never forwards a null/wrong player', q(lookup_bad_args), 0)
+
+# The squad modifier (state +28 its virtual key, which Core writes): held with
+# TAB, each press selects one squad's occupants alone.
+held = alloc(8)
+put(game + 0x1080, asm(f'mov rax,{held}; movzx eax, word ptr [rax]; ret'))
+setq(block, code.index(struct.pack('<Q', 0xaaaaaaaaaaaaaabb)), game + 0x1080)
+def hold(on):
+    put(held, struct.pack('<H', 0x8000 if on else 0))
+def occupant_marks():
+    return [e for e in men_a + men_b if marked(e)]
+setq(game_context, 0x218, player)
+put(state + 0x28, struct.pack('<I', 0x11))
+occupants(men_a[:2] + men_b[:2])
+select(building)
+set_focus(building)
+hold(True)
+tab(ui, 0, 0, event)
+check('modifier TAB selects the first squad\'s occupants alone', occupant_marks(), men_a[:2])
+check('and focuses that squad', focused(), squad_a)
+check('panel refresh keeps the one-squad cycle', (refresh(panel), bool(q(state))), (1, True))
+tab(ui, 0, 0, event)
+check('the next modifier TAB selects the next squad\'s occupants alone', (occupant_marks(), focused()), (men_b[:2], squad_b))
+tab(ui, 0, 0, event)
+check('after the last squad it returns to the building', (selection(), focused(), q(state)), ([building], building, 0))
+hold(False)
+tab(ui, 0, 0, event)
+check('plain TAB still selects every occupant', (occupant_marks(), focused()), (men_a[:2] + men_b[:2], squad_a))
+hold(True)
+tab(ui, 0, 0, event)
+check('the modifier narrows to the squad already in focus', (occupant_marks(), focused()), (men_a[:2], squad_a))
+hold(False)
+tab(ui, 0, 0, event)
+check('plain TAB widens to every occupant again', (occupant_marks(), focused()), (men_a[:2] + men_b[:2], squad_b))
+tab(ui, 0, 0, event)
+check('and wraps to the building as before', selection(), [building])
+hold(True)
+tab(ui, 0, 0, event)
+set_mark(men_a[0], 0)
+refresh(panel)
+check('deselecting a narrowed occupant ends the cycle', q(state), 0)
+put(state + 0x28, struct.pack('<I', 0))
+select(building)
+set_focus(building)
+tab(ui, 0, 0, event)
+check('with the modifier off a held key changes nothing', occupant_marks(), men_a[:2] + men_b[:2])
+hold(False)
+
+# The building panel's squad icons: run the real click handler (game+364b20)
+# with the hook at 364b97 in place. Its panel keeps the slots at +280/+288
+# (slot +1a8 the widget, +1b0 a reference to the unit), the world at +410 and
+# the player at +3f8.
+put(game + 0x364b20, image.read(0x364b20, 0xa3))
+put(game + 0x1060, asm(f'mov r11,{block + labels["building_icon_select"]}; jmp r11'))
+put(game + 0x364b97, b'\xe9' + struct.pack('<i', 0x1060 - 0x364b97 - 5) + b'\x90' * 4)
+stock_selects = []
+@c.CFUNCTYPE(None, c.c_void_p, c.c_void_p)
+def stock_select(this, e):
+    stock_selects.append(e)
+setq(manager_vt, 0x60, c.cast(stock_select, c.c_void_p).value)
+setq(game_context, 0x218, player)
+registry = vector(entities)
+setq(manager, 0x28, q(registry))
+setq(manager, 0x30, q(registry, 8))
+icon_panel = alloc(0x420)
+icon_widgets = {}
+slots = []
+for squad in (squad_a, squad_b):
+    slot, widget = alloc(0x1c0), alloc(0x10)
+    setq(slot, 0x1a8, widget)
+    setq(slot, 0x1b0, holder(squad))
+    slots.append(slot)
+    icon_widgets[squad] = widget
+icon_slots = vector(slots)
+setq(icon_panel, 0x280, q(icon_slots))
+setq(icon_panel, 0x288, q(icon_slots, 8))
+setq(icon_panel, 0x410, context)
+setq(icon_panel, 0x3f8, player)
+click_icon = c.CFUNCTYPE(None, c.c_void_p, c.c_void_p)(game + 0x364b20)
+def marks(men):
+    return [marked(m) for m in men]
+occupants([men_a[0], men_b[0], men_a[1], disabled, 0])
+select(building)
+stock_selects.clear()
+click_icon(icon_panel, icon_widgets[squad_a])
+check('icon selects only the squad members inside', marks(men_a), [1, 1, 0, 0, 0])
+check('icon leaves other squads and the building unselected',
+      (marks(men_b), marked(building), marked(disabled)), ([0] * 5, 0, 0))
+check('icon inside a building never takes the whole squad', stock_selects, [])
+select(squad_b)
+stock_selects.clear()
+click_icon(icon_panel, icon_widgets[squad_a])
+check('without a selected building the icon keeps the stock select', stock_selects, [squad_a])
+occupants([men_b[0]])
+select(building)
+stock_selects.clear()
+click_icon(icon_panel, icon_widgets[squad_a])
+check('a squad with nobody inside keeps the stock select', stock_selects, [squad_a])
 print(f'{checks} building TAB checks passed')

@@ -300,7 +300,7 @@ def case(build_index,columns,combined=False):
         selected_entities=[]
         world=alloc(0x20); wvt=alloc(0x710); pq(world,wvt)
         context=alloc(0x220); cvt=alloc(0xe0); pq(context,cvt)
-        player=alloc(8); manager=alloc(0x70); registry=alloc(16)
+        player=alloc(8); manager=alloc(0x70); registry=alloc(24)
         pq(manager+0x40,registry); pq(manager+0x48,registry+16)
         # Use the actual supported LogicHybridServer player getter, not a
         # callback that assumes the same object layout as production code.
@@ -455,32 +455,35 @@ def case(build_index,columns,combined=False):
         assert struct.unpack_from("<I",union[0],0x28)[0]==200
         first=menu+0x180
         assert labels[q(first+0x40)]=="1/2"
-        assert C.c_uint32.from_address(q(first+0x30)+0x1a0).value==0xffffc04d
-        assert abs(C.c_float.from_address(q(first+0x48)+0x1a8).value-0.25)<0.001
+        # A mixed card keeps the native quantity colour (fillSlot's).
+        assert C.c_uint32.from_address(q(first+0x30)+0x1a0).value==0
+        # The reload bar is the ready share: the enabled user reloading at
+        # 0.25 and the disabled one (0) over two users.
+        def reload_bar(): return C.c_float.from_address(q(first+0x48)+0x1a8).value
+        assert abs(reload_bar()-0.125)<0.001
         assert abs(C.c_float.from_address(q(first+0x50)+0x1a8).value-0.405)<0.001
         C.CFUNCTYPE(None,C.c_void_p,C.c_void_p)(click)(menu,widgets[0])
         assert actions==[(selected_entities[0][1],0,0),(selected_entities[1][1],1,0)],actions
         redraw(menu,entity); actions.clear()
         assert labels[q(first+0x40)]=="2"
-        assert abs(C.c_float.from_address(q(first+0x48)+0x1a8).value-0.5)<0.001
-        # Ready guns report 1.0 in the real getter; exclude them, while zero
-        # remains visible for a reload that has just started.
+        assert abs(reload_bar()-0.5)<0.001
+        # Ready guns report 1.0 in the real getter: a ready user fills his
+        # share, and a reload that has just started (0) empties it.
         C.c_float.from_address(ammo100_guns[0]+16).value=1.0
         redraw(menu,entity)
-        assert abs(C.c_float.from_address(q(first+0x48)+0x1a8).value-0.75)<0.001
+        assert abs(reload_bar()-0.875)<0.001
         C.c_float.from_address(ammo100_guns[1]+16).value=1.0
         redraw(menu,entity)
-        assert C.c_ubyte.from_address(q(first+0x48)+0x5b).value==0
+        assert reload_bar()==1.0 and C.c_ubyte.from_address(q(first+0x48)+0x5b).value==1
         C.c_float.from_address(ammo100_guns[0]+16).value=0.0
         redraw(menu,entity)
-        assert C.c_ubyte.from_address(q(first+0x48)+0x5b).value==1
-        assert C.c_float.from_address(q(first+0x48)+0x1a8).value==0.0
+        assert abs(reload_bar()-0.5)<0.001
         C.c_float.from_address(ammo100_guns[0]+16).value=0.25
         C.c_float.from_address(ammo100_guns[1]+16).value=0.75
         C.CFUNCTYPE(None,C.c_void_p,C.c_void_p)(click)(menu,widgets[0])
         assert actions==[(selected_entities[0][1],0,1),(selected_entities[1][1],1,1)],actions
         redraw(menu,entity)
-        assert C.c_ubyte.from_address(q(first+0x48)+0x5b).value==0
+        assert reload_bar()==0.0 and C.c_ubyte.from_address(q(first+0x48)+0x5b).value==1
         # An individually pinned user can still enable the type when the
         # shared pool is disabled. Its state must contribute to the count.
         sf=member_selections[0]
@@ -494,6 +497,53 @@ def case(build_index,columns,combined=False):
         C.CFUNCTYPE(None,C.c_void_p,C.c_void_p)(click)(menu,widgets[0])
         assert not actions, "changed selection must refuse stale card clicks"
         pq(manager+0x48,registry+16)
+        # A vehicle (an AI without a squad roster, whose gunner holds its gun)
+        # joins the union as one user, toggled through its own AI, with its
+        # gun's readiness in the reload share.
+        @cb(C.c_void_p,C.c_void_p)
+        def no_roster(_): return 0
+        @cb(C.c_size_t,C.c_void_p)
+        def none(_): return 0
+        e=alloc(0x20); ev=alloc(0xc0); f=alloc(0x60); pq(e,ev); pq(e+8,f)
+        pq(ev+0xb0,entity_facets); pq(ev+0x98,infantry)
+        sf=alloc(0x40); C.c_ubyte.from_address(sf+0x18).value=1; pq(f+0x50,sf)
+        team=alloc(8); tv=alloc(0x90); pq(team,tv); pq(tv+0x80,owned); pq(f+0x20,team)
+        vehicle_ai=alloc(0x20); av=alloc(0x400); pq(vehicle_ai,av); pq(f+0x28,vehicle_ai)
+        pool=alloc(0x20); pv=alloc(0x60); v=alloc(24); rs=alloc(0x48)
+        pq(vehicle_ai+8,pool); pq(pool,pv); pq(pool+8,v); pq(v,rs); pq(v+8,rs+0x48)
+        pq(av+LOFF['pool_get'],ai_pool); pq(av+0x3e8,disabled); pq(av+LOFF['ai_set'],toggle)
+        pq(pv+0x48,pool_vector); pq(av+LOFF['roster'],no_roster)
+        gunner=alloc(16); gv=alloc(0x100); gun_entries=alloc(8)
+        pq(vehicle_ai+16,gunner); pq(gunner,gv); pq(gunner+8,gun_entries)
+        pq(av+LOFF['gunner_count'],one)
+        @cb(C.c_void_p,C.c_void_p,C.c_size_t)
+        def gunner_of_vehicle(p,i): return q(p+16)
+        pq(av+LOFF['gunner_get'],gunner_of_vehicle)
+        pq(gv+0xf0,one); pq(gv+0xf8,indexed_gun)
+        gun=alloc(24); gun_vt=alloc(0x160); pq(gun,gun_vt); pq(gun+8,100)
+        C.c_float.from_address(gun+16).value=1.0
+        pq(gun_vt+0x148,compatible); pq(gun_vt+0x158,plus8); pq(gun_vt+0xc8,reload_progress)
+        pq(gun_entries,gun)
+        pq(rs,100)
+        for off,value in [(0x28,60),(0x2c,30),(0x34,1),(0x3c,0)]:
+            C.c_uint32.from_address(rs+off).value=value
+        ai_records[vehicle_ai]=rs
+        pq(registry+16,e); pq(manager+0x48,registry+24)
+        redraw(menu,entity)
+        # Both squads' users are disabled here; the ready vehicle is enabled.
+        assert labels[q(first+0x40)]=="1/3",labels[q(first+0x40)]
+        assert abs(reload_bar()-1/3)<0.001,reload_bar()
+        actions.clear()
+        C.CFUNCTYPE(None,C.c_void_p,C.c_void_p)(click)(menu,widgets[0])
+        assert (vehicle_ai,0,0) in actions and len(actions)==3,actions
+        redraw(menu,entity)
+        assert labels[q(first+0x40)]=="3"
+        assert abs(reload_bar()-(0.25+0.75+1.0)/3)<0.001,reload_bar()
+        # A unit without guns (a building) is not a source at all.
+        pq(av+LOFF['gunner_count'],none)
+        redraw(menu,entity)
+        assert labels[q(first+0x40)]=="2"
+        pq(manager+0x48,registry+16); actions.clear()
         # Transient loading/teardown: missing context, world or player must
         # retain the original focused redraw and reject stale union clicks.
         for at in [menu+0x128,menu+0x130,context+0x218]:

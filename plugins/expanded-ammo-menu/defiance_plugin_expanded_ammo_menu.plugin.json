@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.expanded-ammo-menu",
   "dll": "defiance_plugin_expanded_ammo_menu.dll",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "abi": 5,
   "group": "weapons",
   "settings": [

@@ -10,5 +10,6 @@
     { "key": "fail_init", "type": "bool", "default": "false", "description": "Tutorial fault injection: register, then fail initialization." }
   ],
   "depends": [],
-  "conflicts": []
+  "conflicts": [],
+  "multiplayer_safe": true
 }

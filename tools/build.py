@@ -312,12 +312,20 @@ GAME_LAYOUT = {}
 # shared source; the profile supplies the value.
 # `squad_roster` is the squad AI facet's roster getter. It is a logic.dll class
 # slot, but the game.dll payload reaches the same object, so both tables carry
-# it: the per-module offset maps cannot see a cross-DLL use.
+# it: the per-module offset maps cannot see a cross-DLL use. `ai_can_attack`
+# is every AI facet's "can attack this target kind" (kind, enabled ammo only);
+# `ai_attack_order` the AI test the attack command applies to each recipient,
+# `ai_attack_ready` the one the order buttons apply after `ai_can_attack`.
+# The game layout maps `call [rax+0x368]` to another class's slot, so the
+# latter must be a symbol: symbols are substituted after the layout.
 REFERENCE_SYMBOLS = {"lie_down_frame": 0x70, "stand_up_frame": 0x60,
                      "gunner_count": 0x130, "gunner_get": 0x120,
-                     "ammo_pool_get": 0x1b8, "squad_roster": 0x3b8}
+                     "ammo_pool_get": 0x1b8, "squad_roster": 0x3b8,
+                     "ai_can_attack": 0x390}
 SYMBOLS = dict(REFERENCE_SYMBOLS)
-REFERENCE_GAME_SYMBOLS = {"gunner_count": 0x130, "gunner_get": 0x120, "squad_roster": 0x3b8}
+REFERENCE_GAME_SYMBOLS = {"gunner_count": 0x130, "gunner_get": 0x120, "squad_roster": 0x3b8,
+                          "ai_can_attack": 0x390, "ai_attack_order": 0x368,
+                          "ai_attack_ready": 0x370, "ammo_pool_get": 0x1b8}
 GAME_SYMBOLS = dict(REFERENCE_GAME_SYMBOLS)
 # Which layout keys an assembly actually rewrote, and the sources it was run
 # over, keyed by the table's identity, so a per-build run can report entries

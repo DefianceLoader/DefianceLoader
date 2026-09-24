@@ -11,7 +11,7 @@ import zipfile
 
 import package
 import package_squad_scroll
-from test_package_squad_scroll import fixture as panel_fixture
+from test_package_squad_scroll import AMMO_INFO, fixture as panel_fixture
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -100,6 +100,7 @@ class PackageTests(unittest.TestCase):
         with zipfile.ZipFile(game / "basis.pak", "w") as archive:
             archive.writestr(package_squad_scroll.RESOURCE, panel_fixture())
             archive.writestr(package_squad_scroll.VEHICLE_RESOURCE, panel_fixture(vehicle=True))
+            archive.writestr(package_squad_scroll.AMMO_RESOURCE, AMMO_INFO)
         result = self.build(game=game)
         self.assertEqual(result.returncode, 0, result.stderr)
         with zipfile.ZipFile(self.out) as archive:
@@ -122,6 +123,8 @@ class PackageTests(unittest.TestCase):
         game = self.root / "game"
         with zipfile.ZipFile(self.out) as archive:
             archive.extractall(game)
+        # The package ships no game; the config tool needs the executable there.
+        (game / "bin/trm.exe").write_bytes(b"")
         config = game / "DefianceLoader/config/infantry.ini"
         self.assertFalse(config.exists())
         for contents, expected in [

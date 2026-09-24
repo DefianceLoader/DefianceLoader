@@ -134,10 +134,11 @@ fn describe(process: Handle, pointers: u64, output: &mut std::fs::File, session:
         }
     }
     // Replay journal additions/removals; mapping attribution is evidence of
-    // location, not proof that the owner caused the corruption.
+    // location, not proof that the owner caused the corruption. Only the
+    // loader's own entries count: a log line (journaled as `[level] text`)
+    // never maps a range, whatever it says.
     let mut ranges = std::collections::BTreeMap::new();
     for line in session.lines() {
-        let line = line.strip_prefix("[info] ").unwrap_or(line);
         let fields: Vec<_> = line.splitn(4, ' ').collect();
         if fields.len() >= 2 && fields[0] == "crash-unmap" {
             if let Ok(start) = u64::from_str_radix(fields[1].trim_start_matches("0x"), 16) {

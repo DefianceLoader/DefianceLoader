@@ -122,6 +122,26 @@ target/release/defiance-pickup-inject --scan-check DIR # would another build's D
 Its settings are in `defiance-pickup-inject.ini` beside it, written with comments
 on the first run; command-line options override them for one run.
 
+## Tracing callers in game
+
+To find what calls a function in the running game, name it in
+`DefianceLoader/config/core.ini` and restart:
+
+```ini
+[trace]
+sites = logic+0x42a940, game+0x366fa7
+hits = 20
+```
+
+Each hit logs its call stack (module+offset frames) and the first four
+argument registers to `defiance-loader.log`. It uses hardware breakpoints, so
+it changes no code and works on addresses other patches already own; at most
+four sites, each released once it has logged its hits. Frames prefixed `?`
+were recovered by scanning the stack and can be stale; frames in patch payloads
+are named by their crash range (`core.logic assembly payload+0x…`). Leave
+`sites` empty for normal play. A plugin under development can arm sites itself
+through the loader's `trace` service ([plugin-api.md](plugin-api.md)).
+
 ## Analysis tools
 
 ```text

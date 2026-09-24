@@ -12,6 +12,16 @@
 //! defiance-config --defaults DIR               # explicit developer export
 //! ```
 //!
+//! `--game` (or `DEFIANCE_GAME_DIR`) names the directory holding `trm.exe`,
+//! where the bootstrap `defiance-loader.ini` lives. The game root, the folder
+//! containing `bin`, is accepted too, and the tool says it used `bin`. A
+//! directory with no `trm.exe` at either level is refused, never reported as
+//! up to date.
+//!
+//! Besides moving legacy loader keys into `core.ini [loader]`, `--apply`
+//! removes a legacy `plugins` override that resolves exactly to the default
+//! `root/plugins` (see [`migration::plan_default_plugins_override`]).
+//!
 //! It also reports a legacy `plugins` override that points at a missing
 //! directory while plugins exist at the new default, with the exact value to
 //! set; it never searches for another path itself.
@@ -19,7 +29,21 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use defiance_loader::config::{builtin, defaults, migration, parse, paths::Paths};
+use defiance_loader::config::{builtin, defaults, migration, parse, paths};
+use paths::Paths;
+
+const USAGE: &str = "\
+usage: defiance-config [--game DIR] [--apply | --report]
+       defiance-config --defaults DIR
+
+  --game DIR      the game's bin directory (holding trm.exe and
+                  defiance-loader.ini), or the game folder containing it;
+                  defaults to DEFIANCE_GAME_DIR
+  (no option)     preview the configuration migration; writes nothing
+  --apply         write the previewed changes, keeping .defiance-backup copies
+  --report        print every resolved setting with where it came from
+  --defaults DIR  write commented default group files into DIR
+";
 
 fn main() -> ExitCode {
     let mut game: Option<PathBuf> = std::env::var_os("DEFIANCE_GAME_DIR").map(PathBuf::from);
@@ -38,21 +62,39 @@ fn main() -> ExitCode {
                 Some(dir) => return write_defaults(&PathBuf::from(dir)),
                 None => return fail("--defaults needs a directory"),
             },
-            other => return fail(&format!("unknown argument `{other}`")),
+            "--help" | "-h" => {
+                print!("{USAGE}");
+                return ExitCode::SUCCESS;
+            }
+            other => return fail(&format!("unknown argument `{other}`; see --help")),
         }
     }
+    let Some(game) = game else {
+        return fail(if report {
+            "--report needs --game DIR or DEFIANCE_GAME_DIR"
+        } else {
+            "give --game DIR or set DEFIANCE_GAME_DIR"
+        });
+    };
+    let exe_dir = match paths::locate_exe_dir(&game) {
+        Ok((exe_dir, below)) => {
+            if below {
+                println!(
+                    "note: {} is the game root; using {}",
+                    game.display(),
+                    exe_dir.display()
+                );
+            }
+            exe_dir
+        }
+        Err(reason) => return fail(&format!("{reason}; no files changed")),
+    };
     if report {
-        let Some(dir) = &game else {
-            return fail("--report needs --game DIR or DEFIANCE_GAME_DIR");
-        };
-        print!("{}", defiance_loader::config::inspect(dir).report());
+        print!("{}", defiance_loader::config::inspect(&exe_dir).report());
         return ExitCode::SUCCESS;
     }
-    let Some(exe_dir) = game else {
-        return fail("give --game DIR or set DEFIANCE_GAME_DIR");
-    };
 
-    let bootstrap_text = match read_optional(&exe_dir.join("defiance-loader.ini")) {
+    let bootstrap_text = match read_optional(&exe_dir.join(paths::BOOTSTRAP_FILE)) {
         Ok(text) => text.unwrap_or_default(),
         Err(reason) => return fail(&reason),
     };
@@ -84,9 +126,19 @@ fn main() -> ExitCode {
     {
         return fail("core.ini is not parseable; no files changed");
     }
-    let plan = migration::plan_loader_keys(&bootstrap, &core_path, core_text.as_deref());
+    let mut plan = migration::plan_loader_keys(&bootstrap, &core_path, core_text.as_deref());
     if let Some(reason) = &plan.refuse {
         return fail(reason);
+    }
+    if let Some(change) =
+        migration::plan_default_plugins_override(&paths, &bootstrap, &bootstrap_text)
+    {
+        println!(
+            "note: the legacy `plugins` override equals the default {}; it only adds \
+             a startup warning, so --apply removes it",
+            paths.plugin_dir.display()
+        );
+        plan.changes.push(change);
     }
     if plan.is_empty() {
         println!("configuration is up to date; nothing to migrate");

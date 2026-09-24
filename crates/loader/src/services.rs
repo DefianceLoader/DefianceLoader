@@ -1,4 +1,8 @@
 //! Init-time discovery of provider-owned, versioned function tables.
+//!
+//! Plugins provide tables under their manifest IDs. The loader provides its own
+//! under [`defiance_api::LOADER_PROVIDER`], which any plugin may query without
+//! declaring a dependency and no plugin may register under.
 use core::ffi::{c_char, c_void, CStr};
 use defiance_api::ServiceApiV1;
 use std::{
@@ -24,6 +28,33 @@ struct Registry {
     tables: BTreeMap<(String, String, u32), Service>,
 }
 
+/// The loader's own provider ID, as the registry spells names.
+fn loader_id() -> String {
+    defiance_api::LOADER_PROVIDER
+        .to_str()
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+/// The loader's tables: name, version, address and size.
+fn loader_table(name: &str, version: u32) -> Option<(usize, usize)> {
+    match (name, version) {
+        ("crash-ranges", 1) => Some((
+            &crate::crash::RANGES_API as *const _ as usize,
+            core::mem::size_of::<defiance_api::CrashRangesV1>(),
+        )),
+        ("trace", 1) => Some((
+            &crate::trace::API as *const _ as usize,
+            core::mem::size_of::<defiance_api::TraceV1>(),
+        )),
+        ("multiplayer", 1) => Some((
+            &crate::multiplayer::API as *const _ as usize,
+            core::mem::size_of::<defiance_api::MultiplayerV1>(),
+        )),
+        _ => None,
+    }
+}
+
 impl Registry {
     fn register(
         &mut self,
@@ -33,7 +64,7 @@ impl Registry {
         address: usize,
         size: usize,
     ) -> i32 {
-        if version == 0 || address == 0 || size == 0 {
+        if version == 0 || address == 0 || size == 0 || context.id == loader_id() {
             return 1;
         }
         let key = (context.id.clone(), name, version);
@@ -59,7 +90,15 @@ impl Registry {
         version: u32,
         size: usize,
     ) -> usize {
-        if size == 0 || !context.dependencies.iter().any(|id| id == provider) {
+        if size == 0 {
+            return 0;
+        }
+        if provider == loader_id() {
+            return loader_table(name, version)
+                .filter(|&(_, table_size)| table_size >= size)
+                .map_or(0, |(address, _)| address);
+        }
+        if !context.dependencies.iter().any(|id| id == provider) {
             return 0;
         }
         self.tables
@@ -197,6 +236,32 @@ mod tests {
         r.finish(1, false);
         assert_eq!(r.query(&consumer, "provider", "service", 1, 16), 0);
     }
+    #[test]
+    fn the_loader_provides_without_a_dependency_and_cannot_be_impersonated() {
+        let mut r = Registry::default();
+        let consumer = context(1, "consumer", &[]);
+        let size = core::mem::size_of::<defiance_api::CrashRangesV1>();
+        assert_eq!(
+            r.query(&consumer, "defiance.loader", "crash-ranges", 1, size),
+            &crate::crash::RANGES_API as *const _ as usize
+        );
+        assert_eq!(
+            r.query(&consumer, "defiance.loader", "crash-ranges", 2, size),
+            0
+        );
+        assert_eq!(
+            r.query(&consumer, "defiance.loader", "crash-ranges", 1, size + 1),
+            0
+        );
+        assert_eq!(r.query(&consumer, "defiance.loader", "missing", 1, 8), 0);
+        assert_eq!(
+            r.query(&consumer, "defiance.loader", "trace", 1, 16),
+            &crate::trace::API as *const _ as usize
+        );
+        let impostor = context(2, "defiance.loader", &[]);
+        assert_eq!(r.register(&impostor, "crash-ranges".into(), 2, 123, 16), 1);
+    }
+
     #[test]
     fn failed_init_discards_all_versions_and_other_providers_survive() {
         let mut r = Registry::default();

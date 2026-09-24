@@ -2,8 +2,9 @@
 //!
 //! It waits for `logic.dll` and `game.dll` (a proxy DLL is in the process
 //! before they are), builds the `Api` once and leaks it so the pointer stays
-//! valid for the process, then discovers manifests, plans initialization and
-//! loads the planned plugins in dependency order.
+//! valid for the process, then plans initialization from the manifests
+//! configuration loading found ([`crate::config::Snapshot::catalog`]) and loads
+//! the planned plugins in dependency order.
 //!
 //! Discovery reads sidecar manifests rather than executing DLLs, so a disabled
 //! or blocked managed plugin is never loaded. A plugin whose exported identity,
@@ -29,6 +30,57 @@ const GAME_EXE: &str = "trm.exe";
 
 /// One host per process, however many times the proxy is attached.
 static STARTED: AtomicBool = AtomicBool::new(false);
+
+/// Arm `[trace] sites`, if any. Diagnostic only: a bad value is logged and
+/// startup goes on without tracing.
+fn start_trace(config: &crate::config::Snapshot) {
+    use crate::config::builtin::TRACE_SECTION;
+    let text = config.text(TRACE_SECTION, "sites").unwrap_or_default();
+    let sites = match crate::trace::parse(&text) {
+        Ok(sites) if sites.is_empty() => return,
+        Ok(sites) => sites,
+        Err(e) => {
+            crate::log::warn(&format!("trace: {e}; not tracing"));
+            return;
+        }
+    };
+    let mut addresses = Vec::new();
+    for site in &sites {
+        let wide = crate::win::wide(&site.module);
+        let base = unsafe { crate::win::GetModuleHandleW(wide.as_ptr()) } as usize;
+        if base == 0 {
+            crate::log::warn(&format!(
+                "trace: {} is not loaded; not tracing",
+                site.module
+            ));
+            return;
+        }
+        let address = base + site.rva;
+        if !crate::win::is_executable(address) {
+            crate::log::warn(&format!(
+                "trace: {}+{:#x} is not code; not tracing",
+                site.module, site.rva
+            ));
+            return;
+        }
+        addresses.push((address, format!("{}+{:#x}", site.module, site.rva)));
+    }
+    let hits = config
+        .integer(TRACE_SECTION, "hits")
+        .unwrap_or(20)
+        .clamp(1, 1000) as u32;
+    match crate::trace::start(&addresses, hits, crate::log::info) {
+        Ok(()) => crate::log::info(&format!(
+            "trace: {} armed on every thread, {hits} hits each",
+            addresses
+                .iter()
+                .map(|(_, label)| label.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        Err(e) => crate::log::warn(&format!("trace: {e}; not tracing")),
+    }
+}
 
 pub fn run() {
     if STARTED.swap(true, Ordering::AcqRel) {
@@ -108,15 +160,16 @@ pub fn run() {
             }
         }
     }
+    start_trace(&config);
 
     // Leaked on purpose: a plugin may keep this pointer for the process's life.
     let api: &'static Api = Box::leak(Box::new(crate::resolve::build_api()));
 
-    let (nodes, warnings) = crate::plan::discover(&config.paths.plugin_dir);
-    for warning in &warnings {
+    // The scan configuration loading made, so the plan and the settings agree.
+    for warning in &config.catalog.warnings {
         crate::log::warn(warning);
     }
-    let plan = crate::plan::plan(nodes, config);
+    let plan = crate::plan::plan(config.catalog.entries.clone(), config);
     for node in &plan.nodes {
         // Provenance and manifest path for diagnostics: where the effective
         // enablement came from, and which sidecar declared the plugin.
@@ -170,7 +223,11 @@ pub fn run() {
         }
     }
 
-    let result = execute_plan(&plan, |node, index, mask| load(node, api, index, mask));
+    let result = run_plan(
+        &plan,
+        |node, index, mask| load(node, api, index, mask),
+        crate::multiplayer::guarded,
+    );
     for (node, state) in plan.nodes.iter().zip(&result.states) {
         match state {
             RunState::Active => crate::log::info(&format!("{} active", node.id)),
@@ -181,6 +238,12 @@ pub fn run() {
             _ => {}
         }
     }
+    let active: Vec<bool> = result
+        .states
+        .iter()
+        .map(|state| *state == RunState::Active)
+        .collect();
+    crate::multiplayer::record(&crate::multiplayer::blockers(&plan, &active));
     let summary = result.summary();
     if result.degraded {
         crate::log::error(&format!(
@@ -227,9 +290,22 @@ impl StartupResult {
     }
 }
 
+/// The plan without the multiplayer guard's gate, for tests of the rest.
+#[cfg(test)]
 fn execute_plan(
     plan: &crate::plan::Plan,
+    initialize: impl FnMut(&Planned, usize, u64) -> Result<(), LoadFailure>,
+) -> StartupResult {
+    run_plan(plan, initialize, || true)
+}
+
+/// Initialize the plan in order. A plugin that is not multiplayer-safe starts
+/// only once `guarded` says the multiplayer guard is installed; the plan
+/// orders every such plugin after Core, which installs it.
+fn run_plan(
+    plan: &crate::plan::Plan,
     mut initialize: impl FnMut(&Planned, usize, u64) -> Result<(), LoadFailure>,
+    guarded: impl Fn() -> bool,
 ) -> StartupResult {
     let mut result = StartupResult {
         states: plan
@@ -260,6 +336,14 @@ fn execute_plan(
         {
             result.states[index] =
                 RunState::Blocked(format!("required `{dependency}` is not active"));
+            continue;
+        }
+        if !crate::plan::multiplayer_safe(node) && !guarded() {
+            result.states[index] = RunState::Blocked(
+                "the multiplayer guard is not installed (defiance.core); \
+                 plugins that are not multiplayer-safe need it"
+                    .into(),
+            );
             continue;
         }
         match initialize(node, index, mask) {
@@ -295,10 +379,13 @@ fn is_game_process() -> bool {
 pub fn test_plugins(exe_dir: &std::path::Path) -> Vec<(String, String)> {
     assert_eq!(exe_dir, crate::config::game_dir());
     let config = crate::config::load();
-    let (nodes, _) = crate::plan::discover(&config.paths.plugin_dir);
-    let plan = crate::plan::plan(nodes, config);
+    let plan = crate::plan::plan(config.catalog.entries.clone(), config);
     let api = Box::leak(Box::new(crate::resolve::build_api()));
-    let result = execute_plan(&plan, |node, owner, mask| load(node, api, owner, mask));
+    let result = run_plan(
+        &plan,
+        |node, owner, mask| load(node, api, owner, mask),
+        crate::multiplayer::guarded,
+    );
     let states = plan
         .nodes
         .iter()
@@ -351,8 +438,7 @@ mod startup_tests {
         }
         fn plan(&self) -> crate::plan::Plan {
             let config = crate::config::inspect(&self.0.join("bin"));
-            let (nodes, _) = crate::plan::discover(&config.paths.plugin_dir);
-            crate::plan::plan(nodes, &config)
+            crate::plan::plan(config.catalog.entries.clone(), &config)
         }
         fn config(&self, name: &str, bytes: &[u8]) {
             let dir = self.0.join("DefianceLoader/config");
@@ -374,6 +460,78 @@ mod startup_tests {
             .position(|node| node.id == id)
             .unwrap_or_else(|| panic!("no plugin `{id}` in the plan"));
         &result.states[index]
+    }
+
+    #[test]
+    fn without_the_guard_only_multiplayer_safe_plugins_start() {
+        let f = Fixture::new();
+        f.plugin("gameplay", &[], &[], ABI_VERSION);
+        f.plugin("display", &[], &[], ABI_VERSION);
+        let sidecar = f.0.join("DefianceLoader/plugins/display.plugin.json");
+        let json = std::fs::read_to_string(&sidecar).unwrap();
+        std::fs::write(
+            &sidecar,
+            json.replace(
+                "\"conflicts\":[]",
+                "\"conflicts\":[],\"multiplayer_safe\":true",
+            ),
+        )
+        .unwrap();
+        let plan = f.plan();
+        let result = run_plan(&plan, |_, _, _| Ok(()), || false);
+        assert_eq!(*state(&plan, &result, "display"), RunState::Active);
+        assert!(
+            matches!(state(&plan, &result, "gameplay"), RunState::Blocked(reason) if reason.contains("multiplayer guard")),
+            "{:?}",
+            state(&plan, &result, "gameplay")
+        );
+        let result = run_plan(&plan, |_, _, _| Ok(()), || true);
+        assert_eq!(*state(&plan, &result, "gameplay"), RunState::Active);
+    }
+
+    #[test]
+    fn only_active_plugins_without_the_flag_block_multiplayer() {
+        let f = Fixture::new();
+        f.plugin("gameplay", &[], &[], ABI_VERSION);
+        f.plugin("display", &[], &[], ABI_VERSION);
+        f.plugin("broken", &[], &[], ABI_VERSION);
+        let sidecar = f.0.join("DefianceLoader/plugins/display.plugin.json");
+        let json = std::fs::read_to_string(&sidecar).unwrap();
+        std::fs::write(
+            &sidecar,
+            json.replace(
+                "\"conflicts\":[]",
+                "\"conflicts\":[],\"multiplayer_safe\":true",
+            ),
+        )
+        .unwrap();
+        let plan = f.plan();
+        let result = execute_plan(&plan, |node, _, _| {
+            if node.id == "broken" {
+                Err(LoadFailure::plain("init returned 1"))
+            } else {
+                Ok(())
+            }
+        });
+        let active: Vec<bool> = result
+            .states
+            .iter()
+            .map(|state| *state == RunState::Active)
+            .collect();
+        assert_eq!(crate::multiplayer::blockers(&plan, &active), ["gameplay"]);
+    }
+
+    #[test]
+    fn the_plan_uses_the_scan_configuration_made() {
+        let f = Fixture::new();
+        f.plugin("a", &[], &[], ABI_VERSION);
+        let config = crate::config::inspect(&f.0.join("bin"));
+        // A plugin that appears after configuration loaded has no settings
+        // resolved for it, so startup must not plan it either.
+        f.plugin("late", &[], &[], ABI_VERSION);
+        let plan = crate::plan::plan(config.catalog.entries.clone(), &config);
+        let ids: Vec<&str> = plan.nodes.iter().map(|node| node.id.as_str()).collect();
+        assert_eq!(ids, ["a"]);
     }
 
     #[test]

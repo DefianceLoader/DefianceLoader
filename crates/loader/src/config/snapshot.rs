@@ -108,6 +108,9 @@ pub struct Snapshot {
     pub files: Vec<GroupStatus>,
     /// `(plugin_id, key)` pairs whose value must be redacted in a report.
     sensitive: BTreeSet<(String, String)>,
+    /// The plugin directory as this configuration's load scanned it; the
+    /// manifests' settings above and the startup plan both come from it.
+    pub catalog: crate::manifest::Catalog,
 }
 
 /// One declaration to resolve, with the group it lives in and a display owner.
@@ -139,6 +142,13 @@ fn declarations(extras: &[Declared]) -> Vec<DeclRef> {
     for decl in builtin::LOGGING_SETTINGS {
         decls.push(DeclRef {
             owner: LOGGING_SECTION.to_string(),
+            group: "core",
+            decl,
+        });
+    }
+    for decl in builtin::TRACE_SETTINGS {
+        decls.push(DeclRef {
+            owner: builtin::TRACE_SECTION.to_string(),
             group: "core",
             decl,
         });
@@ -408,6 +418,7 @@ impl Snapshot {
         }
 
         Snapshot {
+            catalog: Default::default(),
             paths,
             resolved,
             legacy,

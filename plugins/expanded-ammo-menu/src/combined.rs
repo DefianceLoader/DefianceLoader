@@ -57,23 +57,33 @@ struct Source {
 struct State {
     enabled: u32,
     total: u32,
-    reload_sum: f32,
-    reload_count: u32,
+    /// The users' summed readiness ([`readiness`]); a disabled user adds 0.
+    ready: f32,
+}
+/// A user's readiness from the reload progress (Gun::vt+c8) of each gun that
+/// has this ammunition loaded: the lowest progress in [0,1), or 1 when none
+/// is reloading. A ready gun reports 1; NaN and out-of-range values are not
+/// reloads. The same rule as the single-squad panel's `ammo_ui_ready`.
+fn readiness(progress: impl IntoIterator<Item = f32>) -> f32 {
+    progress
+        .into_iter()
+        .filter(|p| (0.0..1.0).contains(p))
+        .fold(1.0, f32::min)
 }
 impl State {
-    fn reload(&mut self, progress: f32, disabled: bool, rounds: u32) {
-        // Gun::vt+c8 returns 1 for an idle/ready gun. A newly started reload
-        // can return zero; neither NaN nor an idle gun should bias the mean.
-        if progress.is_finite() && (0.0..1.0).contains(&progress) && !disabled && rounds > 0 {
-            self.reload_sum += progress;
-            self.reload_count += 1;
-        }
-    }
     fn merge(&mut self, other: Self) {
         self.enabled = self.enabled.saturating_add(other.enabled);
         self.total = self.total.saturating_add(other.total);
-        self.reload_sum += other.reload_sum;
-        self.reload_count = self.reload_count.saturating_add(other.reload_count);
+        self.ready += other.ready;
+    }
+    /// The reload bar: the ready share of the selected users. Full when every
+    /// user is enabled and ready; 2/3 at rest with two of three enabled.
+    fn reload_share(self) -> f32 {
+        if self.total == 0 {
+            0.0
+        } else {
+            (self.ready / self.total as f32).clamp(0.0, 1.0)
+        }
     }
     fn mixed(self) -> bool {
         self.enabled > 0 && self.enabled < self.total
@@ -133,10 +143,12 @@ unsafe fn indexed(p: usize, offset: usize, index: usize) -> usize {
 }
 // Same recipient rules as ammunition's single-squad panel: live members of
 // this squad; a partial individual selection takes precedence over the squad.
+// A unit without a squad roster (a vehicle: a plain AiFacet whose gunners are
+// its turrets) is one user, with no individual pins (facet 0).
 unsafe fn members(ai: usize, parent: usize) -> Option<Vec<(usize, usize)>> {
     let roster = get(ai, offsets().roster);
     if roster == 0 {
-        return None;
+        return Some(vec![(ai, 0)]);
     }
     let header = get(roster, 0x68);
     if header == 0 {
@@ -192,11 +204,13 @@ unsafe fn state(record: &[u64; 9], index: usize, users: &[(Vec<usize>, usize)]) 
         let mut usable = false;
         let mut disabled = field(record, 0x3c) != 0;
         if index < 8
+            && *facet != 0
             && *((facet + 0x19) as *const u8) == 0xa5
             && *((facet + 0x1e) as *const u8) & (1 << index) != 0
         {
             disabled = *((facet + 0x1f) as *const u8) & (1 << index) != 0;
         }
+        let mut progress = Vec::new();
         for &gun in guns {
             // Compatibility includes alternative ammo; reload belongs only to
             // the ammo currently loaded into this gun (native vt+158).
@@ -204,14 +218,17 @@ unsafe fn state(record: &[u64; 9], index: usize, users: &[(Vec<usize>, usize)]) 
             if get(gun, 0x158) != record[0] as usize {
                 continue;
             }
-            let progress = std::mem::transmute::<usize, unsafe extern "C" fn(usize) -> f32>(read(
-                read(gun) + 0xc8,
-            ))(gun);
-            state.reload(progress, disabled, field(record, 0x2c));
+            progress.push(std::mem::transmute::<
+                usize,
+                unsafe extern "C" fn(usize) -> f32,
+            >(read(read(gun) + 0xc8))(gun));
         }
         if usable {
             state.total += 1;
-            state.enabled += u32::from(!disabled);
+            if !disabled {
+                state.enabled += 1;
+                state.ready += readiness(progress);
+            }
         }
     }
     state
@@ -251,6 +268,9 @@ unsafe fn sources(menu: usize) -> Option<Vec<Source>> {
         if facet == 0 || (select.is_selected)(facet as *mut _) == 0 {
             continue;
         }
+        // A soldier stands for his squad. Any other selected unit (a squad or
+        // a vehicle) is its own source; the ownership, AI, pool and gun checks
+        // below leave out anything without ammunition of its own.
         if kind(e, 0x20) {
             let parent = read(facet + 0x28);
             if parent == 0 {
@@ -262,7 +282,7 @@ unsafe fn sources(menu: usize) -> Option<Vec<Source>> {
             }
             e = read(weak + 0x10);
         }
-        if e != 0 && kind(e, 0x10) {
+        if e != 0 {
             entities.insert(e);
         }
     }
@@ -292,6 +312,10 @@ unsafe fn sources(menu: usize) -> Option<Vec<Source>> {
             .into_iter()
             .map(|(ai, facet)| (guns(ai), facet))
             .collect();
+        // Only a source with guns has ammunition of its own to show.
+        if users.iter().all(|(guns, _)| guns.is_empty()) {
+            continue;
+        }
         let mut records = Vec::new();
         let mut states = Vec::new();
         for at in vector(header, 0x48, 128)? {
@@ -348,13 +372,9 @@ unsafe fn progress(widget: usize, value: f32, functions: &[usize; 8]) {
 }
 unsafe fn decorate(slot: usize, card: &Card, functions: &[usize; 8]) {
     let state = card.state;
+    // fillSlot sets the quantity colour, so a mixed card keeps the native one.
     if state.mixed() {
         *((slot + 8) as *mut u32) = 1; // Like single-squad: next click enables all.
-        let checkbox = read(slot + 0x30);
-        if checkbox != 0 {
-            *((checkbox + 0x1a0) as *mut u32) = 0xffffc04d;
-            *((checkbox + 0x188) as *mut u8) = 1;
-        }
     }
     let label = read(slot + 0x40);
     if label != 0 {
@@ -363,15 +383,7 @@ unsafe fn decorate(slot: usize, card: &Card, functions: &[usize; 8]) {
         let string = [text.as_ptr() as usize, 0, text.len(), text.len().max(16)];
         std::mem::transmute::<usize, Pair>(functions[6])(label, string.as_ptr() as usize);
     }
-    if state.reload_count > 0 {
-        progress(
-            read(slot + 0x48),
-            state.reload_sum / state.reload_count as f32,
-            functions,
-        );
-    } else {
-        visibility(read(slot + 0x48), 0);
-    }
+    progress(read(slot + 0x48), state.reload_share(), functions);
     let capacity = field(&card.record, 0x28);
     let fraction = if capacity == 0 {
         0.0
@@ -473,21 +485,33 @@ pub unsafe extern "C" fn click(menu: usize, widget: usize) {
 mod tests {
     use super::*;
     #[test]
-    fn reload_mean_excludes_ready_disabled_empty_and_invalid_guns() {
-        let mut state = State::default();
-        for progress in [1.0, f32::NAN, f32::INFINITY, -1.0, 2.0] {
-            state.reload(progress, false, 10);
-        }
-        state.reload(0.5, true, 10);
-        state.reload(0.5, false, 0);
-        assert_eq!(state.reload_count, 0);
-        state.reload(0.0, false, 10);
-        state.reload(0.5, false, 10);
-        let mut other = State::default();
-        other.reload(0.25, false, 10);
-        state.merge(other);
-        assert_eq!(state.reload_count, 3);
-        assert_eq!(state.reload_sum / state.reload_count as f32, 0.25);
+    fn readiness_is_the_lowest_reload_or_ready() {
+        assert_eq!(readiness([]), 1.0);
+        assert_eq!(readiness([1.0, f32::NAN, f32::INFINITY, -1.0, 2.0]), 1.0);
+        assert_eq!(readiness([0.75, 1.0, 0.25]), 0.25);
+        assert_eq!(readiness([0.0]), 0.0);
+    }
+    #[test]
+    fn reload_share_counts_disabled_users_as_empty() {
+        let at_rest = State {
+            enabled: 2,
+            total: 3,
+            ready: 2.0,
+        };
+        assert!((at_rest.reload_share() - 2.0 / 3.0).abs() < 1e-6);
+        let mut all = State {
+            enabled: 3,
+            total: 3,
+            ready: 3.0,
+        };
+        assert_eq!(all.reload_share(), 1.0);
+        all.merge(State {
+            enabled: 1,
+            total: 1,
+            ready: 0.5,
+        });
+        assert_eq!(all.reload_share(), 3.5 / 4.0);
+        assert_eq!(State::default().reload_share(), 0.0);
     }
     fn record(id: u64, capacity: u32, rounds: u32, disabled: u32) -> [u64; 9] {
         let mut r = [0; 9];

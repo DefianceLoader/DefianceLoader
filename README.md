@@ -25,6 +25,11 @@ start, and your usual launcher or shortcut keeps working.
 Every feature can be switched off on its own. See [features](docs/features.md)
 for controls and details.
 
+**Single-player only.** The gameplay features change the game's simulation and
+send nothing to other players. While any of them is active, the game will not
+connect to multiplayer; switch them off to play online. This protects honest
+players from desynced games. It is not anticheat.
+
 ## Install
 
 Download the latest [release](https://github.com/DefianceLoader/DefianceLoader/releases)

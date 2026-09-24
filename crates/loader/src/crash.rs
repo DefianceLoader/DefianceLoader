@@ -55,6 +55,8 @@ static CAPTURING: AtomicBool = AtomicBool::new(false);
 struct Range {
     start: usize,
     end: usize,
+    /// Leaked with the node, for the tracer's frame names.
+    label: &'static str,
     active: AtomicBool,
     next: *mut Range,
 }
@@ -85,6 +87,7 @@ pub fn map(start: usize, end: usize, label: &str) {
     let node = Box::into_raw(Box::new(Range {
         start,
         end,
+        label: Box::leak(label.to_string().into_boxed_str()),
         active: AtomicBool::new(true),
         next: core::ptr::null_mut(),
     }));
@@ -100,6 +103,19 @@ pub fn map(start: usize, end: usize, label: &str) {
     }
 }
 
+/// The active range holding `address`: its start and label. Allocation-free.
+pub fn range_of(address: usize) -> Option<(usize, &'static str)> {
+    let mut entry = RANGES.load(Ordering::Acquire);
+    while !entry.is_null() {
+        let range = unsafe { &*entry };
+        if range.active.load(Ordering::Acquire) && range.start <= address && address < range.end {
+            return Some((range.start, range.label));
+        }
+        entry = range.next;
+    }
+    None
+}
+
 /// Stop watching a registered range. Called from the hook engine at removal.
 pub fn unmap(start: usize) {
     if start == 0 {
@@ -108,6 +124,44 @@ pub fn unmap(start: usize) {
     note(&format!("crash-unmap {start:#x}\n"));
     deactivate(start);
 }
+
+/// A plugin's label for a crash range or trace site, if it keeps to the
+/// services' contract: UTF-8, 1..=128 bytes, printable (no line breaks, which
+/// would let a label forge journal or log entries).
+pub fn service_label(label: *const core::ffi::c_char) -> Option<String> {
+    if label.is_null() {
+        return None;
+    }
+    let bytes = unsafe { core::ffi::CStr::from_ptr(label) }.to_bytes();
+    let text = core::str::from_utf8(bytes).ok()?;
+    (!text.is_empty() && text.len() <= 128 && !text.chars().any(char::is_control))
+        .then(|| text.to_owned())
+}
+
+unsafe extern "C" fn service_map(start: usize, end: usize, label: *const core::ffi::c_char) -> i32 {
+    match service_label(label) {
+        Some(label) if start < end => {
+            map(start, end, &label);
+            0
+        }
+        _ => 1,
+    }
+}
+
+unsafe extern "C" fn service_unmap(start: usize) -> i32 {
+    if start == 0 {
+        return 1;
+    }
+    unmap(start);
+    0
+}
+
+/// `defiance.loader` / `crash-ranges` v1: [`map`] and [`unmap`] for plugins,
+/// whose ranges (Core's payload blocks, for one) the loader cannot see.
+pub static RANGES_API: defiance_api::CrashRangesV1 = defiance_api::CrashRangesV1 {
+    map: service_map,
+    unmap: service_unmap,
+};
 unsafe extern "system" fn owned_exception(pointers: *mut Pointers) -> i32 {
     if pointers.is_null() || (*pointers).record.is_null() || CAPTURING.load(Ordering::Acquire) {
         return 0;
@@ -386,4 +440,27 @@ unsafe fn capture(pointers: *mut Pointers) {
     }
     // Remain latched: recursion, concurrent faults and a later panic abort
     // must not overwrite the first evidence or send a second pipe request.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn service_labels_keep_to_the_contract() {
+        assert_eq!(
+            service_label(c"core.logic payload".as_ptr()).as_deref(),
+            Some("core.logic payload")
+        );
+        assert_eq!(service_label(c"".as_ptr()), None);
+        assert_eq!(service_label(c"two\nlines".as_ptr()), None);
+        assert_eq!(service_label(core::ptr::null()), None);
+        let long = std::ffi::CString::new("x".repeat(129)).unwrap();
+        assert_eq!(service_label(long.as_ptr()), None);
+        assert_eq!(
+            unsafe { service_map(0x2000, 0x1000, c"backwards".as_ptr()) },
+            1
+        );
+        assert_eq!(unsafe { service_unmap(0) }, 1);
+    }
 }

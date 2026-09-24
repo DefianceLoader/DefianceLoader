@@ -44,6 +44,29 @@ pub fn needs_relocation(sha: &str, source: &str, verified: &[String], scan: Scan
     verified.iter().any(|v| v == sha) || scan == Scan::Unknown
 }
 
+/// A named site of the game.dll descriptor as an rva in the running build: the
+/// descriptor's own address when it describes this build (the reference or a
+/// variant), else wherever the site's signature is (a verified or, with
+/// `Scan::Unknown`, an unrecognized build).
+pub fn game_site(
+    patch: &GamePatch,
+    target: &Target,
+    scan: Scan,
+    name: &str,
+) -> Result<usize, String> {
+    let site = patch
+        .sites
+        .iter()
+        .find(|site| site.name == name)
+        .ok_or_else(|| format!("the descriptor has no {name} site"))?;
+    let sha = sha256::file(&target.path).map_err(|e| format!("hashing {:?}: {e}", target.path))?;
+    if !needs_relocation(&sha, &patch.source_sha256, &patch.verified, scan) {
+        return Ok(site.start);
+    }
+    let image = module_image(target)?;
+    Moves::locate(core::slice::from_ref(site), &image)?.at(site.start)
+}
+
 /// Move the patch to wherever its sites are in the running logic.dll.
 pub fn relocate_logic(patch: &Patch, target: &Target) -> Result<(Patch, Moves), String> {
     let sha = sha256::file(&target.path).map_err(|e| format!("hashing {:?}: {e}", target.path))?;

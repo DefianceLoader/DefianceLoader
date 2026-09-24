@@ -25,6 +25,17 @@ REGION_ICON_GATE = (0x418128, bytes.fromhex("498b06498bce"), "region_icon_gate")
 REGION_CALLS = [(site, b"\xe8" + struct.pack("<i", 0x418000 - site - 5),
                  f"region_individual_{i}", 2)
                 for i, site in enumerate((0x418e1f, 0x419097, 0x419130, 0x4193f0))]
+# The squad preview's dimmed soldiers (patch/preview-dim.asm): code after the
+# region code, and its cell (Core's material callback, then the mode) before the
+# ammunition scratch.
+PREVIEW_DIM_OFFSET = 0x2580
+PREVIEW_DIM_CELL = 0x26e0
+PREVIEW_DIM_HOOKS = [
+    # rva, the bytes displaced, the entry
+    (0x203499, bytes.fromhex("450fb6742420"), "dim_pose"),
+    (0x2037f0, bytes.fromhex("488b4588807820000f8499000000"), "dim_mode"),
+    (0x203830, bytes.fromhex("488b0e488b01498d5720"), "dim_part"),
+]
 ORDER_CALLS = [
     (0x43bab9, bytes.fromhex("488b442450"), "attack_members", 8),
     (0x43c6cd, bytes.fromhex("498b7d004885ff"), "garrison_members", 9),
@@ -90,6 +101,9 @@ def main():
     orders, order_labels = b.assemble(
         pathlib.Path("patch/order-members.asm").read_text().splitlines(),
         BASE + ORDER_OFFSET, b.CURSOR_OFFSET)
+    dim, dim_labels = b.assemble(
+        pathlib.Path("patch/preview-dim.asm").read_text().splitlines(),
+        BASE + PREVIEW_DIM_OFFSET, b.CURSOR_OFFSET, PREVIEW_DIM_CELL)
     if ORDER_OFFSET + len(orders) > b.CURSOR_OFFSET:
         raise SystemExit("order filters would reach the rotation cursor")
     if len(code) > b.POSTURE_OFFSET or b.POSTURE_OFFSET + len(posture) > b.MOVE_OFFSET:
@@ -137,6 +151,10 @@ def main():
     if b.AMMO_OFFSET + len(ammo) > REGION_OFFSET or REGION_OFFSET + len(region) > b.AMMO_SCRATCH:
         raise SystemExit("region code overlaps ammunition storage")
     payload[REGION_OFFSET:REGION_OFFSET + len(region)] = region
+    if REGION_OFFSET + len(region) > PREVIEW_DIM_OFFSET or \
+            PREVIEW_DIM_OFFSET + len(dim) > PREVIEW_DIM_CELL or PREVIEW_DIM_CELL + 0x10 > b.AMMO_SCRATCH:
+        raise SystemExit("the preview dimming code does not fit between the region code and the ammo scratch")
+    payload[PREVIEW_DIM_OFFSET:PREVIEW_DIM_OFFSET + len(dim)] = dim
     # Branches out of the block, into logic.dll: assembled here against a block
     # at zero, so the injector re-aims each rel32 from where the block landed.
     # Each carries the feature that owns the region it leaves, or 0 when the
@@ -148,7 +166,8 @@ def main():
                                  (setter, b.SETTER_OFFSET, 2), (pose, b.POSE_OFFSET, 0),
                                  (prone, b.PRONE_OFFSET, 4), (census, b.CENSUS_OFFSET, 7),
                                  (firing, b.FIRING_OFFSET, 5), (ammo, b.AMMO_OFFSET, 6),
-                                 (region, REGION_OFFSET, 2), (orders, ORDER_OFFSET, 9)):
+                                 (region, REGION_OFFSET, 2), (orders, ORDER_OFFSET, 9),
+                                 (dim, PREVIEW_DIM_OFFSET, 2)):
         rel_fixups += [{"rel_offset": offset, "rel_target": target, "rel_feature": feature}
                        for offset, target in b.module_branches(routine, BASE + at)]
 
@@ -194,6 +213,12 @@ def main():
     detours.append({"hook_rva": REGION_ICON_GATE[0],
                     "hook_displaced": REGION_ICON_GATE[1].hex(),
                     "hook_entry": region_labels[REGION_ICON_GATE[2]]})
+    # the squad preview's reads of a soldier's dead byte, and its part loop
+    for rva, displaced, label in PREVIEW_DIM_HOOKS:
+        if img.read(rva, len(displaced)) != displaced:
+            raise SystemExit(f"{rva:#x} is not the expected preview builder code")
+        detours.append({"hook_rva": rva, "hook_displaced": displaced.hex(),
+                        "hook_entry": dim_labels[label]})
     # the posture gates, entered by jmps over their functions' prologues and
     # jumping back past them through the re-aimed rel32s
     for rva, displaced, label in b.POSTURE_HOOKS:
@@ -346,6 +371,10 @@ def main():
               for i, (rva, call, _) in enumerate(b.AMMO_GATE_CALLS)]
     sites += [(label, site, [site + len(displaced)])
               for site, displaced, label, _ in ORDER_CALLS + REGION_CALLS]
+    # the preview builder's hooks, each covering where it jumps back
+    sites += [("dim_pose", 0x203499, [0x20349f]),
+              ("dim_mode", 0x2037f0, [0x2037fe, 0x203897]),
+              ("dim_part", 0x203830, [0x20383a, 0x20383d])]
     sites.append(("building_has_places", 0x65060, [0x6507f]))
     sites.append(("building_reserve_next", 0x6577f, [0x65784]))
     sites.append(("region_native_eligible", 0x418000, [0x418020]))
@@ -391,7 +420,8 @@ def main():
 
     owners = {}
     for feature, hooks in [
-        (2, [(b.SETTER_RVA,), (b.IS_SELECTED_RVA,), BUILDING_SELECT, REGION_ICON_GATE]),
+        (2, [(b.SETTER_RVA,), (b.IS_SELECTED_RVA,), BUILDING_SELECT, REGION_ICON_GATE]
+         + PREVIEW_DIM_HOOKS),
         (4, b.POSTURE_HOOKS + [b.PRONE_HOOK]),
         (5, b.FIRING_HOOKS),
         (6, b.AMMO_HOOKS + b.AMMO_READER_HOOKS),
@@ -438,6 +468,8 @@ def main():
         # manager, which share one tagged ring, then the soldier's setSelected
         "trace_offset": b.TRACE_OFFSET,
         "ammo_scratch": b.AMMO_SCRATCH,
+        # the preview's cell, whose callback Core writes with the selection feature
+        "preview_dim_cell": PREVIEW_DIM_CELL,
         "setter_offset": b.SETTER_OFFSET,
         "detours": detours,
         "trace_fixups": trace_fixups,

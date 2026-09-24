@@ -365,13 +365,16 @@ wd_resume:
 
 ; AmmunitionMenu::fill: r12 selected entity, rbp slot, rsi shared record,
 ; rdi menu. Aggregate only users of this weapon and pass fillSlot a private
-; record with a valid binary flag; decorate mixed after the stock draw.
+; record with a valid binary flag; after the stock draw, show enabled/selected
+; when mixed and set the reload bar to the users' ready share. fillSlot sets
+; the quantity colour itself, so a mixed slot keeps the native colour.
 ammo_panel:
     sub rsp, 0x90
     mov rcx, r12
     mov rdx, rsi
     mov r8, rbp
     call ammo_ui_state
+    movss dword ptr [rsp + 0x6c], xmm0
     mov dword ptr [rsp + 0x68], eax
     mov dword ptr [rsp + 0x70], r8d
     mov dword ptr [rsp + 0x74], r9d
@@ -398,6 +401,34 @@ ammo_panel:
     mov rcx, rdi
     mov r11, 0xaaaaaaaaaaaaaaaf
     call r11
+    ; The reload bar (slot+0x48) shows the ready share: the stock draw fills it
+    ; for any squad or multi-gun vehicle, however many users are disabled or
+    ; reloading. A negative share leaves the native bar alone.
+    movss xmm0, dword ptr [rsp + 0x6c]
+    xorps xmm1, xmm1
+    comiss xmm0, xmm1
+    jb ammo_panel_slot
+    mov eax, 0x3f800000
+    movd xmm1, eax
+    minss xmm0, xmm1
+    imul rax, rbp, 0xb8
+    mov rcx, qword ptr [rdi + rax + 0x1c8]
+    test rcx, rcx
+    jz ammo_panel_slot
+    ucomiss xmm0, dword ptr [rcx + 0x1a8]
+    je ammo_panel_reload_shown
+    movss dword ptr [rcx + 0x1a8], xmm0
+    mov r11, 0xaaaaaaaaaaaaaab7        ; the progress bar's refresh
+    call r11
+ammo_panel_reload_shown:
+    imul rax, rbp, 0xb8
+    mov rcx, qword ptr [rdi + rax + 0x1c8]
+    cmp byte ptr [rcx + 0x5b], 0
+    jne ammo_panel_slot
+    mov rax, qword ptr [rcx]
+    mov dl, 1
+    call qword ptr [rax + 0x48]
+ammo_panel_slot:
     imul rax, rbp, 0xb8
     lea r10, [rdi + rax + 0x180]
     mov rcx, qword ptr [r10 + 0x40]
@@ -405,11 +436,6 @@ ammo_panel:
     cmp dword ptr [rsp + 0x68], 3
     jne ammo_panel_count
     mov dword ptr [r10 + 8], 1        ; next click enables all selected users
-    mov rcx, qword ptr [r10 + 0x30]
-    test rcx, rcx
-    jz ammo_panel_count
-    mov dword ptr [rcx + 0x1a0], 0xffffc04d
-    mov byte ptr [rcx + 0x188], 1
 ammo_panel_count:
     cmp qword ptr [rsp + 0x78], 0
     je ammo_panel_done
@@ -447,6 +473,113 @@ ammo_panel_done:
     mov r11, 0xaaaaaaaaaaaaaaae
     jmp r11
 
+; SmartCursorCmdAttack's execute (game+327410) orders every recipient whose AI
+; passes vt+368. The cursor offers attack when any selected unit can attack
+; the target with enabled ammunition (ai_can_attack(kind, 1), game+355d90),
+; but chose the recipients with ai_can_attack(kind, 0), or not at all
+; (game+356840): a unit whose every weapon is disabled still took the order
+; and fired the round already chambered, then stopped. Require (kind, 1) of
+; each recipient too. rcx is the recipient's AI, rsi the command; a point
+; target (no entity at +130) keeps the native test. The kind is read as the
+; cursor reads it: target entity -> facets (vt+b0) +18 -> vt+68.
+attack_recipient:
+    sub rsp, 0x30
+    mov qword ptr [rsp + 0x20], rcx
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + {ai_attack_order}] ; displaced: the stock recipient test
+    test al, al
+    jz attack_recipient_done
+    mov rcx, qword ptr [rsi + 0x130]
+    test rcx, rcx
+    jz attack_recipient_yes
+    mov rcx, qword ptr [rcx + 0x10]
+    test rcx, rcx
+    jz attack_recipient_yes
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + 0xb0]
+    test rax, rax
+    jz attack_recipient_yes
+    mov rcx, qword ptr [rax + 0x18]
+    test rcx, rcx
+    jz attack_recipient_yes
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + 0x68]
+    mov edx, eax
+    mov rcx, qword ptr [rsp + 0x20]
+    mov rax, qword ptr [rcx]
+    mov r8b, 1
+    call qword ptr [rax + {ai_can_attack}]
+    jmp attack_recipient_done
+attack_recipient_yes:
+    mov al, 1
+attack_recipient_done:
+    add rsp, 0x30
+    mov r11, 0xaaaaaaaaaaaaaab8        ; fixup: resume game+3274db, test al, al
+    jmp r11
+
+; GameMenu's order buttons (game+23ec60) loop over the selection. Each unit
+; sets the attack button's bit (edi bit 1) again, then clears it when it
+; cannot attack, so the button followed whichever unit came last. Keep it
+; when any selected unit passes that stock test: ammunition to fire,
+; ai_can_attack(every kind, 0) and ai_attack_ready. The order itself goes
+; only to units that can (attack_recipient). The loop keeps the selection's
+; bounds at rbp-49 and rbp-41; this replaces the block from its first
+; instruction to game+23f7df, where nothing outside it jumps in.
+attack_button:
+    push rbx
+    push rsi
+    push rdi
+    sub rsp, 0x28
+    mov rbx, qword ptr [rbp - 0x49]
+    mov rsi, qword ptr [rbp - 0x41]
+attack_button_next:
+    cmp rbx, rsi
+    jae attack_button_none
+    mov rcx, qword ptr [rbx]
+    add rbx, 8
+    test rcx, rcx
+    jz attack_button_next
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + 0xb0]
+    test rax, rax
+    jz attack_button_next
+    mov rdi, qword ptr [rax + 0x28]
+    test rdi, rdi
+    jz attack_button_next
+    mov rcx, rdi
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + {ammo_pool_get}]
+    test rax, rax
+    jz attack_button_next
+    mov rcx, rax
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + 0x48]
+    mov rcx, qword ptr [rax + 8]
+    cmp qword ptr [rax], rcx
+    je attack_button_next
+    mov rcx, rdi
+    mov rax, qword ptr [rcx]
+    xor r8d, r8d
+    mov edx, 0xffffe7ff
+    call qword ptr [rax + {ai_can_attack}]
+    test al, al
+    jz attack_button_next
+    mov rcx, rdi
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + {ai_attack_ready}]
+    test al, al
+    jz attack_button_next
+    jmp attack_button_done
+attack_button_none:
+    and dword ptr [rsp + 0x28], 0xfffffffd ; the caller's edi, saved above
+attack_button_done:
+    add rsp, 0x28
+    pop rdi
+    pop rsi
+    pop rbx
+    mov r11, 0xaaaaaaaaaaaaaab9        ; fixup: resume game+23f7df
+    jmp r11
+
 ; Append unsigned eax in decimal at r10; return r10 just after the digits.
 ; At most ten digits; only volatile registers and private stack bytes used.
 ammo_ui_number:
@@ -480,9 +613,12 @@ ammo_ui_usable:
     jmp ui_query
 
 ; rcx entity, rdx record, r8 slot. Return 0 absent, 1 all enabled,
-; 2 all disabled, 3 mixed; r8d enabled users, r9d total users. Count each
-; soldier once and finish the scan even after discovering both states.
-; Shared state is only an unpinned user's default.
+; 2 all disabled, 3 mixed; r8d enabled users, r9d total users; xmm0 the ready
+; share: the users' mean readiness (ammo_ui_ready; a disabled user counts 0),
+; or -1 where the native bar stays. Count each soldier once and finish the
+; scan even after discovering both states. Shared state is only an unpinned
+; user's default. A unit without a squad roster (a vehicle) keeps its native
+; state and count, and is one user for the share.
 ammo_ui_state:
     mov r9d, 1
 ui_query:
@@ -494,11 +630,12 @@ ui_query:
     push r13
     push r14
     push r15
-    sub rsp, 0x48
+    sub rsp, 0x58
     mov dword ptr [rsp + 0x40], r9d
     mov dword ptr [rsp + 0x38], 0
     mov dword ptr [rsp + 0x3c], 0
     mov dword ptr [rsp + 0x44], 0
+    mov dword ptr [rsp + 0x48], 0
     mov qword ptr [rsp + 0x28], r8
     test r9d, r9d
     jz ui_query_weapon
@@ -517,10 +654,11 @@ ui_query_weapon:
     mov rcx, qword ptr [rax + 0x28]
     test rcx, rcx
     jz ui_usable_yes
+    mov qword ptr [rsp + 0x50], rcx
     mov rax, qword ptr [rcx]
     call qword ptr [rax + {squad_roster}]
     test rax, rax
-    jz ui_usable_yes                   ; non-squad panels retain native behavior
+    jz ui_single_unit                  ; not a squad: native, but for the share
     mov dword ptr [rsp + 0x44], 0
     mov rcx, rax
     mov rax, qword ptr [rcx]
@@ -590,6 +728,11 @@ ui_member_state:
     test eax, eax
     jnz ui_member_off
     inc dword ptr [rsp + 0x3c]
+    mov rcx, r15
+    mov rdx, qword ptr [rsp + 0x20]
+    call ammo_ui_ready
+    addss xmm0, dword ptr [rsp + 0x48]
+    movss dword ptr [rsp + 0x48], xmm0
     mov eax, 1
     jmp ui_merge_state
 ui_member_off:
@@ -597,7 +740,21 @@ ui_member_off:
 ui_merge_state:
     or dword ptr [rsp + 0x38], eax
     jmp ui_find_user                  ; keep counting after finding mixed
+ui_single_unit:
+    cmp dword ptr [rsp + 0x40], 0
+    je ui_usable_yes                   ; compatibility query: native
+    xor eax, eax
+    mov dword ptr [rsp + 0x48], eax    ; disabled by the native shared flag: 0
+    cmp dword ptr [rsp + 0x30], eax
+    jne ui_usable_native
+    mov rcx, qword ptr [rsp + 0x50]
+    mov rdx, qword ptr [rsp + 0x20]
+    call ammo_ui_ready
+    movss dword ptr [rsp + 0x48], xmm0
+    jmp ui_usable_native
 ui_usable_yes:
+    mov dword ptr [rsp + 0x48], 0xbf800000
+ui_usable_native:
     mov eax, 1
     cmp dword ptr [rsp + 0x40], 0
     je ui_usable_done
@@ -610,11 +767,20 @@ ui_shared_off:
     mov eax, 2                       ; non-squad: native shared flag
     jmp ui_usable_done
 ui_usable_no:
+    mov eax, dword ptr [rsp + 0x44]
+    test eax, eax
+    jz ui_share_done                   ; no users: the slot is hidden anyway
+    cvtsi2ss xmm1, rax
+    movss xmm0, dword ptr [rsp + 0x48]
+    divss xmm0, xmm1
+    movss dword ptr [rsp + 0x48], xmm0
+ui_share_done:
     mov eax, dword ptr [rsp + 0x38]
 ui_usable_done:
     mov r8d, dword ptr [rsp + 0x3c]
     mov r9d, dword ptr [rsp + 0x44]
-    add rsp, 0x48
+    movss xmm0, dword ptr [rsp + 0x48]
+    add rsp, 0x58
     pop r15
     pop r14
     pop r13
@@ -707,6 +873,80 @@ ui_has_no:
     xor eax, eax
 ui_has_done:
     add rsp, 0x20
+    pop r14
+    pop r13
+    pop r12
+    pop rdi
+    pop rsi
+    pop rbp
+    pop rbx
+    ret
+
+; rcx member AI, rdx descriptor. Return xmm0, the member's readiness with this
+; ammunition: the lowest reload progress (native vt+c8, in [0,1)) among his
+; guns that have it loaded (vt+158), or 1 when none is reloading it. A ready
+; gun reports 1, as the stock single-soldier bar shows.
+ammo_ui_ready:
+    push rbx
+    push rbp
+    push rsi
+    push rdi
+    push r12
+    push r13
+    push r14
+    sub rsp, 0x30
+    mov rbx, rcx
+    mov r14, rdx
+    mov dword ptr [rsp + 0x20], 0x3f800000
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + {gunner_count}]
+    mov r12, rax
+    xor esi, esi
+ui_ready_gunner:
+    cmp rsi, r12
+    jae ui_ready_done
+    mov rcx, rbx
+    mov rdx, rsi
+    inc rsi
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + {gunner_get}]
+    test rax, rax
+    jz ui_ready_gunner
+    mov rdi, rax
+    mov rcx, rax
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + 0xf0]
+    mov r13, rax
+    xor ebp, ebp
+ui_ready_gun:
+    cmp rbp, r13
+    jae ui_ready_gunner
+    mov rcx, rdi
+    mov rdx, rbp
+    inc rbp
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + 0xf8]
+    test rax, rax
+    jz ui_ready_gun
+    mov qword ptr [rsp + 0x28], rax
+    mov rcx, rax
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + 0x158]
+    cmp rax, r14
+    jne ui_ready_gun
+    mov rcx, qword ptr [rsp + 0x28]
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + 0xc8]
+    xorps xmm1, xmm1
+    comiss xmm0, xmm1
+    jb ui_ready_gun                  ; negative or NaN: not a reload
+    comiss xmm0, dword ptr [rsp + 0x20]
+    jae ui_ready_gun                 ; not below the lowest so far
+    movss dword ptr [rsp + 0x20], xmm0
+    jmp ui_ready_gun
+ui_ready_done:
+    movss xmm0, dword ptr [rsp + 0x20]
+    add rsp, 0x30
     pop r14
     pop r13
     pop r12

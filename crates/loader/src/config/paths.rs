@@ -19,6 +19,10 @@ use super::parse::Document;
 use std::path::{Component, Path, PathBuf};
 
 pub const BOOTSTRAP_FILE: &str = "defiance-loader.ini";
+/// The game executable; the directory holding it is the executable directory.
+pub const GAME_EXE: &str = "trm.exe";
+/// Where [`GAME_EXE`] sits below the game root.
+pub const EXE_SUBDIR: &str = "bin";
 pub const FALLBACK_LOG_FILE: &str = "defiance-loader.log";
 pub const DEFAULT_ROOT: &str = "../DefianceLoader";
 pub const DEFAULT_PLUGINS: &str = "plugins";
@@ -81,6 +85,27 @@ fn normalize(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+/// The executable directory for a directory a user named: `dir` itself when it
+/// holds [`GAME_EXE`], or `dir/bin` when `dir` is the game root. The flag says
+/// whether `bin` was added, so a tool can say which directory it used. A
+/// directory with neither is refused: reading a bootstrap from the wrong place
+/// would report defaults as if they were the installation's configuration.
+pub fn locate_exe_dir(dir: &Path) -> Result<(PathBuf, bool), String> {
+    if dir.join(GAME_EXE).is_file() {
+        return Ok((dir.to_path_buf(), false));
+    }
+    let below = dir.join(EXE_SUBDIR);
+    if below.join(GAME_EXE).is_file() {
+        return Ok((below, true));
+    }
+    Err(format!(
+        "{} has no {GAME_EXE}, and neither has {}; give the game's `{EXE_SUBDIR}` \
+         directory or the folder that contains it",
+        dir.display(),
+        below.display()
+    ))
 }
 
 impl Paths {
@@ -180,6 +205,43 @@ mod tests {
         let (paths, _) = Paths::resolve(&exe(), &parse("plugins = D:/ThirdParty/plugins\n"));
         assert_eq!(paths.plugin_dir, PathBuf::from("D:/ThirdParty/plugins"));
         assert!(paths.plugin_override);
+    }
+
+    fn unique_dir(tag: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!(
+            "defiance-paths-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join(EXE_SUBDIR)).unwrap();
+        base
+    }
+
+    #[test]
+    fn the_executable_directory_is_used_as_given() {
+        let game = unique_dir("exe");
+        let bin = game.join(EXE_SUBDIR);
+        std::fs::write(bin.join(GAME_EXE), b"").unwrap();
+        assert_eq!(locate_exe_dir(&bin).unwrap(), (bin.clone(), false));
+    }
+
+    #[test]
+    fn the_game_root_resolves_to_its_bin_directory() {
+        let game = unique_dir("root");
+        let bin = game.join(EXE_SUBDIR);
+        std::fs::write(bin.join(GAME_EXE), b"").unwrap();
+        assert_eq!(locate_exe_dir(&game).unwrap(), (bin, true));
+    }
+
+    #[test]
+    fn a_directory_without_the_game_is_refused() {
+        let game = unique_dir("none");
+        // A bootstrap alone does not make a game directory.
+        std::fs::write(game.join(EXE_SUBDIR).join(BOOTSTRAP_FILE), b"wait = 15\n").unwrap();
+        let error = locate_exe_dir(&game).unwrap_err();
+        assert!(error.contains(GAME_EXE), "{error}");
+        assert!(locate_exe_dir(&game.join("missing")).is_err());
     }
 
     #[test]

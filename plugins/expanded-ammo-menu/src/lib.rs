@@ -251,7 +251,7 @@ unsafe fn install(api: &Api) -> Result<(), String> {
         applied.push(address);
     }
     ALL_SELECTED.store(all_selected, Ordering::Relaxed);
-    log(api,LOG_INFO,&format!("expanded ammo menu: 3 rows x {columns} columns ({count} slots); compact visible slots v2 (relative root movement); all_selected_squads={all_selected}; menu context fix v3; combined counts/reload indicators v1; startup-only, no hot unload"));
+    log(api,LOG_INFO,&format!("expanded ammo menu: 3 rows x {columns} columns ({count} slots); compact visible slots v2 (relative root movement); all_selected_squads={all_selected}; menu context fix v3; combined counts/reload share v2, vehicles; startup-only, no hot unload"));
     // Nothing fallible may follow successful publication. On refusal the host
     // rolls back this plugin's owned patches; capacity remains unchanged.
     if (menu.publish)(count as u32) != 0 {

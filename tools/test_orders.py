@@ -73,6 +73,42 @@ def entity(marked=None):
 
 
 
+# An attack order as the dispatcher reads it: [rsp+50] -> cell -> handle
+# (+10 order) -> order (+28 target reference) -> reference (+10 target
+# facet) -> vt+68, the target kind.
+def attack_order(kind):
+    target_vt = [0] * 16
+    target_vt[0x68 // 8] = blob(asm(f"mov eax, {kind}; ret"))
+    target = scratch(0x20)
+    poke(target, 0, words(target_vt))
+    reference = scratch(0x20)
+    poke(reference, 0x10, target)
+    order = scratch(0x30)
+    poke(order, 0x28, reference)
+    handle = scratch(0x20)
+    poke(handle, 0x10, order)
+    return words([handle])
+
+
+# ai_can_attack(kind, enabled only): record what was asked, answer from +8.
+AI_CAN_ATTACK = blob(asm("mov dword ptr [rcx + 0x10], edx; mov byte ptr [rcx + 0x14], r8b; "
+                         "movzx eax, byte ptr [rcx + 8]; ret"))
+
+
+def armed(capable):
+    """An unmarked member whose AI answers ai_can_attack with `capable`."""
+    vt = [0] * 0x80
+    vt[0x390 // 8] = AI_CAN_ATTACK
+    ai = scratch(0x20)
+    poke(ai, 0, words(vt))
+    poke(ai, 8, int(capable), 1)
+    obj = entity()
+    facets = blob(bytes(bytearray(0x60)), 0x60)
+    poke(facets, 0x28, ai)
+    poke(obj, 0x110, facets)
+    return obj, ai
+
+
 descriptor = json.loads(pathlib.Path("out/payload.json").read_text())
 payload = blob(pathlib.Path("out/payload.bin").read_bytes())
 SELECTED_GETTER = payload + next(h["hook_entry"] for h in descriptor["detours"]
@@ -86,22 +122,8 @@ def check(condition, label):
         failures += 1
         print("FAIL", label)
 
-# Members fit in the same 16-pointer stack array used by the stock dispatcher.
-# The order handle and attack continuation sentinel exercise displaced loads.
-for feature, count_register, rva in [(8, "r13", 0x43bab9), (9, "rax", 0x43c6cd)]:
-    hook = next(c for c in descriptor["pose_calls"] if c["pose_site"] == rva)
-    before = bytes.fromhex(hook["pose_before"])
-    assert image.read(hook["pose_site"], len(before)) == before
-    for handle_value in (0, 0x12345678):
-        order_handle = words([handle_value])
-        # A near call + descriptor tail, exactly as installed in logic.dll.
-        site = scratch(64)
-        patch = b"\xe8" + struct.pack("<i", payload + hook["pose_entry"] - site - 5)
-        patch += bytes.fromhex(hook["pose_tail"])
-        # Capture flags before any flag-changing instruction executes.
-        patch += asm("setz byte ptr [rbx + 0x18]; ret")
-        ctypes.memmove(site, patch, len(patch))
-        trampoline = blob(asm(f"""
+def attack_trampoline(order_handle, count_register, site, order_cell):
+    return f"""
             push rbx
             push rbp
             push rsi
@@ -127,7 +149,8 @@ for feature, count_register, rva in [(8, "r13", 0x43bab9), (9, "rax", 0x43c6cd)]
         copied_members:
             mov qword ptr [rsp + 0x68], 0x76543210
             mov qword ptr [rsp + 0xf0], 0x76543210
-            mov qword ptr [rsp + 0x48], 0x12345678
+            mov rax, {order_cell}
+            mov qword ptr [rsp + 0x48], rax
             mov r13, {order_handle}
             mov {count_register}, r12
             mov r10, {site}
@@ -159,7 +182,28 @@ for feature, count_register, rva in [(8, "r13", 0x43bab9), (9, "rax", 0x43c6cd)]
             pop rbp
             pop rbx
             ret
-        """))
+    """
+
+
+# Members fit in the same 16-pointer stack array used by the stock dispatcher.
+# The order handle and attack continuation sentinel exercise displaced loads.
+for feature, count_register, rva in [(8, "r13", 0x43bab9), (9, "rax", 0x43c6cd)]:
+    hook = next(c for c in descriptor["pose_calls"] if c["pose_site"] == rva)
+    before = bytes.fromhex(hook["pose_before"])
+    assert image.read(hook["pose_site"], len(before)) == before
+    # The attack filter reads the order through [rsp+50]; a target of kind
+    # 0x10 lets every member without an AI through.
+    order_cell = attack_order(0x10) if feature == 8 else 0x12345678
+    for handle_value in (0, 0x12345678):
+        order_handle = words([handle_value])
+        # A near call + descriptor tail, exactly as installed in logic.dll.
+        site = scratch(64)
+        patch = b"\xe8" + struct.pack("<i", payload + hook["pose_entry"] - site - 5)
+        patch += bytes.fromhex(hook["pose_tail"])
+        # Capture flags before any flag-changing instruction executes.
+        patch += asm("setz byte ptr [rbx + 0x18]; ret")
+        ctypes.memmove(site, patch, len(patch))
+        trampoline = blob(asm(attack_trampoline(order_handle, count_register, site, order_cell)))
         run = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p)(trampoline)
         cases = [[], [False]*4, [True]*4, [False,True,False,False],
                  [True,False,True,False], [False,False,False,True],
@@ -186,10 +230,35 @@ for feature, count_register, rva in [(8, "r13", 0x43bab9), (9, "rax", 0x43c6cd)]
                 check([peek(source, i*8) for i in range(len(current))] == current, label + " source untouched")
                 check(peek(output, 0x20) == 0x76543210 and peek(output, 0x28) == 0x76543210, label + " guards")
                 if feature == 8:
-                    check(peek(output) == 0x12345678, label + " displaced load")
+                    check(peek(output) == order_cell, label + " displaced load")
                 else:
                     check(peek(output, 8) == order_handle and peek(output, 0x10) == handle_value, label + " displaced registers")
                     check(peek(output, 0x18, 1) == (handle_value == 0), label + " resume flags")
+        if feature != 8 or handle_value:
+            continue
+        # A member that cannot attack the target with enabled ammunition is
+        # left out: he would fire his chambered round, then stop. Ground
+        # targets (kind 0x800) keep the dispatcher's own check; so does an
+        # order without a target.
+        for kind, cell in [(0x10, attack_order(0x10)), (0x800, attack_order(0x800)),
+                           (0x10, words([0]))]:
+            for capable in ([True, False, True], [False, False], [True]):
+                pairs = [armed(c) for c in capable]
+                members = [m for m, _ in pairs]
+                source = words(members)
+                output = scratch(0x130)
+                runner = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p)(
+                    blob(asm(attack_trampoline(order_handle, count_register, site, cell))))
+                runner(source, len(members), output)
+                filtered = kind != 0x800 and peek(cell) != 0
+                expected = [m for m, c in zip(members, capable) if c] if filtered else members
+                count = peek(output, 8)
+                label = f"attack capability kind={kind:#x} capable={capable} target={peek(cell) != 0}"
+                check(count == len(expected), label + " count")
+                check([peek(output, 0x30 + i*8) for i in range(count)] == expected, label + " members")
+                if filtered:
+                    check(all(peek(ai, 0x10, 4) == kind and peek(ai, 0x14, 1) == 1 for _, ai in pairs),
+                          label + " asks with the target kind and enabled ammunition only")
 # Building-panel exit and both facing paths use occupants without selection.
 for rva, dest in [(0x107906, "rdi"), (0x107e30, "rbx"),
                   (0x10f806, "rbx"), (0x319cd4, "rbx")]:

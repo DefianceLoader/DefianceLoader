@@ -8,7 +8,7 @@ import zipfile
 
 import package_squad_scroll
 import stage
-from test_package_squad_scroll import fixture as panel_fixture
+from test_package_squad_scroll import AMMO_INFO, fixture as panel_fixture
 
 
 class StagingTests(unittest.TestCase):
@@ -148,6 +148,7 @@ class StagingTests(unittest.TestCase):
         with zipfile.ZipFile(self.root / "Game" / "basis.pak", "w") as archive:
             archive.writestr(package_squad_scroll.RESOURCE, panel_fixture())
             archive.writestr(package_squad_scroll.VEHICLE_RESOURCE, panel_fixture(vehicle=True))
+            archive.writestr(package_squad_scroll.AMMO_RESOURCE, AMMO_INFO)
         install = stage.Staging(self.game, self.source, False, False)
         mod = self.root / "Game" / "mods" / stage.MOD_DIR
         install.install()
@@ -162,6 +163,7 @@ class StagingTests(unittest.TestCase):
         with zipfile.ZipFile(self.root / "Game" / "basis.pak", "w") as archive:
             archive.writestr(package_squad_scroll.RESOURCE, panel_fixture())
             archive.writestr(package_squad_scroll.VEHICLE_RESOURCE, panel_fixture(vehicle=True))
+            archive.writestr(package_squad_scroll.AMMO_RESOURCE, AMMO_INFO)
         self.assertEqual(stage.bin_directory(self.root / "Game"), self.game)
         self.assertEqual(stage.bin_directory(self.game), self.game)
         self.assertEqual(stage.bin_directory(self.root / "Elsewhere"), self.root / "Elsewhere")

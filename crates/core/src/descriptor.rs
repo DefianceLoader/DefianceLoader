@@ -71,6 +71,9 @@ pub struct Patch {
     pub move_displaced: Vec<u8>,
     pub trace_offset: usize,
     pub ammo_scratch: usize,
+    /// The squad preview's cell: Core's dimmed-material callback at +0, which
+    /// Core writes with the selection feature (`patch/preview-dim.asm`).
+    pub preview_dim_cell: usize,
     pub detours: Vec<Hook>,
     pub setter_offset: usize,
     pub trace_fixups: Vec<Fixup>,
@@ -181,6 +184,7 @@ impl Patch {
             move_displaced: unhex(&field(text, "move_displaced")),
             trace_offset: number("trace_offset"),
             ammo_scratch: number("ammo_scratch"),
+            preview_dim_cell: number("preview_dim_cell"),
             setter_offset: number("setter_offset"),
             detours: many("hook_rva")
                 .into_iter()
@@ -274,6 +278,9 @@ pub struct GamePatch {
     pub anchor_rva: usize,
     pub anchor: Vec<u8>,
     pub trace_offset: usize,
+    /// The block cell holding the squad TAB modifier's virtual key (0 off),
+    /// which Core writes from the selection feature's setting.
+    pub tab_modifier_offset: usize,
     pub hooks: Vec<Hook>,
     pub fixups: Vec<Fixup>,
     pub exports: Vec<Export>,
@@ -309,6 +316,7 @@ impl GamePatch {
             anchor_rva: number("anchor_rva"),
             anchor: unhex(&field(text, "anchor")),
             trace_offset: number("trace_offset"),
+            tab_modifier_offset: number("tab_modifier_offset"),
             hooks: many("rva")
                 .into_iter()
                 .zip(fields(text, "displaced"))

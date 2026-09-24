@@ -6,6 +6,14 @@ Switch one off with `enabled = false` under its ID and restart the game; the log
 names each plugin's state and why it is inactive. Features that build on
 another (for example movement on selection) switch off with it.
 
+The gameplay features are single-player only: they change the game's simulation
+and send nothing to other players. While any of them is active the game will not
+go online; the Multiplayer menu shows an error instead, and the log lists the
+plugins to disable. Skirmish and the campaign are unaffected. The loader starts
+no gameplay plugin unless this guard is in place. It keeps honest players out of
+desynced games; it is not anticheat, and a player who modifies the files can
+remove it.
+
 ## Individual soldier control
 
 Plugins: `defiance.selection`, `defiance.movement`, `defiance.posture`,
@@ -25,7 +33,12 @@ building-entry and firing-mode (T) orders go only to the selected soldiers;
 their squadmates stay put. Select the whole squad to order everyone.
 Building-panel exit orders use only that building's occupants. The first TAB
 from a building selects all its occupants; further presses cycle squad focus
-and then return to building control.
+and then return to building control. Hold Ctrl with TAB (`squad_tab_modifier`
+in `infantry.ini`: `ctrl`, `shift` or `off`) to select one squad's occupants at
+a time instead. Clicking a squad icon on the building panel selects only that
+squad's soldiers inside. With part of a squad selected, the unit panel's 3D
+squad preview shows the unselected soldiers darker; this uses darker copies of
+the game's materials, which the squad scrolling companion mod carries.
 
 ## Per-soldier weapons
 
@@ -35,9 +48,14 @@ With part of a squad selected, an ammo-panel toggle applies only to those
 soldiers; select the whole squad to change everyone. The panel shows only the
 weapons the selected soldiers can use, and the counter shows how many of them
 can use each. When their settings differ it shows enabled/selected (such as
-`2/3`) with the count in amber; clicking enables all of them, clicking again
-disables them. Disabling a loaded weapon unloads it, so the soldier falls back
-to an enabled one. Individual overrides cover the first eight ammo slots, reset
+`2/3`); clicking enables all of them, clicking again disables them. The reload
+bar shows how many of them are ready: full when all are enabled and loaded,
+two thirds full with two of three enabled, and lower while one reloads. The
+companion UI mod right-aligns the counter so two-digit fractions fit. Disabling
+a loaded weapon unloads it, so the soldier falls back to an enabled one. A unit
+or soldier with every usable weapon disabled takes no part in an attack order,
+so it does not fire the round already chambered. Individual overrides
+cover the first eight ammo slots, reset
 on save/load, and are meant for single-player.
 
 ## Expanded ammo menu

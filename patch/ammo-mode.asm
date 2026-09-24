@@ -94,6 +94,7 @@ set_marked:
     mov r8d, dword ptr [rsp + 0x30]
     call ammo_pin
     mov rcx, r15
+    xor edx, edx
     call ammo_unload_disabled
     mov rax, 0x4900000000000000        ; trace: a per-soldier pin
     mov r9, rbx
@@ -126,9 +127,10 @@ set_clear_done:
     mov rdx, qword ptr [rsp + 0x28]
     mov r8d, dword ptr [rsp + 0x30]
     call write_one
-    jmp ammo_set_done
+    mov byte ptr [rsp + 0x40], 1       ; release through every member
+    jmp ammo_release_written
 
-ammo_set_single:                       ; a soldier, or no member list: unchanged
+ammo_set_single:                       ; a soldier or a vehicle: its own slots
     mov rax, 0x4500000000000000        ; trace: the single/no-list branch
     xor r9d, r9d
     call amo_note
@@ -136,6 +138,52 @@ ammo_set_single:                       ; a soldier, or no member list: unchanged
     mov rdx, qword ptr [rsp + 0x28]
     mov r8d, dword ptr [rsp + 0x30]
     call write_one
+    mov byte ptr [rsp + 0x40], 0       ; release through this facet
+; A gun keeps a round of a weapon disabled by the shared flag, and fires it
+; once when its unit is ordered to attack (the game counts a chambered gun as
+; able to). Release it on disabling, as the per-soldier pins do.
+ammo_release_written:
+    cmp dword ptr [rsp + 0x30], 1
+    jne ammo_set_done
+    mov rcx, qword ptr [rsp + 0x20]
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + {ammo_pool_get}]
+    test rax, rax
+    jz ammo_set_done
+    mov rcx, rax
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + 0x48]
+    test rax, rax
+    jz ammo_set_done
+    mov rcx, qword ptr [rax]
+    mov rdx, qword ptr [rax + 8]
+    mov r8, qword ptr [rsp + 0x28]
+    imul r8, r8, 0x48
+    sub rdx, rcx
+    cmp r8, rdx
+    jae ammo_set_done                  ; negative and out-of-range slots
+    mov rax, qword ptr [rcx + r8]
+    test rax, rax
+    jz ammo_set_done
+    mov qword ptr [rsp + 0x38], rax    ; the weapon disabled
+    cmp byte ptr [rsp + 0x40], 0
+    jne ammo_release_members
+    mov rcx, qword ptr [rsp + 0x20]
+    mov rdx, rax
+    call ammo_unload_disabled
+    jmp ammo_set_done
+ammo_release_members:
+    mov rbp, r12
+ammo_release_next:
+    cmp rbp, r13
+    jae ammo_set_done
+    call next_soldier
+    test r15, r15
+    jz ammo_release_next
+    mov rcx, r15
+    mov rdx, qword ptr [rsp + 0x38]
+    call ammo_unload_disabled
+    jmp ammo_release_next
 ammo_set_done:
     add rsp, 0x48
     pop r15
@@ -753,9 +801,12 @@ loaded_done:
     ret
 gun_loaded_end:
 
-; Toggle-time mutation only: enumerate the soldier's live gunners and guns,
-; and return any disabled weapon's reservation through Gun::release. Keeping
-; dc nonzero lets the native chooser retain the disabled weapon as loaded.
+; Toggle-time mutation only: enumerate the unit's live gunners and guns, and
+; return any disabled weapon's reservation through Gun::release. Keeping dc
+; nonzero lets the native chooser retain the disabled weapon as loaded.
+; rcx the AI facet; rdx a weapon disabled for all (0 for none), which an
+; unpinned gun holding it releases too; a pinned-off gun always does. The
+; weapon waits in rdx's home slot, keeping the frame the unwind entry names.
 ; Use virtual enumeration, also used by AmmunitionMenu, instead of a cache.
 ammo_unload_disabled:
     push rbx
@@ -766,6 +817,7 @@ ammo_unload_disabled:
     push r13
     push r14
     sub rsp, 0x20
+    mov qword ptr [rsp + 0x68], rdx
     mov rbx, rcx
     mov rax, qword ptr [rcx]
     call qword ptr [rax + {gunner_count}]
@@ -804,7 +856,15 @@ unload_next_gun:
     mov rdx, qword ptr [rax + 0x50]
     call gun_pin
     cmp eax, 1
+    je unload_release
+    cmp eax, -1
+    jne unload_next_gun                ; pinned on
+    mov rax, qword ptr [r14 + 0x50]
+    test rax, rax
+    jz unload_next_gun
+    cmp rax, qword ptr [rsp + 0x68]
     jne unload_next_gun
+unload_release:
     mov rcx, r14
     mov rax, qword ptr [rcx]
     call qword ptr [rax + 0xf8]

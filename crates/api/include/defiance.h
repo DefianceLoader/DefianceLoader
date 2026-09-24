@@ -71,7 +71,8 @@ typedef struct DefiancePlugin {
  * lifetime), return 0 if accepted. Check version == 1 and size >= sizeof(...).
  * Registration/query run ONLY on the init thread. Providers own permanent,
  * immutable C-compatible tables. Publication is conditional on successful init.
- * Consumers must declare the provider dependency and cache the resolved table.
+ * Consumers must declare the provider dependency (except for the loader's own
+ * DEFIANCE_LOADER_PROVIDER) and cache the resolved table.
  * Exact service version; size is a minimum, not a substitute for matching ABI.
  * register: 0 success, 1 invalid argument, 2 outside init, 3 duplicate.
  * query: NULL for unavailable/version/size/dependency/context failure.
@@ -82,6 +83,50 @@ typedef struct DefianceServiceApiV1 {
     int32_t (*register_service)(const char *name, uint32_t version, const void *table, size_t size);
     const void *(*query_service)(const char *provider, const char *name, uint32_t version, size_t min_size);
 } DefianceServiceApiV1;
+
+/* Services the loader itself provides, under this provider ID. Any plugin may
+ * query them without declaring a dependency; no plugin may register under it.
+ */
+#define DEFIANCE_LOADER_PROVIDER "defiance.loader"
+
+/* Provider defiance.loader, name crash-ranges, service version 1.
+ * Names mod code in crash reports: a fault in a mapped range is reported as
+ * label+offset. Attribution only. Callable from any thread once resolved.
+ * map: label is UTF-8, 1..128 bytes, printable, no line breaks, copied; a
+ * range with the same start replaces the earlier one. 0 success, 1 empty
+ * range or invalid label. unmap: 0 success, 1 zero start.
+ */
+typedef struct DefianceCrashRangesV1 {
+    int32_t (*map)(uintptr_t start, uintptr_t end, const char *label);
+    int32_t (*unmap)(uintptr_t start);
+} DefianceCrashRangesV1;
+
+/* Provider defiance.loader, name trace, service version 1. Diagnostic
+ * call-stack tracing with a hardware breakpoint: each hit is logged with its
+ * registers and stack, and execution resumes unchanged. Four sites at most,
+ * shared with [trace] sites in core.ini. Callable from any thread once
+ * resolved. trace: hits 1..1000, address executable code, label as for
+ * crash-ranges; the site is released after its hits. 0 success, 1 invalid
+ * argument, 2 all sites in use, 3 already traced, 4 tracing unavailable.
+ * stop: 0 success, 1 not traced.
+ */
+typedef struct DefianceTraceV1 {
+    int32_t (*trace)(uintptr_t address, uint32_t hits, const char *label);
+    int32_t (*stop)(uintptr_t address);
+} DefianceTraceV1;
+
+/* Provider defiance.loader, name multiplayer, service version 1. Which active
+ * plugins block multiplayer (no multiplayer_safe in their manifest). Any
+ * thread. blockers: copies the comma-separated IDs, NUL-terminated, when
+ * capacity exceeds their length; returns that length, 0 when nothing blocks,
+ * never 0 before startup has finished.
+ */
+typedef struct DefianceMultiplayerV1 {
+    size_t (*blockers)(char *buffer, size_t capacity);
+    /* For Core: the guard is installed. Until then the loader starts no plugin
+     * that is not multiplayer-safe. */
+    void (*guard_installed)(void);
+} DefianceMultiplayerV1;
 
 /* Provider defiance.selection, name selection, service version 1.
  * Game thread only. NULL -> 0; otherwise argument must be a live selectable

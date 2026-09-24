@@ -6,7 +6,12 @@ The UI resource itself is deliberately not checked into this repository.
 The add-on overlays both unit panels: the infantry panel (weapon, ammunition,
 perk and upgrade rows) and the vehicle panel (weapon, ammunition and upgrade
 rows). The upgrade columns scroll with a vertical slider in the four-pixel gutter
-beside the column.
+beside the column. The same companion mod also carries the in-mission ammo
+card (`AmmoInfo.txt`), whose user count is right-aligned in a wider box so an
+enabled/selected fraction such as `11/14` fits. It also carries a darker copy
+of every standard material, `materials/defiance_dim/<path>`, which the squad
+preview gives the unselected soldiers of a partly selected squad
+(`patch/preview-dim.asm`, `plugins/core/src/preview.rs`).
 """
 import argparse
 import hashlib
@@ -25,6 +30,13 @@ PLUGIN = ROOT / 'plugins/squad-management-scroll'
 PASSWORD_ENV = 'DEFIANCE_PAK_PASSWORD'
 RESOURCE = 'scripts/ui/InfantryInfoPanel.txt'
 VEHICLE_RESOURCE = 'scripts/ui/VehicleInfoPanel.txt'
+AMMO_RESOURCE = 'scripts/ui/AmmoInfo.txt'
+# The ammo card's user count: the stock box fits two digits from a fixed left
+# edge, so a fraction ran into the next card. The wider box ends where the
+# stock text did and is right-aligned; the left part is empty card top.
+COUNT_WIDGET = 'ammoShootersCount'
+COUNT_STOCK = (69, 2, 89, 22)
+COUNT_WIDE = (30, 2, 88, 22)
 # Row geometry of both panels. The upgrade slider runs down the free four-pixel
 # gutter right of the upgrade column (x 449-453, the cards' full height), the
 # same on both panels. The game's slider lays out and drags along x only; the
@@ -33,6 +45,11 @@ WEAPON_SLIDER = (1, 461, 453, 465)
 AMMO_SLIDER = (1, 689, 453, 693)
 PERK_SLIDER = (1, 192, 453, 196)
 UPGRADE_SLIDER = (449, 49, 453, 417)
+# The dimmed materials: the standard shader multiplies the albedo texture by
+# Colors.albedo, so a grey darkens it; emission is scaled down with it.
+DIM_FOLDER = 'materials/defiance_dim/'
+DIM_ALBEDO = '404040'
+DIM_EMISSION = 0.25
 
 
 def slider(name, rect, direction='horizontal'):
@@ -115,6 +132,30 @@ def vehicle_layout(data):
     return (text.rstrip('\r\n') + '\r\n' + sliders).encode('utf-8')
 
 
+def ammo_info_layout(data):
+    """The ammo card with its user count right-aligned in a wider box."""
+    text = data.decode('utf-8-sig')
+    lines = text.split('\r\n')
+    rows = [i for i, line in enumerate(lines) if line.split('\t')[0] == COUNT_WIDGET]
+    if len(rows) != 1:
+        raise ValueError(f'expected one {COUNT_WIDGET} row, found {len(rows)}')
+    at = rows[0]
+    fields = lines[at].split('\t')
+    region = tuple(int(v) for v in fields[2].split(','))
+    if fields[1] != 'text' or region != COUNT_STOCK:
+        raise ValueError(f'{COUNT_WIDGET} is {fields[1]} at {region}, not the stock '
+                         f'text at {COUNT_STOCK}; refusing to move it')
+    fields[2] = ' ' + ', '.join(str(v) for v in COUNT_WIDE)
+    lines[at] = '\t'.join(fields)
+    end = at + 1
+    while end < len(lines) and lines[end].startswith('\t'):
+        if lines[end].split('\t')[5:6] == ['align']:
+            raise ValueError(f'{COUNT_WIDGET} already has an alignment')
+        end += 1
+    lines.insert(end, '\t\t\t\t\talign\tright')
+    return '\r\n'.join(lines).encode('utf-8')
+
+
 def dds(width, height, color):
     """An original, solid RGBA texture in uncompressed DDS format."""
     header = [124, 0x100f, height, width, width * 4, 0, 0] + [0] * 11
@@ -165,6 +206,43 @@ def resources(game, resource, make):
             {layer: dict(source, layout_revision=3) for layer in sorted(layers)})
 
 
+def dim_material(data):
+    """The dimmed copy of a material file, or None when it is not a standard
+    material (the only shader whose albedo colour is known to tint it)."""
+    try:
+        material = json.loads(data.decode('utf-8-sig'))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if (not isinstance(material, dict) or material.get('_Material') != 'StandardMaterial'
+            or material.get('PS') != 'standard'):
+        return None
+    material['Colors'] = dict(material.get('Colors') or {}, albedo=DIM_ALBEDO)
+    floats = dict(material.get('Floats') or {})
+    floats['emission_power'] = float(floats.get('emission_power', 1.0)) * DIM_EMISSION
+    material['Floats'] = floats
+    return json.dumps(material, indent=4).encode()
+
+
+def dim_materials(game):
+    """{materials/defiance_dim/<path>: bytes} for the newest copy of every
+    standard material in the game's paks."""
+    latest = {}
+    for pak in [game / 'basis.pak'] + sorted(game.glob('patch_*.pak')):
+        with zipfile.ZipFile(pak) as archive:
+            for name in archive.namelist():
+                normal = name.replace('\\', '/')
+                lower = normal.lower()
+                if (lower.startswith('materials/') and lower.endswith('.material')
+                        and not lower.startswith(DIM_FOLDER)):
+                    latest[lower] = (normal, read(archive, name, pak))
+    dimmed = {}
+    for normal, data in latest.values():
+        copy = dim_material(data)
+        if copy is not None:
+            dimmed[DIM_FOLDER + normal[len('materials/'):]] = copy
+    return dimmed
+
+
 def mod_entries(game):
     """The companion mod tree (game-relative paths -> bytes) and its sources.
 
@@ -175,12 +253,16 @@ def mod_entries(game):
     entries = {}
     entries[prefix + 'mod.json'] = json.dumps(dict(
         name='Defiance squad inventory scrolling',
-        description='Independent weapon, ammunition, perk and upgrade scrollbars. Requires the Defiance Loader squad-management-scroll plugin.',
+        description='Independent weapon, ammunition, perk and upgrade scrollbars, an ammo '
+                    'card count that fits two-digit fractions, and the darker materials the '
+                    'squad preview uses for unselected soldiers. The scrollbars require the '
+                    'Defiance Loader squad-management-scroll plugin.',
         icon='basis/mod_icon.dds'), indent=2).encode()
     entries[prefix + 'basis/mod_icon.dds'] = dds(160, 90, (83, 118, 127, 255))
     sources = {}
     layers = set()
-    for resource, make in ((RESOURCE, layout), (VEHICLE_RESOURCE, vehicle_layout)):
+    for resource, make in ((RESOURCE, layout), (VEHICLE_RESOURCE, vehicle_layout),
+                           (AMMO_RESOURCE, ammo_info_layout)):
         panel_layers, panel_sources = resources(game, resource, make)
         sources[resource] = panel_sources
         layers.update(panel_layers)
@@ -190,6 +272,10 @@ def mod_entries(game):
         for name, color in [('track', (28, 37, 41, 255)), ('thumb', (124, 175, 187, 255)),
                             ('thumb_active', (183, 224, 229, 255))]:
             entries[prefix + layer + '/textures/ui/pictures/defiance_scroll/' + name + '.dds'] = dds(32, 4, color)
+    dimmed = dim_materials(game)
+    for name, data in dimmed.items():
+        entries[prefix + 'basis/' + name] = data
+    sources['dimmed_materials'] = len(dimmed)
     entries[prefix + 'sources.json'] = json.dumps(sources, indent=2).encode()
     return entries, sources
 

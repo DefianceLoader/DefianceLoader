@@ -57,7 +57,7 @@ The Rust SDK macro implements this export and validation.
 | Function (C header spelling) | Contract |
 |---|---|
 | `register_service(name, version, table, size)` | Publishes under the current plugin ID after successful init. Table/storage owned by provider, immutable and process-lifetime. Version and size must be nonzero. Returns 0 success, 1 invalid argument, 2 outside init context, 3 duplicate provider/name/version. |
-| `query_service(provider, name, version, min_size)` | Returns a table or null. Requires the provider to be an initialized declared dependency, an exact service version, and at least `min_size` bytes. `min_size` must be nonzero. |
+| `query_service(provider, name, version, min_size)` | Returns a table or null. Requires the provider to be an initialized declared dependency (or the loader, `defiance.loader`, which needs no declaration), an exact service version, and at least `min_size` bytes. `min_size` must be nonzero. |
 
 The Rust ABI fields are named `register` and `query`; their layouts/signatures
 match the C fields above. Provider IDs and service names are case-insensitive
@@ -84,12 +84,93 @@ threading obligations; wrappers do not validate game objects.
 | `services::available()` | Whether a valid handshake was received; does not mean a provider exists. |
 | `services::register<T>(name, version, &'static T)` | Register a permanent table, using `size_of::<T>()`; returns an error code. Requires a C-compatible contract, despite the generic type. |
 | `services::query<T>(provider, name, version)` | Resolve a table with matching size/alignment. Caller must choose the correct C-compatible type. |
+| `services::crash_ranges()` | Resolve the loader's crash-ranges-v1 table; no dependency needed. |
+| `services::trace()` | Resolve the loader's trace-v1 table; no dependency needed. |
+| `services::multiplayer()` | Resolve the loader's multiplayer-v1 table; no dependency needed. |
 | `services::selection()` | Resolve the selection-v1 table from `defiance.selection`. |
 | `services::game_access()` | Resolve Core's game-access-v1 table; declare a direct `defiance.core` dependency. |
 | `services::members(game, entity)` | Copy the roster pointer array using Core's size/capacity protocol. Returns None on unavailability, malformed/changing data, or allocation failure; entities remain borrowed. |
 
 `defiance_api::leak(Plugin)` is a convenience for allocating the permanent
 plugin descriptor; call it once from the entry point as the examples do.
+
+## Loader service: crash ranges v1
+
+Provider: `defiance.loader` (`LOADER_PROVIDER`, C `DEFIANCE_LOADER_PROVIDER`).
+Name: `crash-ranges`. Exact service version: `1`. Table: Rust `CrashRangesV1`,
+C `DefianceCrashRangesV1`. The loader provides it, so any plugin may query it
+during init without a manifest dependency; no plugin may register under
+`defiance.loader`.
+
+Use it for code the loader cannot see, such as a block a plugin allocates for
+assembly: a fault in a mapped range is named `label+offset` in the crash
+report's details, and faults there are captured first-chance
+([crash-reporting.md](crash-reporting.md)). Hooks and plugin DLLs are mapped
+already.
+
+- `map(start, end, label) -> i32` maps `[start, end)`. The label is UTF-8,
+  1–128 bytes, with no control characters, and is copied. A range with the same
+  start replaces the earlier one. Returns 0, or 1 for an empty range or an
+  invalid label.
+- `unmap(start) -> i32` stops attributing faults to the range that starts at
+  `start`. Returns 0, or 1 for a zero start.
+
+Both may be called from any thread once the table is resolved. A mapping is
+attribution, not proof of who caused a fault. Log text never maps a range.
+
+## Loader service: multiplayer v1
+
+Provider: `defiance.loader`. Name: `multiplayer`. Exact service version: `1`.
+Table: Rust `MultiplayerV1`, C `DefianceMultiplayerV1`. No manifest dependency
+is needed.
+
+The gameplay plugins change local simulation and send nothing over the network,
+so an online game with one active would desync. Every active plugin whose
+manifest does not declare `"multiplayer_safe": true` (legacy plugins included)
+blocks multiplayer; Core refuses the game's online connection while any does.
+
+The loader fails closed: a plugin that is not multiplayer-safe initializes after
+Core, and only once Core has reported the guard installed. Without Core, or on a
+build where Core cannot find the game's lobby connection, such plugins are
+blocked (`the multiplayer guard is not installed`). The loader's own shipped
+gameplay plugins cannot declare themselves safe; a manifest that tries is
+rejected.
+
+- `blockers(buffer, capacity) -> usize` copies the blocking plugins' IDs,
+  comma-separated and NUL-terminated, when `capacity` exceeds their length, and
+  returns that length: 0 when nothing blocks. Before startup has finished it
+  reports a placeholder, never 0.
+- `guard_installed()` is Core's report that the guard is in place. Other
+  plugins must not call it.
+
+This is accident prevention for honest players, not anticheat: everything runs
+on the player's machine, and a modified install can remove any check.
+
+Callable from any thread. The startup log states the outcome
+(`multiplayer: allowed` or `multiplayer: blocked while active: ...`).
+
+## Loader service: trace v1
+
+Provider: `defiance.loader`. Name: `trace`. Exact service version: `1`. Table:
+Rust `TraceV1`, C `DefianceTraceV1`. No manifest dependency is needed.
+
+A diagnostic for development: it finds who calls an address in the running
+game. Each hit at a traced address is logged to `defiance-loader.log` with the
+argument registers and the call stack (see "Tracing callers in game" in
+[development.md](development.md)), and execution resumes unchanged. It uses
+hardware breakpoints, so it changes no code and works on addresses other
+patches own. There are four, shared with `[trace] sites`.
+
+- `trace(address, hits, label) -> i32` logs the next `hits` (1–1000) hits at
+  `address`, which must be executable code, under `label` (the crash-ranges
+  label rules). The site is then released. Returns 0; 1 for an invalid
+  argument; 2 when all four sites are in use; 3 when the address is already
+  traced; 4 when tracing could not start.
+- `stop(address) -> i32` releases the site early. Returns 0, or 1 when the
+  address is not traced.
+
+Both may be called from any thread once the table is resolved. Tracing slows
+every hit; keep it out of builds meant for play.
 
 ## Game service: selection v1
 

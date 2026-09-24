@@ -25,6 +25,12 @@ wrappers live in `crates/feature-sdk`.
 3. Include a sidecar named exactly like the DLL with `.dll` replaced by
    `.plugin.json`. Follow the example manifests. Declare settings, dependencies,
    and conflicts there. `group` selects a config file, not a dependency.
+   Add `"multiplayer_safe": true` only if the plugin changes nothing another
+   player's game would need to match (display only). Without it, an active
+   plugin blocks multiplayer: the loader's `multiplayer` service lists it, and
+   the game refuses to connect online while it is active. Such a plugin also
+   starts only after Core has installed that guard, so it cannot run in an
+   install without Core.
 4. Build from the repository root with `mise exec -- cargo build --release
    --manifest-path path/to/Cargo.toml`. Compile DLLs and the game for x64.
    To build and test the included service example, run `mise run services-test`.
@@ -47,8 +53,10 @@ not add another INI parser. Configuration changes require restarting the game.
 
 Check the loader log for your plugin's active/blocked/failed state. Missing,
 disabled, incompatible, or failed dependencies block consumers; they are never
-silently enabled. Use the shipped `defiance-config --help` to inspect available
-configuration diagnostics. Do not overwrite users' INI files in an upgrade.
+silently enabled. `defiance-config --game <game>/bin --report` prints every
+resolved setting and where it came from; `--game` takes the directory holding
+`trm.exe` (the game folder above it also works). `defiance-config --help` lists
+the other options. Do not overwrite users' INI files in an upgrade.
 
 ## Share functionality with another plugin
 

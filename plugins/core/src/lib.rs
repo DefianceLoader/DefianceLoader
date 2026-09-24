@@ -14,6 +14,8 @@ use defiance_core::{GamePatch, Patch, Target};
 use std::path::PathBuf;
 mod ammo_menu;
 mod game;
+mod multiplayer;
+mod preview;
 defiance_feature_sdk::service_handshake!();
 
 #[cfg(feature = "parity-test")]
@@ -178,6 +180,33 @@ fn module_target(api: &Api, name: &str) -> Option<Target> {
 /// A yes/no setting from `defiance-loader.ini`. An empty `section` is the
 /// loader's own top level (`allow_unknown_build`); `defiance.core` is this
 /// plugin's own section.
+/// A plugin's setting as text, lower case; empty when it has none.
+fn config_text(api: &Api, section: &str, key: &str) -> String {
+    let section: Vec<u8> = section.bytes().chain(core::iter::once(0)).collect();
+    let name: Vec<u8> = key.bytes().chain(core::iter::once(0)).collect();
+    let value = unsafe {
+        (api.config_get)(
+            section.as_ptr() as *const c_char,
+            name.as_ptr() as *const c_char,
+        )
+    };
+    if value.is_null() {
+        return String::new();
+    }
+    unsafe { CStr::from_ptr(value) }
+        .to_string_lossy()
+        .to_ascii_lowercase()
+}
+
+/// The virtual key for `squad_tab_modifier`: Ctrl by default, Shift, or none.
+fn tab_modifier_key(setting: &str) -> u32 {
+    match setting {
+        "shift" => 0x10,
+        "off" => 0,
+        _ => 0x11,
+    }
+}
+
 fn config_flag(api: &Api, section: &str, key: &str) -> bool {
     let section: Vec<u8> = section.bytes().chain(core::iter::once(0)).collect();
     let name: Vec<u8> = key.bytes().chain(core::iter::once(0)).collect();
@@ -205,6 +234,16 @@ struct Runtime {
     /// a relocated build is absent and refuses to install.
     available: u64,
     record: String,
+    /// The game's lobby connection, which the multiplayer guard hooks; None
+    /// when its signature was not found in this build.
+    lobby_connect: Option<usize>,
+    /// The game block cell for the squad TAB modifier's virtual key, and the
+    /// block's size, which bounds it.
+    tab_modifier_offset: usize,
+    game_block_bytes: usize,
+    /// The logic block cell for the squad preview's material callback.
+    preview_dim_cell: usize,
+    logic_block_bytes: usize,
 }
 static RUNTIME: std::sync::OnceLock<Runtime> = std::sync::OnceLock::new();
 
@@ -234,6 +273,7 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
     if api.abi_version != ABI_VERSION || api.reserved != 0 {
         return 1;
     }
+    preview::set_logger(api.log);
     let prepare = || -> Result<Runtime, String> {
         let logic_target = module_target(api, "logic.dll").ok_or("logic.dll is not loaded")?;
         let game_target = module_target(api, "game.dll").ok_or("game.dll is not loaded")?;
@@ -324,15 +364,30 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
         {
             return Err("payload contains an unknown feature ID".into());
         }
+        // Name the blocks in crash reports through the loader's service; the
+        // log line is for people reading the log.
+        let ranges = unsafe { defiance_feature_sdk::services::crash_ranges() };
         for (label, block, size) in [
-            ("logic", logic.block, logic_patch.block_bytes),
-            ("game", game.block, game_patch.block_bytes),
+            (
+                c"core.logic assembly payload",
+                logic.block,
+                logic_patch.block_bytes,
+            ),
+            (
+                c"core.game assembly payload",
+                game.block,
+                game_patch.block_bytes,
+            ),
         ] {
+            if let Some(ranges) = ranges {
+                unsafe { (ranges.map)(block, block + size, label.as_ptr()) };
+            }
             say(
                 api,
                 LOG_INFO,
                 &format!(
-                    "crash-map {block:#x} {:#x} core.{label} assembly payload",
+                    "{} at {block:#x}..{:#x}",
+                    label.to_string_lossy(),
                     block + size
                 ),
             );
@@ -372,6 +427,18 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
             .iter()
             .find(|h| h.feature == 7)
             .ok_or("missing diagnostics hook")?;
+        let lobby_connect = match install::game_site(&game_raw, &game_target, scan, "lobby_connect")
+        {
+            Ok(rva) => Some(game_target.base as usize + rva),
+            Err(e) => {
+                say(
+                    api,
+                    LOG_WARN,
+                    &format!("multiplayer: {e}; online play is not guarded"),
+                );
+                None
+            }
+        };
         let record = format!(
             "pid={:#x}\nbase={:#x}\nblock={:#x}\ntrace={:#x}\nentry={:#x}\n",
             logic_target.process_id, logic_target.base as usize, logic.block, hook.rva, hook.entry
@@ -401,11 +468,16 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
             );
         }
         Ok(Runtime {
+            tab_modifier_offset: game_patch.tab_modifier_offset,
+            game_block_bytes: game_patch.block_bytes,
+            preview_dim_cell: logic_patch.preview_dim_cell,
+            logic_block_bytes: logic_patch.block_bytes,
             logic,
             game,
             installed: std::sync::Mutex::new(0),
             available,
             record,
+            lobby_connect,
             native_entries,
         })
     };
@@ -429,6 +501,9 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
                 .is_err()
             {
                 return 1;
+            }
+            if let Some(address) = RUNTIME.get().and_then(|runtime| runtime.lobby_connect) {
+                multiplayer::install(api, address);
             }
             say(
                 api,
@@ -566,6 +641,14 @@ unsafe fn install_feature(
             return 1;
         }
     }
+    if feature == 2 && runtime.preview_dim_cell + 8 <= runtime.logic_block_bytes {
+        // The preview's hooks read the callback, so it is in place before them.
+        unsafe {
+            ((runtime.logic.block + runtime.preview_dim_cell) as *mut usize).write_volatile(
+                preview::dim_material as unsafe extern "C" fn(usize, usize) -> usize as usize,
+            )
+        };
+    }
     for write in &writes {
         let result = if let Some(&replacement) = native.get(&write.address) {
             if write.before.len() >= 14 {
@@ -617,6 +700,20 @@ unsafe fn install_feature(
         }
     }
     *installed |= 1 << feature;
+    if feature == 2 {
+        // The building TAB code reads the modifier from the game block; 0
+        // leaves only the plain TAB cycle.
+        let key = tab_modifier_key(&config_text(
+            api,
+            "defiance.selection",
+            "squad_tab_modifier",
+        ));
+        if runtime.tab_modifier_offset + 4 <= runtime.game_block_bytes {
+            unsafe {
+                ((runtime.game.block + runtime.tab_modifier_offset) as *mut u32).write_volatile(key)
+            };
+        }
+    }
     if !detour.is_null() {
         say(api, LOG_INFO, "pickup: Rust chooser installed");
     }

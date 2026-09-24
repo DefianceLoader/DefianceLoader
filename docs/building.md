@@ -55,8 +55,11 @@ the attestation above to check the released files themselves.
 ## The squad-scroll companion UI mod
 
 The squad-management-scroll plugin needs a small UI mod that adds scrollbars to
-the game's unit panels. It is plain text and DDS textures, derived from the
-game's own UI definitions, so it can only be built on a machine with the game
+the game's unit panels; the same mod right-aligns the in-mission ammo card's
+user count so two-digit fractions fit, and carries darker copies of the game's
+standard materials for the squad preview's unselected soldiers. It is plain
+text and DDS textures, derived from the game's own UI and material definitions,
+so it can only be built on a machine with the game
 installed, and it is distributed as a separate download
 (`defiance-squad-scroll-ui.zip`). The game's archives are encrypted; set
 `DEFIANCE_PAK_PASSWORD` to their password first.

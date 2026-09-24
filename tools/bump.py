@@ -170,7 +170,7 @@ def replace_once(path, pattern, version, flags=0):
     new, count = re.subn(pattern, lambda m: m.group(1) + version + m.group(3), text, count=1, flags=flags)
     if count != 1:
         raise SystemExit(f"{path}: version not found")
-    path.write_text(new, encoding="utf-8")
+    path.write_text(new, encoding="utf-8", newline="\n")
 
 
 def write(root, component, version):
@@ -184,7 +184,7 @@ def write(root, component, version):
         text, blocks = builtin_blocks(root)
         start, end = blocks[component.plugin_id]
         block = re.sub(r'(version: ")([^"]+)(",)', lambda m: m.group(1) + version + m.group(3), text[start:end], count=1)
-        path.write_text(text[:start] + block + text[end:], encoding="utf-8")
+        path.write_text(text[:start] + block + text[end:], encoding="utf-8", newline="\n")
     if component.sidecar:
         replace_once(component.sidecar, r'(\n  "version": ")([^"]+)(")', version)
 

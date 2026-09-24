@@ -35,6 +35,10 @@ pub struct Manifest {
     pub settings: Vec<ManifestSetting>,
     pub depends: Vec<Dependency>,
     pub conflicts: Vec<String>,
+    /// `multiplayer_safe`: the plugin changes nothing another player's game
+    /// would need to match, so it may stay active in multiplayer. Absent means
+    /// false; an active plugin without it blocks multiplayer.
+    pub multiplayer_safe: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -243,6 +247,27 @@ pub fn parse(text: &str, expected_dll: &str) -> Result<Manifest, String> {
         }
     }
 
+    let multiplayer_safe = match map.get("multiplayer_safe") {
+        None | Some(Value::Bool(false)) => false,
+        Some(Value::Bool(true)) => true,
+        Some(other) => {
+            return Err(format!(
+                "`multiplayer_safe` must be a boolean, not {}",
+                json::kind(other)
+            ))
+        }
+    };
+
+    if multiplayer_safe
+        && builtin::NOT_MULTIPLAYER_SAFE
+            .iter()
+            .any(|locked| locked.eq_ignore_ascii_case(&id))
+    {
+        return Err(format!(
+            "`{id}` changes gameplay and cannot be multiplayer_safe"
+        ));
+    }
+
     Ok(Manifest {
         schema,
         id,
@@ -253,6 +278,7 @@ pub fn parse(text: &str, expected_dll: &str) -> Result<Manifest, String> {
         settings,
         depends,
         conflicts,
+        multiplayer_safe,
     })
 }
 
@@ -363,6 +389,10 @@ pub fn render_builtin(builtin: &Builtin) -> String {
         ("settings".into(), Value::Array(settings)),
         ("depends".into(), Value::Array(depends)),
         ("conflicts".into(), Value::Array(Vec::new())),
+        (
+            "multiplayer_safe".into(),
+            Value::Bool(builtin.multiplayer_safe),
+        ),
     ]);
     json::render(&document)
 }
@@ -418,6 +448,12 @@ pub fn check_builtin(manifest: &Manifest, builtin: &Builtin) -> Result<(), Strin
             manifest.group, builtin.group
         ));
     }
+    if manifest.multiplayer_safe != builtin.multiplayer_safe {
+        return Err(format!(
+            "manifest multiplayer_safe {} is not {}",
+            manifest.multiplayer_safe, builtin.multiplayer_safe
+        ));
+    }
     let declared: Vec<&str> = manifest.depends.iter().map(|d| d.id.as_str()).collect();
     let expected: Vec<&str> = builtin.depends.iter().copied().collect();
     if declared != expected {
@@ -468,19 +504,27 @@ impl Entry {
     }
 }
 
-/// The single scan configuration and startup planning both use: every plugin
-/// DLL, paired with its sidecar manifest when one is present. The pair is
-/// validated here (built-in packaging, schema, DLL agreement) so both consumers
-/// see the same decision. Returns the entries and discovery warnings (orphan
-/// manifests and the obsolete pilot).
-pub fn catalog(dir: &Path) -> (Vec<Entry>, Vec<String>) {
+/// The plugin directory as one scan found it: every plugin DLL, paired with
+/// its sidecar manifest when one is present, and the discovery warnings
+/// (orphan manifests and the obsolete pilot).
+#[derive(Debug, Clone, Default)]
+pub struct Catalog {
+    pub entries: Vec<Entry>,
+    pub warnings: Vec<String>,
+}
+
+/// Scan `dir` once. Configuration loading calls this and keeps the result in
+/// its snapshot ([`crate::config::Snapshot::catalog`]), which startup planning
+/// then uses, so settings and plan come from the same files. Each pair is
+/// validated here (built-in packaging, schema, DLL agreement).
+pub fn catalog(dir: &Path) -> Catalog {
     let mut entries = Vec::new();
     let mut warnings = Vec::new();
     let listing = match std::fs::read_dir(dir) {
         Ok(listing) => listing,
         Err(e) => {
             warnings.push(format!("no plugin directory {}: {e}", dir.display()));
-            return (entries, warnings);
+            return Catalog { entries, warnings };
         }
     };
     let mut files: Vec<PathBuf> = listing.flatten().map(|entry| entry.path()).collect();
@@ -559,7 +603,7 @@ pub fn catalog(dir: &Path) -> (Vec<Entry>, Vec<String>) {
     for orphan in seen_manifests {
         warnings.push(format!("{orphan} has no matching DLL; ignored"));
     }
-    (entries, warnings)
+    Catalog { entries, warnings }
 }
 
 #[cfg(test)]
@@ -571,6 +615,28 @@ mod tests {
     /// a rejection test pass for an accidental ABI mismatch.
     fn with_host_abi(json: &str) -> String {
         json.replace("\"abi\":5", &format!("\"abi\":{ABI_VERSION}"))
+    }
+
+    #[test]
+    fn shipped_gameplay_plugins_cannot_claim_multiplayer_safety() {
+        let manifest = |id: &str, safe: &str| {
+            with_host_abi(&format!(
+                r#"{{"schema":1,"id":"{id}","dll":"x.dll","version":"1.0.0","abi":5,"group":"g","multiplayer_safe":{safe}}}"#
+            ))
+        };
+        let error = parse(&manifest("defiance.regroup", "true"), "x.dll").unwrap_err();
+        assert!(error.contains("cannot be multiplayer_safe"), "{error}");
+        assert!(
+            !parse(&manifest("defiance.regroup", "false"), "x.dll")
+                .unwrap()
+                .multiplayer_safe
+        );
+        assert!(
+            parse(&manifest("author.display", "true"), "x.dll")
+                .unwrap()
+                .multiplayer_safe
+        );
+        assert!(parse(&manifest("author.display", "1"), "x.dll").is_err());
     }
 
     #[test]

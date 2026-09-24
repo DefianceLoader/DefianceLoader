@@ -11,6 +11,7 @@ import struct
 import unittest
 
 import build as b
+import icon
 
 
 class Native:
@@ -147,7 +148,8 @@ class SelectionTests(unittest.TestCase):
         # Execute the actual world hook together with the actual same-type
         # manager and squad selector, rather than testing their arguments alone.
         game_code, labels = b.assemble(
-            pathlib.Path("patch/icon-squad.asm").read_text().splitlines(), 0, 0x800)
+            pathlib.Path("patch/icon-squad.asm").read_text().splitlines(), 0, icon.TRACE_OFFSET,
+            symbols=b.GAME_SYMBOLS)
         resume, _ = b.assemble(
             ["add rsp, 0x28", "pop r14", "pop rdi", "ret"], 0, 0)
         game_code = bytearray(game_code)

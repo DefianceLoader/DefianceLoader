@@ -16,8 +16,8 @@ pub const CORE_ID: &str = "defiance.core";
 /// config directory; the sections inside are the plugin IDs.
 pub const GROUPS: [&str; 4] = ["core", "infantry", "weapons", "diagnostics"];
 
-/// The settings every gameplay feature gets for now. Nothing else is
-/// configurable until the underlying implementation supports it.
+/// The settings every gameplay feature gets. A feature declares more only
+/// where its implementation reads them (`EXTRA_SETTINGS`).
 pub const ENABLED: SettingDecl = SettingDecl {
     key: "enabled",
     ty: ValueType::Bool,
@@ -44,26 +44,41 @@ pub struct Builtin {
     /// The legacy numeric feature ID used by the shared runtime, or 0 for
     /// infrastructure.
     pub feature: u32,
+    /// Whether the plugin can stay active in multiplayer: it changes nothing
+    /// another player's game would need to match (display only, or nothing at
+    /// all). Anything else blocks multiplayer while it is active.
+    pub multiplayer_safe: bool,
 }
+
+/// Standalone plugins shipped with the loader that change gameplay: their
+/// manifests may not declare `multiplayer_safe`, so an edit cannot let them
+/// online. The built-ins take their flag from this table instead.
+pub const NOT_MULTIPLAYER_SAFE: &[&str] = &[
+    "defiance.expanded-ammo-menu",
+    "defiance.regroup",
+    "defiance.squad-management-scroll",
+];
 
 pub const BUILTINS: &[Builtin] = &[
     Builtin {
         id: CORE_ID,
         dll: "defiance_plugin_core.dll",
-        version: "0.1.0",
+        version: "0.2.0",
         group: "core",
         summary: "Required support for the infantry and weapon features. Core has no enabled toggle; disable individual features instead.",
         depends: &[],
         feature: 0,
+        multiplayer_safe: true,
     },
     Builtin {
         id: "defiance.selection",
         dll: "defiance_plugin_feature_selection.dll",
-        version: "0.3.0",
+        version: "0.4.0",
         group: "infantry",
         summary: "Select individual soldiers within a squad and show which soldiers are selected. Disabling this also prevents posture, movement, attack, garrison, firing, ammunition, expanded ammo menu and regroup from loading. Pickup and squad-management scrolling can remain enabled. Restart required.",
         depends: &[CORE_ID],
         feature: 2,
+        multiplayer_safe: false,
     },
     Builtin {
         id: "defiance.posture",
@@ -73,6 +88,7 @@ pub const BUILTINS: &[Builtin] = &[
         summary: "Give selected soldiers their own standing, crouching or prone posture instead of changing the entire squad. Requires selection. Disabling this also disables individual movement; it does not remove the game's normal squad posture controls. Restart required.",
         depends: &["defiance.selection"],
         feature: 4,
+        multiplayer_safe: false,
     },
     Builtin {
         id: "defiance.movement",
@@ -82,15 +98,17 @@ pub const BUILTINS: &[Builtin] = &[
         summary: "Move only the selected soldiers when part of a squad is selected, leaving unselected squadmates in place. Requires selection and posture. Disable to use the game's normal movement orders while keeping the other enabled controls. Restart required.",
         depends: &["defiance.selection", "defiance.posture"],
         feature: 3,
+        multiplayer_safe: false,
     },
     Builtin {
         id: "defiance.attack",
         dll: "defiance_plugin_feature_attack.dll",
-        version: "0.3.0",
+        version: "0.4.0",
         group: "infantry",
         summary: "Direct an attack order to the selected soldiers instead of every member of their squad. Requires selection. Disabling this restores normal squad attack orders; it does not disable combat or the firing-mode setting. Restart required.",
         depends: &["defiance.selection"],
         feature: 8,
+        multiplayer_safe: false,
     },
     Builtin {
         id: "defiance.garrison",
@@ -100,6 +118,7 @@ pub const BUILTINS: &[Builtin] = &[
         summary: "Send selected soldiers into buildings without sending their unselected squadmates; support exit orders for soldiers occupying the building. Requires selection. Disable to keep the game's normal building-entry and exit behavior. Restart required.",
         depends: &["defiance.selection"],
         feature: 9,
+        multiplayer_safe: false,
     },
     Builtin {
         id: "defiance.firing",
@@ -109,15 +128,17 @@ pub const BUILTINS: &[Builtin] = &[
         summary: "Change firing mode for selected soldiers without changing their unselected squadmates. Select the whole squad to change everyone. Requires selection. Disabling this restores normal squad firing-mode controls; ammunition toggles are a separate setting. Restart required.",
         depends: &[CORE_ID, "defiance.selection"],
         feature: 5,
+        multiplayer_safe: false,
     },
     Builtin {
         id: "defiance.ammunition",
         dll: "defiance_plugin_feature_ammunition.dll",
-        version: "0.3.0",
+        version: "0.4.0",
         group: "weapons",
         summary: "Use the in-mission ammo panel to enable or disable weapons/ammo for selected soldiers. Show relevant weapons and selected-user counts, including mixed on/off states. Select the whole squad to apply a toggle to everyone. Individual overrides support only the first eight ammo slots; later slots need whole-squad selection. Requires selection. Expanded ammo menu also requires this feature; out-of-mission squad scrolling does not. Restart required.",
         depends: &["defiance.selection"],
         feature: 6,
+        multiplayer_safe: false,
     },
     Builtin {
         id: "defiance.pickup",
@@ -127,6 +148,7 @@ pub const BUILTINS: &[Builtin] = &[
         summary: "Prefer individually selected soldiers when choosing who picks up a weapon, and rotate replacement choices across eligible soldiers on repeated pickups. Disable to use the game's original pickup choice. Can remain enabled without the individual-selection feature. Restart required.",
         depends: &[CORE_ID],
         feature: 1,
+        multiplayer_safe: false,
     },
     Builtin {
         id: "defiance.diagnostics",
@@ -136,6 +158,7 @@ pub const BUILTINS: &[Builtin] = &[
         summary: "Collect extra troubleshooting information about soldier selection and squad behavior. Adds no player controls. You can disable this without disabling gameplay features. Restart required.",
         depends: &[CORE_ID],
         feature: 7,
+        multiplayer_safe: false,
     },
     Builtin {
         id: "defiance.preview-weapon",
@@ -145,6 +168,7 @@ pub const BUILTINS: &[Builtin] = &[
         summary: "Show the first matching weapon instead of the last matching weapon in squad previews, including in-mission unit info and out-of-mission squad management. Does not track later changes to the weapon a soldier is holding. Disable to restore the game's original preview choice. Works independently of selection and does not change combat. Restart required.",
         depends: &[CORE_ID],
         feature: 10,
+        multiplayer_safe: true,
     },
 ];
 
@@ -177,24 +201,70 @@ pub fn features() -> impl Iterator<Item = &'static Builtin> {
     BUILTINS.iter().filter(|builtin| builtin.feature != 0)
 }
 
-/// The declared settings for a plugin ID: `enabled` for a gameplay feature,
-/// none for core (its policy lives in `[loader]` and `[logging]`).
-const BUILTIN_SETTINGS: [[SettingDecl; 1]; BUILTINS.len()] = {
-    let mut settings = [[ENABLED]; BUILTINS.len()];
+/// Selection's squad TAB modifier: held with TAB on a selected building, each
+/// press narrows the selection to one squad's occupants. Core writes its key
+/// into the game payload when selection installs.
+pub const SQUAD_TAB_MODIFIER: SettingDecl = SettingDecl {
+    key: "squad_tab_modifier",
+    ty: ValueType::Choice(&["ctrl", "shift", "off"]),
+    default: "ctrl",
+    description: "Hold this with TAB on a selected building to select one squad's occupants at a time; plain TAB selects all occupants. ctrl, shift or off. Restart required.",
+    restart: Restart::Startup,
+    sensitive: false,
+};
+
+/// Settings a gameplay feature declares besides `enabled`.
+const EXTRA_SETTINGS: &[(&str, SettingDecl)] = &[("defiance.selection", SQUAD_TAB_MODIFIER)];
+
+/// The declared settings for a plugin ID: `enabled` and its extras for a
+/// gameplay feature, none for core (its policy lives in `[loader]` and
+/// `[logging]`).
+const BUILTIN_SETTINGS: [[SettingDecl; 2]; BUILTINS.len()] = {
+    let mut settings = [[ENABLED, ENABLED]; BUILTINS.len()];
     let mut i = 0;
     while i < BUILTINS.len() {
         settings[i][0].description = BUILTINS[i].summary;
+        let mut e = 0;
+        while e < EXTRA_SETTINGS.len() {
+            if const_eq(EXTRA_SETTINGS[e].0, BUILTINS[i].id) {
+                settings[i][1] = EXTRA_SETTINGS[e].1;
+            }
+            e += 1;
+        }
         i += 1;
     }
     settings
 };
+
+const fn const_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// How many of a built-in's `BUILTIN_SETTINGS` row are declared.
+fn declared(id: &str) -> usize {
+    1 + EXTRA_SETTINGS
+        .iter()
+        .filter(|(owner, _)| owner.eq_ignore_ascii_case(id))
+        .count()
+}
 
 pub fn settings(id: &str) -> &'static [SettingDecl] {
     match BUILTINS
         .iter()
         .position(|b| b.feature != 0 && b.id.eq_ignore_ascii_case(id))
     {
-        Some(index) => &BUILTIN_SETTINGS[index],
+        Some(index) => &BUILTIN_SETTINGS[index][..declared(BUILTINS[index].id)],
         None => &[],
     }
 }
@@ -239,6 +309,28 @@ pub const LOADER_SETTINGS: &[SettingDecl] = &[
         description: "Allow Core to attempt loading gameplay changes on an unrecognized game version. Leave false for normal play; true does not guarantee compatibility or bypass every plugin's version checks. Restart required.",
         restart: Restart::Startup,
     sensitive: false,
+    },
+];
+
+/// Diagnostic call-stack tracing (crate::trace), in `[trace]` of `core.ini`.
+/// Off unless `sites` names an address; a bad value is reported, never fatal.
+pub const TRACE_SECTION: &str = "trace";
+pub const TRACE_SETTINGS: &[SettingDecl] = &[
+    SettingDecl {
+        key: "sites",
+        ty: ValueType::Text,
+        default: "",
+        description: "For troubleshooting: up to four code addresses as module+offset (for example logic+0x42a940, game+0x366fa7). Each time the game runs one, the log records who called it. Leave empty for normal play. Restart required.",
+        restart: Restart::Startup,
+        sensitive: false,
+    },
+    SettingDecl {
+        key: "hits",
+        ty: ValueType::Integer { min: 1, max: 1000 },
+        default: "20",
+        description: "How many times each traced address is logged before tracing it goes quiet. Restart required.",
+        restart: Restart::Startup,
+        sensitive: false,
     },
 ];
 
@@ -330,5 +422,21 @@ mod tests {
         assert!(setting("defiance.movement", "ENABLED").is_some());
         assert!(setting(CORE_ID, "enabled").is_none());
         assert!(settings(CORE_ID).is_empty());
+    }
+
+    #[test]
+    fn selection_declares_its_squad_tab_modifier_only() {
+        let keys = |id| settings(id).iter().map(|d| d.key).collect::<Vec<_>>();
+        assert_eq!(
+            keys("defiance.selection"),
+            ["enabled", "squad_tab_modifier"]
+        );
+        assert_eq!(keys("defiance.movement"), ["enabled"]);
+        let decl = setting("defiance.selection", "squad_tab_modifier").unwrap();
+        assert_eq!(decl.default, "ctrl");
+        assert!(setting("defiance.selection", "enabled")
+            .unwrap()
+            .description
+            .starts_with("Select individual soldiers"));
     }
 }

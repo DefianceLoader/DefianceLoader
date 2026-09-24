@@ -19,6 +19,100 @@ building_tab_refresh:
     mov r11, 0xaaaaaaaaaaaaaab6
     jmp r11
 
+; The building panel's squad icons (UnitInfo passenger slots, handler
+; game+364b20) clear the selection and select the icon's whole squad (manager
+; vt+60), members outside the building too. With a building selected, select
+; only that squad's enabled members inside it, through the soldier setter as
+; TAB does. Anything else (no building, not a squad, nobody inside) keeps the
+; stock select. Entered after the manager lookup: rax the manager, rdi the
+; icon's entity; resumes at the handler's epilogue, which restores rbx/rdi.
+building_icon_select:
+    push rsi
+    push r12
+    push r13
+    sub rsp, 0x28
+    mov rbx, rax                       ; displaced: the manager
+    xor r12d, r12d
+    mov rsi, qword ptr [rbx + 0x28]    ; the manager's registry: find the
+    mov r13, qword ptr [rbx + 0x30]    ; selected building before clearing
+icon_find_building:
+    cmp rsi, r13
+    jae icon_found
+    mov rcx, qword ptr [rsi]
+    add rsi, 8
+    mov qword ptr [rsp + 0x20], rcx
+    call focus_active
+    test rax, rax
+    jz icon_find_building
+    mov r12, rax                       ; its ActiveBuilding, if selected
+    mov rcx, qword ptr [rsp + 0x20]
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + 0xb0]
+    test rax, rax
+    jz icon_not_selected
+    mov rcx, qword ptr [rax + 0x50]
+    test rcx, rcx
+    jz icon_not_selected
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + 0x58]
+    test al, al
+    jnz icon_found
+icon_not_selected:
+    xor r12d, r12d
+    jmp icon_find_building
+icon_found:
+    mov rcx, rbx
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + 0x98]        ; displaced: clear the selection
+    test r12, r12
+    jz icon_stock
+    mov rcx, rdi
+    mov rax, qword ptr [rcx]
+    mov edx, 0x10
+    call qword ptr [rax + 0x98]
+    test al, al
+    jz icon_stock                      ; not a squad
+    mov rsi, qword ptr [r12 + 0x1a8]
+    mov r13, qword ptr [r12 + 0x1b0]
+    xor r12d, r12d                     ; now the count marked
+icon_next:
+    cmp rsi, r13
+    jae icon_marked
+    mov rax, qword ptr [rsi]
+    add rsi, 8
+    test rax, rax
+    jz icon_next
+    mov rcx, qword ptr [rax + 0x10]
+    call focus_member
+    test rax, rax
+    jz icon_next
+    mov qword ptr [rsp + 0x20], rax
+    mov rcx, rax
+    call focus_group
+    cmp rax, rdi
+    jne icon_next
+    mov rcx, qword ptr [rsp + 0x20]
+    mov rax, qword ptr [rcx]
+    mov edx, 1
+    call qword ptr [rax + 0x50]
+    inc r12
+    jmp icon_next
+icon_marked:
+    test r12, r12
+    jnz icon_done
+icon_stock:
+    mov rcx, rbx
+    mov rax, qword ptr [rcx]
+    mov rdx, rdi
+    call qword ptr [rax + 0x60]        ; the stock select
+icon_done:
+    add rsp, 0x28
+    pop r13
+    pop r12
+    pop rsi
+    mov r11, 0xaaaaaaaaaaaaaaba        ; fixup: resume game+364bb4
+    jmp r11
+
 ; RCX world, RDX game context, R8 native vector, RAX world vtable.
 ; Preserve native RAX; return event-local building in RDX, or zero for stock TAB.
 building_focus_candidates:
@@ -248,6 +342,10 @@ append_grow:
 
 ; RCX focus ref, RDX next group, R8 event-local building, R9 UI.
 ; Real selection feeds native command availability and existing subset filters.
+; Plain TAB selects every occupant, then only moves focus squad by squad. With
+; the squad modifier held, each press selects one squad's occupants instead:
+; the squad in focus when leaving an all-occupant cycle, else the next one.
+; State +20 is the squad selected alone (0: all occupants), compared only.
 building_focus_apply:
     push rbx
     push rsi
@@ -263,11 +361,35 @@ building_focus_apply:
     mov r15, r9
     test r8, r8
     jz apply_focus
+    mov qword ptr [rsp + 0x28], 0   ; mark every occupant
     cmp r13, r14
     je apply_change
+    call tab_modifier_down
+    test ax, ax
+    js apply_squad
     lea rax, [rip + {scratch}]
     cmp qword ptr [rax], 0
-    jne apply_focus                 ; retain ALL marks; only native focus changes
+    je apply_change                 ; a new cycle: every occupant
+    cmp qword ptr [rax + 0x20], 0
+    jne apply_change                ; one squad alone: widen to every occupant
+    jmp apply_focus                 ; retain ALL marks; only native focus changes
+apply_squad:
+    lea rax, [rip + {scratch}]
+    cmp qword ptr [rax], 0
+    je apply_squad_next             ; a new cycle starts at the first squad
+    cmp qword ptr [rax + 0x20], 0
+    jne apply_squad_next
+    mov rcx, qword ptr [r12]        ; every occupant: the focused squad first
+    test rcx, rcx
+    jz apply_squad_next
+    mov rcx, qword ptr [rcx + 0x10]
+    test rcx, rcx
+    jz apply_squad_next
+    cmp rcx, r14
+    je apply_squad_next
+    mov r13, rcx
+apply_squad_next:
+    mov qword ptr [rsp + 0x28], r13
 apply_change:
     mov rcx, qword ptr [r15 + 0x128]
     mov rdx, qword ptr [r15 + 0x130]
@@ -300,7 +422,15 @@ apply_next:
     call focus_member
     test rax, rax
     jz apply_next
+    mov rbx, rax
+    cmp qword ptr [rsp + 0x28], 0
+    je apply_mark
     mov rcx, rax
+    call focus_group
+    cmp rax, qword ptr [rsp + 0x28]
+    jne apply_next                  ; another squad's occupant
+apply_mark:
+    mov rcx, rbx
     mov rax, qword ptr [rcx]
     mov edx, 1
     call qword ptr [rax + 0x50]
@@ -309,6 +439,9 @@ apply_next:
 apply_selected:
     cmp qword ptr [rsp + 0x20], 0
     je apply_building
+    lea rax, [rip + {scratch}]
+    cmp qword ptr [rax], 0
+    jne apply_selected_state        ; a running cycle keeps its reference
     lea rcx, [rip + {scratch}]
     mov rdx, r14
     call focus_assign_ref
@@ -321,6 +454,10 @@ apply_selected:
     call qword ptr [rax + 0x40]
     lea rdx, [rip + {scratch}]
     mov qword ptr [rdx + 0x18], rax
+apply_selected_state:
+    lea rax, [rip + {scratch}]
+    mov rcx, qword ptr [rsp + 0x28]
+    mov qword ptr [rax + 0x20], rcx
     jmp apply_focus
 apply_building:
     call focus_clear
@@ -350,6 +487,19 @@ apply_focus:
     pop rbx
     ret
 
+; AX the squad modifier's GetAsyncKeyState (sign set: held), 0 when off. The
+; virtual key is in state +28, which Core writes from selection's setting.
+tab_modifier_down:
+    lea rax, [rip + {scratch}]
+    mov ecx, dword ptr [rax + 0x28]
+    test ecx, ecx
+    jz modifier_off
+    mov rax, 0xaaaaaaaaaaaaaabb        ; export: user32!GetAsyncKeyState
+    jmp rax
+modifier_off:
+    xor eax, eax
+    ret
+
 ; Native assignment owns/refcounts the holder; its entity slot is invalidated
 ; by the engine when the entity dies. Never retain a raw building pointer.
 focus_assign_ref:
@@ -364,6 +514,7 @@ focus_clear:
     mov qword ptr [rax + 8], 0
     mov qword ptr [rax + 0x10], 0
     mov qword ptr [rax + 0x18], 0
+    mov qword ptr [rax + 0x20], 0
     add rsp, 0x28
     ret
 
@@ -475,7 +626,17 @@ validate_occupant:
     test rax, rax
     jz validate_occupant
     mov rbx, rax
-    mov rcx, rax
+    lea rax, [rip + {scratch}]
+    mov rax, qword ptr [rax + 0x20]
+    test rax, rax
+    jz validate_member_selected      ; every occupant must stay selected
+    mov rcx, rbx
+    call focus_group
+    lea rcx, [rip + {scratch}]
+    cmp rax, qword ptr [rcx + 0x20]
+    jne validate_occupant            ; one squad alone: only its occupants
+validate_member_selected:
+    mov rcx, rbx
     mov rax, qword ptr [rcx]
     call qword ptr [rax + 0x58]
     test al, al
