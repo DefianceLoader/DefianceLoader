@@ -8,8 +8,11 @@ name: ci
 
 # Only when something that can change a build or test result changes: a push or
 # pull request touching nothing but documentation, licences or .gitignore skips.
+# Tag pushes are left to the release workflow (paths filters do not apply to
+# tags, so they would otherwise always run).
 on:
   push:
+    branches: ['**']
     paths-ignore:
       - '**.md'
       - 'docs/**'
