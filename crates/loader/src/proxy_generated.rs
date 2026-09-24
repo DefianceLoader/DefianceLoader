@@ -17,11 +17,26 @@ pub const ANCHOR: &str = "CreateDXGIFactory";
 
 #[link(name = "defiance_system_proxy")]
 extern "system" {
-    /// The anchor, imported as data: rustc reaches it through its import slot,
-    /// which Windows binds at load time, so its address is the real export's
-    /// and locates the real module for `proxy::resolve`.
-    #[link_name = "CreateDXGIFactory"]
-    pub static ANCHOR_EXPORT: u8;
+    /// The anchor's import slot, bound by Windows at load time. Read only in
+    /// assembly, by its `__imp_` name: a Rust-level import of `CreateDXGIFactory` would
+    /// share its symbol name with this proxy's own `CreateDXGIFactory` export.
+    #[link_name = "__imp_CreateDXGIFactory"]
+    static ANCHOR_SLOT: *const ();
+}
+
+/// The real anchor export's address, which locates the real module for
+/// `proxy::resolve`.
+pub fn anchor() -> *const u16 {
+    let value: *const u16;
+    unsafe {
+        core::arch::asm!(
+            "mov {value}, qword ptr [rip + {slot}]",
+            value = out(reg) value,
+            slot = sym ANCHOR_SLOT,
+            options(nostack, readonly, pure),
+        );
+    }
+    value
 }
 
 static mut SLOT_ApplyCompatResolutionQuirking: Target = missing;

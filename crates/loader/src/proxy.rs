@@ -11,7 +11,7 @@
 //! machine, and importing every export at load time made the game unable to
 //! start on Windows 10, whose dxgi.dll lacks Windows 11's exports.
 pub use crate::proxy_generated::REAL;
-use crate::proxy_generated::{slots, ANCHOR_EXPORT};
+use crate::proxy_generated::{anchor, slots};
 use crate::win;
 
 /// Every forwarded export, as far as its slot is concerned: the tail jump keeps
@@ -35,13 +35,7 @@ pub(crate) unsafe extern "system" fn missing() -> i32 {
 pub(crate) unsafe fn resolve() {
     let mut module: win::Handle = core::ptr::null_mut();
     // FROM_ADDRESS | UNCHANGED_REFCOUNT: the module holding the anchor.
-    let found = unsafe {
-        win::GetModuleHandleExW(
-            0x4 | 0x2,
-            (&raw const ANCHOR_EXPORT).cast::<u16>(),
-            &mut module,
-        )
-    };
+    let found = unsafe { win::GetModuleHandleExW(0x4 | 0x2, anchor(), &mut module) };
     if found == 0 {
         return;
     }
