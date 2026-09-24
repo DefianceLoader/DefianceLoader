@@ -474,7 +474,7 @@ def main():
         "sites": site_entries,
         "verified_sha": ",".join(b.VERIFIED_BUILDS),
         "edit_fixups": edit_fixups,
-    }, indent=2) + "\n", encoding="utf-8")
+    }, indent=2) + "\n", encoding="utf-8", newline="\n")
 
     print(f"payload   {len(payload)} bytes -> {payload_path}: chooser {len(code)} at +0, "
           f"filter {len(move)} at +{b.MOVE_OFFSET:#x}, "

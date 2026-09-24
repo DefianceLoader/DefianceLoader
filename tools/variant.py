@@ -317,7 +317,7 @@ def main():
     staged.mkdir(parents=True, exist_ok=True)
     for which, payload, descriptor in resolved:
         (staged / f"{which}.bin").write_bytes(payload)
-        (staged / f"{which}.json").write_text(json.dumps(descriptor, indent=2) + "\n", encoding="utf-8")
+        (staged / f"{which}.json").write_text(json.dumps(descriptor, indent=2) + "\n", encoding="utf-8", newline="\n")
         print(f"{which:<6} resolved for {profile['name']}  sha256 {descriptor['source_sha256']}  -> {staged}")
 
 

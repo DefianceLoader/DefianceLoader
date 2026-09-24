@@ -214,7 +214,7 @@ def main():
         # where each site is in a build this was not written for (--scan)
         "sites": site_entries,
         "verified_sha": ",".join(VERIFIED_BUILDS),
-    }, indent=2) + "\n", encoding="utf-8")
+    }, indent=2) + "\n", encoding="utf-8", newline="\n")
 
     print(f"payload   {len(code)} bytes -> {payload_path}, trace at +{TRACE_OFFSET:#x}")
     print(f"module    {GAME.rsplit('/', 1)[-1]}  sha256 {sha}")
