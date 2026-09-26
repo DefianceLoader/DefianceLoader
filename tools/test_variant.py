@@ -15,6 +15,7 @@ profile whose DLLs are not present, like the other tests that gate on
     python tools/test_variant.py
 """
 import hashlib, json, pathlib, struct, subprocess, sys
+import builds
 sys.path.insert(0, "tools")
 import capstone
 from pe import Image
@@ -197,7 +198,7 @@ for profile_path in sorted(pathlib.Path("tools/layouts").glob("*.json")):
         check(f"{name}: {problem}", False)
     for problem in check_game(game, Image(str(game_dll))):
         check(f"{name}: {problem}", False)
-    if not (pathlib.Path("bin/logic.orig.dll").exists() and pathlib.Path("bin/game.orig.dll").exists()):
+    if not builds.reference().present:
         print(f"skip {name} sync: the reference DLLs are not under bin/")
         continue
     # Reassembling takes about a minute per profile; skip it when nothing it

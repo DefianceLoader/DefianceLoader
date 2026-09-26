@@ -16,17 +16,26 @@ BASE = 0                              # the payload is position independent
 PAYLOAD = pathlib.Path("out/payload.bin")
 DESCRIPTOR = pathlib.Path("out/payload.json")
 
-# Loader/injector-only extension, beyond file-patch unwind storage and before
-# the rotation cursor. The legacy file patch deliberately does not install it.
-ORDER_OFFSET = 0x2c00
-REGION_OFFSET = 0x2500
+# Loader/injector-only extension, up to the rotation cursor. The payload carries
+# no unwind blobs, so it may use the range the file patch keeps them in; the
+# legacy file patch deliberately does not install it.
+ORDER_OFFSET = 0x2b00
+# The marquee's eligibility code (patch/region-individual.asm), in the same
+# range, and its cell just below the orders: GetAsyncKeyState, then the mode,
+# both written by Core when selection installs.
+REGION_OFFSET = 0x2800
+REGION_CELL = 0x2af0
 BUILDING_SELECT = (0x1d7ff0, bytes.fromhex("885130c3cc"), "building_select")
 REGION_ICON_GATE = (0x418128, bytes.fromhex("498b06498bce"), "region_icon_gate")
 REGION_CALLS = [(site, b"\xe8" + struct.pack("<i", 0x418000 - site - 5),
                  f"region_individual_{i}", 2)
                 for i, site in enumerate((0x418e1f, 0x419097, 0x419130, 0x4193f0))]
+# and the marquee replace pass's select loop body, which marquee_select takes
+# over so a squad hit marks its roster
+REGION_CALLS.append((0x418e90, bytes.fromhex(
+    "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff5050"), "marquee_select", 2))
 # The squad preview's dimmed soldiers (patch/preview-dim.asm): code after the
-# region code, and its cell (Core's material callback, then the mode) before the
+# ammo mode, and its cell (Core's material callback, then the mode) before the
 # ammunition scratch.
 PREVIEW_DIM_OFFSET = 0x2580
 PREVIEW_DIM_CELL = 0x26e0
@@ -68,7 +77,7 @@ def main():
 
     region, region_labels = b.assemble(
         pathlib.Path("patch/region-individual.asm").read_text().splitlines(),
-        REGION_OFFSET, b.CURSOR_OFFSET)
+        REGION_OFFSET, b.CURSOR_OFFSET, REGION_CELL)
     code, labels = b.assemble(
         pathlib.Path("patch/pickup.asm").read_text().splitlines(), BASE, b.CURSOR_OFFSET)
     move, _ = b.assemble(
@@ -148,12 +157,13 @@ def main():
     payload[b.AMMO_OFFSET:b.AMMO_OFFSET + len(ammo)] = ammo
     payload.extend(bytes(ORDER_OFFSET + len(orders) - len(payload)))
     payload[ORDER_OFFSET:ORDER_OFFSET + len(orders)] = orders
-    if b.AMMO_OFFSET + len(ammo) > REGION_OFFSET or REGION_OFFSET + len(region) > b.AMMO_SCRATCH:
-        raise SystemExit("region code overlaps ammunition storage")
+    if b.AMMO_SCRATCH + 0x70 > REGION_OFFSET or REGION_OFFSET + len(region) > REGION_CELL \
+            or REGION_CELL + 0x10 > ORDER_OFFSET:
+        raise SystemExit("the region code and its cell do not fit between the ammo scratch and the orders")
     payload[REGION_OFFSET:REGION_OFFSET + len(region)] = region
-    if REGION_OFFSET + len(region) > PREVIEW_DIM_OFFSET or \
+    if b.AMMO_OFFSET + len(ammo) > PREVIEW_DIM_OFFSET or \
             PREVIEW_DIM_OFFSET + len(dim) > PREVIEW_DIM_CELL or PREVIEW_DIM_CELL + 0x10 > b.AMMO_SCRATCH:
-        raise SystemExit("the preview dimming code does not fit between the region code and the ammo scratch")
+        raise SystemExit("the preview dimming code does not fit between ammo mode and the ammo scratch")
     payload[PREVIEW_DIM_OFFSET:PREVIEW_DIM_OFFSET + len(dim)] = dim
     # Branches out of the block, into logic.dll: assembled here against a block
     # at zero, so the injector re-aims each rel32 from where the block landed.
@@ -265,7 +275,8 @@ def main():
         if img.read(site, len(displaced)) != displaced:
             raise SystemExit(f"{site:#x} is not the expected order-distribution code")
         pose_calls.append({"pose_site": site, "pose_before": displaced.hex(),
-                           "pose_entry": region_labels["region_individual"] if feature == 2 else order_labels[label],
+                           "pose_entry": (region_labels.get(label, region_labels["region_individual"])
+                                          if feature == 2 else order_labels[label]),
                            "pose_tail": "90" * (len(displaced) - 5), "pose_stock": 0})
     for site, stock, label, thunk in b.POSE_CALLS:
         pose_before, pose_tail = b.pose_site(site, stock, thunk)
@@ -283,6 +294,13 @@ def main():
                            "pose_entry": posture_labels["move_posture"],
                            "pose_tail": "90" * (len(b.MOVE_POSTURE_READ) - 5),
                            "pose_stock": 0})
+    # and the squad's stand-up loop's compare, answered by squad_stand_gate
+    for site in b.SQUAD_STAND_SITES:
+        if img.read(site, len(b.SQUAD_STAND_READ)) != b.SQUAD_STAND_READ:
+            raise SystemExit(f"{site:#x} is not the expected compare in the squad's stand-up")
+        pose_calls.append({"pose_site": site, "pose_before": b.SQUAD_STAND_READ.hex(),
+                           "pose_entry": posture_labels["squad_stand_gate"],
+                           "pose_tail": "", "pose_stock": 0})
     # and fn_2caeb0's direct read of the squad's firing mode
     for rva, stock_call, label in b.FIRING_CALLS:
         if img.read(rva, len(stock_call)) != stock_call:
@@ -366,6 +384,8 @@ def main():
               for site, stock, label, thunk in b.POSE_CALLS]
     sites += [(f"move_posture_{i + 1}", site, [site + len(b.MOVE_POSTURE_READ)])
               for i, site in enumerate(b.MOVE_POSTURE_SITES)]
+    sites += [(f"squad_stand_{i + 1}", site, [site + len(b.SQUAD_STAND_READ)])
+              for i, site in enumerate(b.SQUAD_STAND_SITES)]
     sites += [(label, rva, [rva + len(call)]) for rva, call, label in b.FIRING_CALLS]
     sites += [(f"ammo_gate_{i}", rva, [rva + len(bytes.fromhex(call))])
               for i, (rva, call, _) in enumerate(b.AMMO_GATE_CALLS)]
@@ -433,7 +453,7 @@ def main():
     for hook in detours:
         hook["hook_feature"] = owners[hook["hook_rva"]]
     call_owners = {site: 4 for site, *_ in b.POSE_CALLS}
-    call_owners.update({site: 4 for site in b.MOVE_POSTURE_SITES})
+    call_owners.update({site: 4 for site in b.MOVE_POSTURE_SITES + b.SQUAD_STAND_SITES})
     call_owners.update({site: 5 for site, *_ in b.FIRING_CALLS})
     call_owners.update({site: 6 for site, *_ in b.AMMO_GATE_CALLS})
     call_owners.update({site: feature for site, _, _, feature in ORDER_CALLS + REGION_CALLS})
@@ -470,6 +490,8 @@ def main():
         "ammo_scratch": b.AMMO_SCRATCH,
         # the preview's cell, whose callback Core writes with the selection feature
         "preview_dim_cell": PREVIEW_DIM_CELL,
+        # the marquee's cell, GetAsyncKeyState and the mode, likewise
+        "marquee_cell": REGION_CELL,
         "setter_offset": b.SETTER_OFFSET,
         "detours": detours,
         "trace_fixups": trace_fixups,

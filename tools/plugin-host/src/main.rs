@@ -668,31 +668,45 @@ fn main() {
                 }
             }
         }
-        // Core hooks the lobby connection for the multiplayer guard whenever it
-        // initializes: the one game.dll write no feature owns. Before startup
-        // has recorded the blocking plugins the guard fails closed, so calling
-        // the connection through the hook returns a failure without touching
-        // the network.
-        // Found in the original image: the hook has changed the loaded one.
-        let site = parsed_game
-            .sites
-            .iter()
-            .find(|site| site.name == "lobby_connect")
-            .unwrap();
-        let lobby = defiance_core::Moves::locate(core::slice::from_ref(site), &originals[1])
-            .and_then(|moves| moves.at(site.start))
-            .unwrap();
-        if actual[1][lobby] != expected[1][lobby] {
+        // Core hooks game functions in Rust whenever it initializes: the lobby
+        // connection (the multiplayer guard) and the tactical state's
+        // constructor and destructor (mission reports for hot reload). These are
+        // the game.dll writes no feature owns. Each is found in the original
+        // image, since the hook has changed the loaded one.
+        let core_site = |name: &str| {
+            let site = parsed_game
+                .sites
+                .iter()
+                .find(|site| site.name == name)
+                .unwrap();
+            defiance_core::Moves::locate(core::slice::from_ref(site), &originals[1])
+                .and_then(|moves| moves.at(site.start))
+                .unwrap()
+        };
+        let mut hooked = |at: usize| {
+            if actual[1][at] == expected[1][at] {
+                return false;
+            }
             assert!(
-                matches!(actual[1][lobby], 0xe9 | 0xff),
-                "the lobby connection holds Core's hook"
+                matches!(actual[1][at], 0xe9 | 0xff),
+                "{at:#x} holds Core's hook"
             );
             let span = (0..16)
                 .rev()
-                .find(|&i| actual[1][lobby + i] != expected[1][lobby + i])
+                .find(|&i| actual[1][at + i] != expected[1][at + i])
                 .unwrap()
                 + 1;
-            expected[1][lobby..lobby + span].copy_from_slice(&actual[1][lobby..lobby + span]);
+            expected[1][at..at + span].copy_from_slice(&actual[1][at..at + span]);
+            true
+        };
+        for name in ["tactical_state_ctor", "tactical_state_dtor"] {
+            hooked(core_site(name));
+        }
+        let lobby = core_site("lobby_connect");
+        if hooked(lobby) {
+            // Before startup has recorded the blocking plugins the guard fails
+            // closed, so calling the connection returns a failure without
+            // touching the network.
             let connect: unsafe extern "system" fn(*mut c_void, *mut u8) -> *mut u8 =
                 unsafe { core::mem::transmute(targets[1].base as usize + lobby) };
             let mut out = [0xaau8; 0x48];
@@ -738,6 +752,16 @@ fn main() {
             assert_ne!(callback, [0; 8], "the preview callback is written");
         }
         old_code[cell].copy_from_slice(&callback);
+        // And the marquee's cell: GetAsyncKeyState and the mode.
+        let cell = p.marquee_cell..p.marquee_cell + 16;
+        let marquee = snapshot(new_logic + cell.start, 16);
+        if !failed.contains(&2)
+            && !skipped(scenario).contains(&2)
+            && !omitted(scenario).contains(&2)
+        {
+            assert_ne!(marquee[..8], [0; 8], "the marquee's key test is written");
+        }
+        old_code[cell].copy_from_slice(&marquee);
         if partial_block {
             // Every differing block byte must lie in a disabled feature's fixup
             // slot: the enabled reachable code and its fixups are unchanged.

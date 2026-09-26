@@ -7,6 +7,9 @@
 //! a startup failure must never be silently lost.
 //!
 //! The file is opened once, on the host thread, never in DllMain.
+//!
+//! Each line starts with the local date and time to the millisecond, so a log
+//! can be lined up with a trace, a frame-time capture or a crash's time.
 
 use crate::config::paths::Paths;
 use crate::win;
@@ -84,12 +87,22 @@ pub fn error(message: &str) {
     line(LEVEL_ERROR, "error", message);
 }
 
+/// `2026-09-25 13:16:38.412`, local time.
+fn stamp(time: &win::SystemTime) -> String {
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}",
+        time.year, time.month, time.day, time.hour, time.minute, time.second, time.milliseconds
+    )
+}
+
 fn line(level: u8, label: &str, message: &str) {
-    crate::crash::note(&format!("[{label}] {message}\n"));
+    let mut now = win::SystemTime::default();
+    unsafe { win::GetLocalTime(&mut now) };
+    let text = format!("[{}] [{label}] {message}\n", stamp(&now));
+    crate::crash::note(&text);
     if level > LEVEL.load(Ordering::Relaxed) {
         return;
     }
-    let text = format!("[{label}] {message}\n");
     match SINK.get() {
         Some(sink) => {
             if let Ok(mut file) = sink.lock() {
@@ -101,4 +114,24 @@ fn line(level: u8, label: &str, message: &str) {
     let mut wide: Vec<u16> = text.trim_end().encode_utf16().collect();
     wide.push(0);
     unsafe { win::OutputDebugStringW(wide.as_ptr()) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stamps_are_zero_padded_to_the_millisecond() {
+        let time = win::SystemTime {
+            year: 2026,
+            month: 9,
+            day: 5,
+            hour: 7,
+            minute: 3,
+            second: 9,
+            milliseconds: 4,
+            ..Default::default()
+        };
+        assert_eq!(stamp(&time), "2026-09-05 07:03:09.004");
+    }
 }

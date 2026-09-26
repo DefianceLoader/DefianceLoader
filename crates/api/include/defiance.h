@@ -128,6 +128,21 @@ typedef struct DefianceMultiplayerV1 {
     void (*guard_installed)(void);
 } DefianceMultiplayerV1;
 
+/* Provider defiance.loader, name session, service version 1. For Core:
+ * whether a mission is loaded, which hot reload waits on. Any thread.
+ * tracking: Core tracks missions from now on. mission: a mission state's
+ * constructor (delta 1) or destructor (-1) has returned, so the whole
+ * construction and destruction count. before_mission: see the field.
+ */
+typedef struct DefianceSessionV1 {
+    void (*tracking)(void);
+    void (*mission)(int32_t delta);
+    /* A mission's state is about to be constructed (mission start or save
+     * load): it counts as being built until mission(1), and pending reloads are
+     * applied now, on the calling thread, after any reload in progress. */
+    void (*before_mission)(void);
+} DefianceSessionV1;
+
 /* Provider defiance.selection, name selection, service version 1.
  * Game thread only. NULL -> 0; otherwise argument must be a live selectable
  * facet in the supported game build. Returns 0 or 1. Does not retain pointers.

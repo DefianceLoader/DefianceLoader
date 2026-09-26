@@ -10,13 +10,14 @@ module, which cannot be baked as rel32 from an allocated block. Those are
 each one sits and which rva it wants, and the injector writes base + rva.
 """
 import hashlib, json, os, pathlib, struct, sys
+import builds
 sys.path.insert(0, "tools")
 import build as b
 from pe import Image
 
-# The GOG game.dll the patch was written against, kept beside logic.orig.dll
+# The GOG game.dll the patch was written against, beside its logic.dll
 # rather than read from the install, which may hold another store's build.
-GAME = "bin/game.orig.dll"
+GAME = str(builds.reference().game)
 PAYLOAD = pathlib.Path("out/payload-game.bin")
 DESCRIPTOR = pathlib.Path("out/payload-game.json")
 
@@ -127,7 +128,10 @@ ANCHOR_RVA = 0x1f42d0
 CALLEE_SITES = {0x3f1d0: "ammo_fill_slot", 0x3f800: "ammo_hide_slot", 0x40e80: "focus_append",
                 0x368f0: "focus_assign",
                 0x2cb730: "ammo_label_text", 0x2c3380: "ammo_progress_refresh",
-                0x1b30a0: "lobby_connect"}
+                0x1b30a0: "lobby_connect",
+                # TacticalMapGameState's constructor and destructor: Core counts
+                # loaded missions for hot reload (plugins/core/src/session.rs)
+                0x3477d0: "tactical_state_ctor", 0x347ba0: "tactical_state_dtor"}
 
 
 def main():

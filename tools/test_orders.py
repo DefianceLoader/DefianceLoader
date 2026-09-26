@@ -47,14 +47,20 @@ def peek(addr, offset=0, width=8):
 
 STUB_FACETS = blob(asm("mov rax, qword ptr [rcx + 0x110]; ret"))
 STUB_SELECTED = blob(asm("movzx eax, byte ptr [rcx + 0x10]; ret"))
+# The entity kind test (vt+98): the soldier bit 0x20 answers from +118.
+STUB_KIND = blob(asm("xor eax, eax; cmp edx, 0x20; jne other; movzx eax, byte ptr [rcx + 0x118]; other: ret"))
 
 
-def entity(marked=None):
-    """Use the real selection getter, including disabled and deselected parents."""
+def entity(marked=None, prone=False, soldier=True):
+    """Use the real selection getter, including disabled and deselected parents.
+    A marked member (not None) also has a posture facet, whose target (+74) is
+    prone (3) when `prone`, else standing (1)."""
     vt = [0] * 32
+    vt[0x98 // 8] = STUB_KIND
     vt[0xb0 // 8] = STUB_FACETS
     obj = blob(bytes(bytearray(0x120)), 0x120)
     poke(obj, 0, words(vt))
+    poke(obj, 0x118, int(soldier), 1)
     if marked is not None:
         selectable_vt = [0] * 16
         selectable_vt[0x58 // 8] = SELECTED_GETTER
@@ -68,8 +74,17 @@ def entity(marked=None):
         poke(selectable, 0x28, parent)
         facets = blob(bytes(bytearray(0x60)), 0x60)
         poke(facets, 0x50, selectable)
+        posture = scratch(0x80)
+        poke(posture, 0x74, 3 if prone else 1, 4)
+        poke(facets, 0x58, posture)
         poke(obj, 0x110, facets)
     return obj
+
+
+def pin(member):
+    """The prone pin on a member's selectable facet: (+31 posture, +32 marker)."""
+    selectable = peek(peek(member, 0x110), 0x50)
+    return peek(selectable, 0x31, 1), peek(selectable, 0x32, 2)
 
 
 
@@ -229,11 +244,39 @@ for feature, count_register, rva in [(8, "r13", 0x43bab9), (9, "rax", 0x43c6cd)]
                 check([peek(output, 0x30+i*8) for i in range(count)] == expected, label + " members")
                 check([peek(source, i*8) for i in range(len(current))] == current, label + " source untouched")
                 check(peek(output, 0x20) == 0x76543210 and peek(output, 0x28) == 0x76543210, label + " guards")
+                check(all(pin(m) == (0, 0) for m, mark in zip(members, marks) if mark is not None),
+                      label + " standing members stay unpinned")
                 if feature == 8:
                     check(peek(output) == order_cell, label + " displaced load")
                 else:
                     check(peek(output, 8) == order_handle and peek(output, 0x10) == handle_value, label + " displaced registers")
                     check(peek(output, 0x18, 1) == (handle_value == 0), label + " resume flags")
+        if feature == 9 and handle_value == 0:
+            # Building entry by a subset: an unmarked soldier lying prone is
+            # pinned prone, so the squad's cleared prone flag does not stand
+            # him up. Entrants, standing soldiers and other kinds stay unpinned,
+            # and so does everyone when the whole squad (or nobody) is marked.
+            for marks, prone, soldier in [
+                    ([True, False, False, False], [True, True, False, True], [True, True, True, False]),
+                    ([True, True], [True, True], [True, True]),
+                    ([False, False], [True, True], [True, True]),
+                    ([True, "disabled", False], [True, True, True], [True, True, True])]:
+                members = [entity(m, p, s) for m, p, s in zip(marks, prone, soldier)]
+                source = words(members)
+                output = scratch(0x130)
+                run(source, len(members), output)
+                subset = any(m is True for m in marks) and not all(m is True for m in marks)
+                label = f"garrison pins marks={marks} prone={prone} soldier={soldier}"
+                for m, mark, p, s in zip(members, marks, prone, soldier):
+                    want = (3, 0x7a5e) if subset and mark is not True and p and s else (0, 0)
+                    check(pin(m) == want, label + f" pin {pin(m)}")
+                expected = [m for m, mark in zip(members, marks) if mark is True] if subset else members
+                check([peek(output, 0x30 + i*8) for i in range(peek(output))] == expected, label + " members")
+        if feature == 8 and handle_value == 0:
+            # Attack never pins, whatever the posture.
+            members = [entity(True, True), entity(False, True)]
+            run(words(members), 2, scratch(0x130))
+            check(all(pin(m) == (0, 0) for m in members), "attack leaves prone members unpinned")
         if feature != 8 or handle_value:
             continue
         # A member that cannot attack the target with enabled ammunition is

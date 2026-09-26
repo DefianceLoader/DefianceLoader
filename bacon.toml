@@ -5,9 +5,10 @@
 #   bacon clippy            clippy on the main workspace
 #   bacon test              its tests
 #   bacon regroup           one standalone plugin workspace; also
-#                           expanded-ammo-menu, squad-management-scroll
+#                           expanded-ammo-menu, squad-management-scroll,
+#                           unit-inspection
 #
-# In the TUI, `c` switches to clippy, `t` to tests, `g`/`e`/`s` to the three
+# In the TUI, `c` switches to clippy, `t` to tests, `g`/`e`/`s`/`i` to the four
 # standalone plugins. plugins/core embeds the committed payloads in
 # tools/variants/reference; `mise run assemble` refreshes them after patch edits.
 
@@ -40,10 +41,16 @@ command = ["cargo", "check", "--manifest-path", "plugins/squad-management-scroll
 need_stdout = false
 watch = ["plugins/squad-management-scroll", "crates"]
 
+[jobs.unit-inspection]
+command = ["cargo", "check", "--manifest-path", "plugins/unit-inspection/Cargo.toml", "--all-targets", "--color", "always"]
+need_stdout = false
+watch = ["plugins/unit-inspection", "crates"]
+
 [keybindings]
 c = "job:clippy"
 t = "job:test"
 g = "job:regroup"
 e = "job:expanded-ammo-menu"
 s = "job:squad-management-scroll"
+i = "job:unit-inspection"
 

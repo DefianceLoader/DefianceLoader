@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "example.counter-watch",
+  "dll": "defiance_example_counter_watch.dll",
+  "version": "0.1.0",
+  "abi": 5,
+  "group": "examples",
+  "settings": [
+    { "key": "enabled", "type": "bool", "default": "true", "description": "Enable the example counter watch." }
+  ],
+  "depends": [{ "id": "example.counter-user", "min": "0.1.0", "max": "0.1.0" }],
+  "conflicts": [],
+  "multiplayer_safe": true
+}

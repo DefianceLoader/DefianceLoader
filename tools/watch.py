@@ -25,7 +25,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUT = ROOT / "out" / "watch"
 PARITY = ("defiance-plugin-core/parity-test,defiance-plugin-firing/parity-test,"
           "defiance-plugin-selection/parity-test,defiance-plugin-pickup/parity-test")
-STANDALONE = ["plugins/regroup", "plugins/expanded-ammo-menu", "plugins/squad-management-scroll"]
+STANDALONE = ["plugins/regroup", "plugins/expanded-ammo-menu", "plugins/squad-management-scroll",
+              "plugins/unit-inspection"]
 STEPS = [
     ("assemble", [sys.executable, "tools/stamp.py", "assemble"]),
     ("build", ["cargo", "build", "--release"]),

@@ -4,15 +4,20 @@
 shared patch source with the build's own class offsets. The addresses in the
 descriptor they write are still the reference build's, because the payload code
 is position independent and every address is re-aimed at load time. This tool
-finishes the job offline: it finds every site in the target build (its exact
-signature, the operand-agnostic fallback when a field inside the window moved,
-or the profile's `logic_sites`/`game_sites` override), rewrites every address
-the descriptor names, and re-reads the bytes the descriptor expects from the
-target. The result is a descriptor that applies directly to that build, selected
+finishes the job offline: it finds every site in the target build, rewrites
+every address the descriptor names, and re-reads the bytes the descriptor
+expects from the target.
+
+A site is found, in order: by the profile's `logic_sites`/`game_sites`
+override; through the build's base (tools/builds.py), whose resolved variant
+says where the site is there, by that window's bytes (distance fields
+wildcarded) or, when a field inside it moved, operand-agnostically; and by the
+reference's own signature, likewise. Neighbouring builds differ least, so the
+base usually finds a site the reference's signature no longer does. The result is a descriptor that applies directly to that build, selected
 by its hash, with no runtime relocation.
 
     python tools/variant.py tools/layouts/gog-2026-09-14.json \
-        bin/gog/logic-updated.dll bin/gog/game-updated.dll
+        bin/gog/2026-09-14/logic.dll bin/gog/2026-09-14/game.dll
 
 It reads the assembled out/payload[-game]-<name>.{bin,json}, leaves them as
 they are (so it can be rerun), and writes the resolved payloads to
@@ -30,7 +35,8 @@ shipped, if:
 - a branch that reached one function now reaches two, or a pose return point's
   stock function was not resolved.
 """
-import hashlib, json, pathlib, struct, sys
+import collections, hashlib, json, pathlib, struct, sys
+import builds
 sys.path.insert(0, "tools")
 from pe import Image
 import sigs
@@ -115,18 +121,31 @@ class Sites:
     """Every site's home in the target, and the map that moves an address with
     the site whose window holds it."""
 
-    def __init__(self, descriptor, ref, target, overrides=None):
+    def __init__(self, descriptor, ref, target, overrides=None, via=None):
+        """`via` is the base build's (sigs.Module, resolved descriptor), when
+        the base is not the reference."""
         overrides = overrides or {}
+        base_sites = {e["site_name"]: e for e in via[1]["sites"]} if via else {}
         self.windows, failed = [], []
+        self.how = collections.Counter()
         for entry in descriptor["sites"]:
             try:
                 if entry["site_name"] in overrides:
-                    # re-derived by hand where the refactor left no signature to
-                    # follow; the profile names the new address
+                    # re-derived by hand where no signature follows the site;
+                    # the profile names the new address
                     new_site = overrides[entry["site_name"]]
                     new_start = new_site - entry["site_offset"]
+                    self.how["override"] += 1
                 else:
-                    new_start, new_site = self.locate(entry, ref, target)
+                    found = None
+                    if entry["site_name"] in base_sites:
+                        found = self.locate_via(entry, base_sites[entry["site_name"]], via[0], target)
+                    if found:
+                        self.how["through the base"] += 1
+                    else:
+                        found = self.locate(entry, ref, target)
+                        self.how["by the reference's signature"] += 1
+                    new_start, new_site = found
             except SystemExit as error:
                 failed.append(str(error))
                 continue
@@ -146,6 +165,43 @@ class Sites:
             raise SystemExit("sites of one function now lie in different functions:\n  " + "\n  ".join(
                 f"{old:#x}: " + "; ".join(f"{', '.join(names)} in {new:#x}" for new, names in found.items())
                 for old, found in split.items()))
+
+    @staticmethod
+    def locate_via(entry, base_entry, base, target):
+        """(start, site) of the site through the base's resolved window, or
+        None: the base's bytes there, whole instructions over the reference
+        window's length, found once in the target exactly (distance fields
+        wildcarded) or with every field wildcarded."""
+        start, length = base_entry["site_start"], len(entry["site_pattern"]) // 2
+        insns, end = [], start
+        for ins in base.md.disasm(base.image[start:start + length + 16], start):
+            if end >= start + length:
+                break
+            insns.append(ins)
+            end = ins.address + ins.size
+        if end < start + length:
+            return None
+        parts = [base.masked(ins) for ins in insns]
+        exact = (b"".join(p for p, _ in parts), b"".join(m for _, m in parts))
+        loose = bytearray(exact[1])
+        at = 0
+        for ins in insns:
+            if ins.imm_size:
+                loose[at + ins.imm_offset:at + ins.imm_offset + ins.imm_size] = bytes(ins.imm_size)
+            if ins.disp_size:
+                loose[at + ins.disp_offset:at + ins.disp_offset + ins.disp_size] = bytes(ins.disp_size)
+            at += ins.size
+        for pattern, mask in (exact, (exact[0], bytes(loose))):
+            found = target.matches(pattern, mask)
+            if len(found) > 1:
+                # Identical twins (two copies of one function): the k-th of n
+                # in the base is the k-th of n in the target.
+                twins = base.matches(pattern, mask)
+                if len(twins) == len(found) and start in twins:
+                    found = [found[twins.index(start)]]
+            if len(found) == 1:
+                return found[0], found[0] + entry["site_offset"]
+        return None
 
     def locate(self, entry, ref, target):
         text = entry["site_pattern"]
@@ -192,8 +248,9 @@ class Sites:
         raise SystemExit(f"no site covers {rva:#x} ({what})")
 
 
-def resolve_logic(descriptor, ref, target, overrides=None):
-    sites = Sites(descriptor, ref, target, overrides)
+def resolve_logic(descriptor, ref, target, overrides=None, via=None):
+    sites = Sites(descriptor, ref, target, overrides, via)
+    print("  sites: " + ", ".join(f"{n} {how}" for how, n in sites.how.items()))
     new = dict(descriptor)
     new["source_sha256"] = target.sha256
     new["module_bytes"] = target.file_bytes
@@ -269,8 +326,9 @@ def resolve_logic(descriptor, ref, target, overrides=None):
     return new
 
 
-def resolve_game(descriptor, ref, target, overrides=None):
-    sites = Sites(descriptor, ref, target, overrides)
+def resolve_game(descriptor, ref, target, overrides=None, via=None):
+    sites = Sites(descriptor, ref, target, overrides, via)
+    print("  sites: " + ", ".join(f"{n} {how}" for how, n in sites.how.items()))
     new = dict(descriptor)
     new["source_sha256"] = target.sha256
     new["module_bytes"] = target.file_bytes
@@ -293,16 +351,30 @@ def resolve_profile(profile, logic_dll, game_dll):
     name = profile["name"]
     out = []
     for which, dll, ref_path, stem, resolver in (
-        ("logic", logic_dll, "bin/logic.orig.dll", f"payload-{name}", resolve_logic),
-        ("game", game_dll, "bin/game.orig.dll", f"payload-game-{name}", resolve_game),
+        ("logic", logic_dll, str(builds.reference().logic), f"payload-{name}", resolve_logic),
+        ("game", game_dll, str(builds.reference().game), f"payload-game-{name}", resolve_game),
     ):
         payload_path, descriptor_path = pathlib.Path("out") / f"{stem}.bin", pathlib.Path("out") / f"{stem}.json"
         if not descriptor_path.exists():
             raise SystemExit(f"{descriptor_path} is missing; assemble with DEFIANCE_LAYOUT={name} first")
         descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
         overrides = {site: int(address) for site, address in profile.get(f"{which}_sites", {}).items()}
-        out.append((which, payload_path.read_bytes(), resolver(descriptor, Image(ref_path), Target(dll), overrides)))
+        out.append((which, payload_path.read_bytes(),
+                    resolver(descriptor, Image(ref_path), Target(dll), overrides, base_sites(name, which))))
     return out
+
+
+def base_sites(name, which):
+    """The base build's (sigs.Module, resolved descriptor) for `which`, or None
+    when the base is the reference (its sites are the descriptor's own)."""
+    base = builds.build(name).base
+    if base is None or base == builds.reference():
+        return None
+    resolved = pathlib.Path("tools") / "variants" / base.name / f"{which}.json"
+    if not resolved.exists():
+        raise SystemExit(f"{name}'s base {base.name} has no resolved {which} variant; resolve it first")
+    dll = base.require().logic if which == "logic" else base.require().game
+    return sigs.Module(str(dll)), json.loads(resolved.read_text(encoding="utf-8"))
 
 
 def main():

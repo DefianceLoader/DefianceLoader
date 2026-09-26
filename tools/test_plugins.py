@@ -4,6 +4,7 @@ Build first. Set CARGO_TARGET_DIR to use an alternate Cargo output directory.
 Each scenario runs in a separate process with fresh mapped modules.
 """
 import os
+import builds
 import pathlib
 import shutil
 import subprocess
@@ -30,13 +31,15 @@ def main():
     host = source / "defiance-plugin-host-test.exe"
     if not host.is_file():
         raise SystemExit(f"{host} missing; run mise run build first")
-    builds = [("original", ROOT / "bin/logic.orig.dll", ROOT / "bin/game.orig.dll")]
-    builds += [(store, ROOT / "bin" / store / "logic.dll", ROOT / "bin" / store / "game.dll")
-               for store in ("gog", "steam") if (ROOT / "bin" / store / "logic.dll").is_file()]
+    # The reference release in each store that is here, the reference first
+    # (required). The host's checks use the reference's addresses, so the
+    # later builds, whose payloads Core resolves per layout, are not run here.
+    targets = [(b.name, b.logic, b.game) for b in [builds.reference().require()]
+               + [b for b in map(builds.build, builds.RELEASE_COPIES) if b.present and b.name != builds.REFERENCE]]
     with tempfile.TemporaryDirectory(prefix="defiance-plugin-tests-") as temporary:
         folder = pathlib.Path(temporary)
         shutil.copy2(host, folder / host.name)
-        for name, logic, game in builds:
+        for name, logic, game in targets:
             scenarios = ("all", "core-only", "without-ammo", "fail-ammo", "without-attack", "without-garrison", "fail-attack", "fail-garrison", "disabled-ammo-corrupt", "enabled-ammo-corrupt", "shared-helper-corrupt", "without-selection", "without-posture", "without-movement", "without-firing", "without-pickup", "without-diagnostics", "without-preview-weapon", "diagnostics-only", "without-posture-and-ammo", "without-movement-and-ammo", "without-core", "unknown-build")
             if not args.assembly_pickup:
                 scenarios += ("rust-fail-pickup", "rust-changed-pickup", "rust-disabled-pickup")

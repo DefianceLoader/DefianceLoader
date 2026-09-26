@@ -10,7 +10,9 @@ https://github.com/DefianceLoader/DefianceLoader/blob/main/docs/features.md
    `bin`.
 2. For squad-management scrolling, also extract the `defiance-squad-scroll-ui`
    download into the game folder and enable **Defiance squad inventory
-   scrolling** in the game's mod menu.
+   scrolling** in the game's mod menu. The same download holds **Defiance unit
+   inspection colours**; enable it too for relation-coloured reload bars on
+   the ammo cards.
 3. Start the game as usual.
 
 When updating, overwrite the files but **keep existing `.ini` files** to keep

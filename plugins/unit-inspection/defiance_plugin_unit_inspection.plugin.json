@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "id": "defiance.unit-inspection",
+  "dll": "defiance_plugin_unit_inspection.dll",
+  "version": "0.1.0",
+  "abi": 5,
+  "group": "infantry",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Show the full unit info panel in missions for squads you do not own: the commander's name, the soldier count, rank and experience, and the ammo menu with its weapons, instead of only the name and relation. The show_allied, show_neutral and show_enemy settings choose for whom. The ammo menu's weapon toggles stay inert for those squads unless ally_weapon_toggles allows them for allies. Squads only; vehicles and buildings keep the game's panel. Single-player: blocks online multiplayer while active. Restart required."
+    },
+    {
+      "key": "show_allied",
+      "type": "bool",
+      "default": "true",
+      "description": "Show allied squads' full details. Restart required."
+    },
+    {
+      "key": "show_neutral",
+      "type": "bool",
+      "default": "true",
+      "description": "Show neutral and abandoned squads' full details. Restart required."
+    },
+    {
+      "key": "show_enemy",
+      "type": "bool",
+      "default": "true",
+      "description": "Show enemy squads' full details. Restart required."
+    },
+    {
+      "key": "ally_weapon_toggles",
+      "type": "bool",
+      "default": "false",
+      "description": "Let the ammo menu's weapon toggles work on allied squads shown by show_allied, so you can tell an ally which weapons to use; the ally's AI keeps them. Enemy and neutral squads' toggles stay inert. Restart required."
+    },
+    {
+      "key": "own_colour",
+      "type": "text",
+      "default": "teal",
+      "description": "The reload bar colour on your own squads' ammo cards. A colour is teal (the game's), green, yellow, grey-blue, red, or #RRGGBB. The bar colours need the Defiance unit inspection colours mod enabled in the game's MODS menu, which makes the bars greyscale; without it every bar keeps the game's teal. Restart required."
+    },
+    {
+      "key": "allied_colour",
+      "type": "text",
+      "default": "yellow",
+      "description": "The reload bar colour on allied squads' ammo cards (teal, green, yellow, grey-blue, red, or #RRGGBB). Restart required."
+    },
+    {
+      "key": "neutral_colour",
+      "type": "text",
+      "default": "grey-blue",
+      "description": "The reload bar colour on neutral and abandoned squads' ammo cards (teal, green, yellow, grey-blue, red, or #RRGGBB). Restart required."
+    },
+    {
+      "key": "enemy_colour",
+      "type": "text",
+      "default": "red",
+      "description": "The reload bar colour on enemy squads' ammo cards (teal, green, yellow, grey-blue, red, or #RRGGBB). Restart required."
+    }
+  ],
+  "depends": [],
+  "conflicts": []
+}

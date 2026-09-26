@@ -844,7 +844,7 @@ fn main() {
                 let class = if class == "*" { String::new() } else { class };
                 let path = args
                     .next()
-                    .unwrap_or_else(|| "bin/logic.orig.dll".to_string());
+                    .unwrap_or_else(|| "bin/gog/2025-12-23/logic.dll".to_string());
                 match defiance_core::pe::map(std::path::Path::new(&path)) {
                     Ok(mapped) => {
                         let found =
@@ -920,7 +920,7 @@ fn main() {
                      --scan-check DIR only reports whether that would work for the\n\
                      logic.dll and game.dll in DIR, and writes nothing.\n\
                      --rtti CLASS [DLL] prints a class's RTTI vtable and methods from a\n\
-                     DLL on disk (default bin/logic.orig.dll), to cross-check the\n\
+                     DLL on disk (default bin/gog/2025-12-23/logic.dll), to cross-check the\n\
                      loader's runtime walk against tools/rtti.py. CLASS of * lists every\n\
                      class, for building a name table for a decompiler project.\n\n\
                      The game.dll hooks are installed by default: a plain click selects\n\

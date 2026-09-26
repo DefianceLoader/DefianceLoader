@@ -26,6 +26,10 @@ struct Service {
 #[derive(Default)]
 struct Registry {
     tables: BTreeMap<(String, String, u32), Service>,
+    /// Who holds a table from whom: (consumer owner, provider ID), recorded on
+    /// every successful query. A hot reload of a provider must take these
+    /// consumers with it, since they cached the table.
+    uses: std::collections::BTreeSet<(usize, String)>,
 }
 
 /// The loader's own provider ID, as the registry spells names.
@@ -46,6 +50,10 @@ fn loader_table(name: &str, version: u32) -> Option<(usize, usize)> {
         ("trace", 1) => Some((
             &crate::trace::API as *const _ as usize,
             core::mem::size_of::<defiance_api::TraceV1>(),
+        )),
+        ("session", 1) => Some((
+            &crate::session::API as *const _ as usize,
+            core::mem::size_of::<defiance_api::SessionV1>(),
         )),
         ("multiplayer", 1) => Some((
             &crate::multiplayer::API as *const _ as usize,
@@ -83,7 +91,7 @@ impl Registry {
         0
     }
     fn query(
-        &self,
+        &mut self,
         context: &Context,
         provider: &str,
         name: &str,
@@ -101,10 +109,15 @@ impl Registry {
         if !context.dependencies.iter().any(|id| id == provider) {
             return 0;
         }
-        self.tables
+        let address = self
+            .tables
             .get(&(provider.to_owned(), name.to_owned(), version))
             .filter(|s| s.active && s.size >= size)
-            .map_or(0, |s| s.address)
+            .map_or(0, |s| s.address);
+        if address != 0 {
+            self.uses.insert((context.owner, provider.to_owned()));
+        }
+        address
     }
     fn finish(&mut self, owner: usize, success: bool) {
         if success {
@@ -113,8 +126,22 @@ impl Registry {
             }
         } else {
             self.tables.retain(|_, s| s.owner != owner);
+            self.uses.retain(|(consumer, _)| *consumer != owner);
         }
     }
+}
+
+/// The owners of the plugins that hold a table from `provider`.
+pub fn consumers(provider: &str) -> Vec<usize> {
+    let provider = provider.to_ascii_lowercase();
+    registry()
+        .lock()
+        .unwrap()
+        .uses
+        .iter()
+        .filter(|(_, p)| *p == provider)
+        .map(|(owner, _)| *owner)
+        .collect()
 }
 
 static REGISTRY: OnceLock<Mutex<Registry>> = OnceLock::new();
@@ -139,11 +166,21 @@ pub fn finish(owner: usize, success: bool) {
     CURRENT.with(|slot| *slot.borrow_mut() = None);
     registry().lock().unwrap().finish(owner, success);
 }
-/// Drop every table a plugin registered. Used by the in-process test host's
-/// unload path; the shipping loader only removes on a failed `init`.
-#[cfg(feature = "test-host")]
+/// Drop every table a plugin registered, when it is unloaded
+/// (`lifecycle::unload`). Consumers that cached a table are unloaded first.
 pub fn remove(owner: usize) {
     registry().lock().unwrap().finish(owner, false);
+}
+
+/// Drop a plugin's tables but keep its record of the tables it holds, for an
+/// old copy that stays mapped (`lifecycle::unload` with `retain`): its code
+/// still runs, and so still calls what it holds.
+pub fn withdraw(owner: usize) {
+    registry()
+        .lock()
+        .unwrap()
+        .tables
+        .retain(|_, s| s.owner != owner);
 }
 
 unsafe fn name(ptr: *const c_char) -> Option<String> {
@@ -260,6 +297,24 @@ mod tests {
         );
         let impostor = context(2, "defiance.loader", &[]);
         assert_eq!(r.register(&impostor, "crash-ranges".into(), 2, 123, 16), 1);
+    }
+
+    #[test]
+    fn a_query_records_who_holds_the_table() {
+        let mut r = Registry::default();
+        let provider = context(1, "provider", &[]);
+        let consumer = context(2, "consumer", &["provider"]);
+        assert_eq!(r.register(&provider, "service".into(), 1, 123, 16), 0);
+        r.finish(1, true);
+        assert_eq!(r.query(&consumer, "provider", "service", 2, 16), 0);
+        assert!(r.uses.is_empty(), "a failed query holds nothing");
+        assert_eq!(r.query(&consumer, "provider", "service", 1, 16), 123);
+        assert!(r.uses.contains(&(2, "provider".into())));
+        r.finish(2, false);
+        assert!(
+            r.uses.is_empty(),
+            "removing the consumer drops what it held"
+        );
     }
 
     #[test]

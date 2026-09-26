@@ -16,7 +16,10 @@ trait Backend {
     /// Whether the thread has begun exiting. Such a thread cannot be
     /// suspended (STATUS_THREAD_IS_TERMINATING) and runs no more game code.
     fn terminating(&mut self, handle: Self::Handle) -> bool;
-    fn rip(&mut self, handle: Self::Handle) -> Result<usize, Failure>;
+    /// The suspended thread's instruction and stack pointers.
+    fn control(&mut self, handle: Self::Handle) -> Result<(usize, usize), Failure>;
+    /// The top of the thread's stack (its highest address), or 0 if unknown.
+    fn stack_base(&mut self, handle: Self::Handle) -> usize;
     fn resume(&mut self, handle: Self::Handle);
     fn close(&mut self, handle: Self::Handle);
 }
@@ -25,6 +28,8 @@ struct Frozen<'a, B: Backend> {
     handles: Vec<B::Handle>,
     ids: Vec<u32>,
     ips: Vec<usize>,
+    /// Each thread's live stack, `[stack pointer, stack base)`.
+    stacks: Vec<(usize, usize)>,
 }
 impl<B: Backend> Drop for Frozen<'_, B> {
     fn drop(&mut self) {
@@ -41,13 +46,14 @@ fn freeze<B: Backend, R>(
     backend: &mut B,
     caller: u32,
     limit: usize,
-    f: impl FnOnce(&[usize]) -> R,
+    f: impl FnOnce(&[usize], &[(usize, usize)]) -> R,
 ) -> Result<R, Failure> {
     let mut frozen = Frozen {
         backend,
         handles: Vec::with_capacity(limit),
         ids: Vec::with_capacity(limit),
         ips: Vec::with_capacity(limit),
+        stacks: Vec::with_capacity(limit),
     };
     loop {
         let before = frozen.handles.len();
@@ -82,7 +88,10 @@ fn freeze<B: Backend, R>(
                 frozen.ids.push(id);
                 retained = true;
                 // Context retrieval waits for suspension to take effect.
-                frozen.ips.push(frozen.backend.rip(handle)?);
+                let (ip, sp) = frozen.backend.control(handle)?;
+                let base = frozen.backend.stack_base(handle);
+                frozen.ips.push(ip);
+                frozen.stacks.push((sp, base));
                 Ok(true)
             })();
             match result {
@@ -98,7 +107,7 @@ fn freeze<B: Backend, R>(
             }
         }
         if frozen.handles.len() == before {
-            return Ok(f(&frozen.ips));
+            return Ok(f(&frozen.ips, &frozen.stacks));
         }
     }
 }
@@ -156,15 +165,37 @@ impl Backend for Native {
         };
         status == 0 && flag != 0
     }
-    fn rip(&mut self, handle: win::Handle) -> Result<usize, Failure> {
+    fn control(&mut self, handle: win::Handle) -> Result<(usize, usize), Failure> {
         let mut context = crate::crash::Context([0; 1232]);
+        // CONTEXT_CONTROL: Rip at +0xf8, Rsp at +0x98.
         context.0[48..52].copy_from_slice(&0x0010_0001u32.to_le_bytes());
         if unsafe { win::GetThreadContext(handle, context.0.as_mut_ptr().cast()) } == 0 {
             return Err(Failure("reading thread context", unsafe {
                 win::GetLastError()
             }));
         }
-        Ok(u64::from_le_bytes(context.0[248..256].try_into().unwrap()) as usize)
+        let word =
+            |at: usize| u64::from_le_bytes(context.0[at..at + 8].try_into().unwrap()) as usize;
+        Ok((word(0xf8), word(0x98)))
+    }
+    fn stack_base(&mut self, handle: win::Handle) -> usize {
+        // THREAD_BASIC_INFORMATION: exit status, then the TEB, whose NT_TIB
+        // holds the stack base at +8. Reading it needs no lock.
+        let mut info = [0usize; 6];
+        let status = unsafe {
+            win::NtQueryInformationThread(
+                handle,
+                0,
+                info.as_mut_ptr().cast(),
+                core::mem::size_of_val(&info) as u32,
+                core::ptr::null_mut(),
+            )
+        };
+        let teb = info[1];
+        if status != 0 || teb == 0 || !win::is_readable(teb + 8, 8) {
+            return 0;
+        }
+        unsafe { *((teb + 8) as *const usize) }
     }
     fn resume(&mut self, handle: win::Handle) {
         if unsafe { win::ResumeThread(handle) } == u32::MAX {
@@ -181,6 +212,14 @@ impl Backend for Native {
     }
 }
 pub fn suspend_all<R>(f: impl FnOnce(&[usize]) -> R) -> Result<R, String> {
+    suspend_with_stacks(|ips, _| f(ips))
+}
+/// As [`suspend_all`], with each suspended thread's live stack as
+/// `[stack pointer, stack base)` beside its instruction pointer (a base of 0
+/// means it could not be read). The closure has the same limits.
+pub fn suspend_with_stacks<R>(
+    f: impl FnOnce(&[usize], &[(usize, usize)]) -> R,
+) -> Result<R, String> {
     let _serialize = SERIALIZE.lock().unwrap_or_else(|p| p.into_inner());
     let outcome = freeze(&mut Native, unsafe { win::GetCurrentThreadId() }, LIMIT, f);
     // All peers resumed before formatting errors.
@@ -233,12 +272,15 @@ mod tests {
         fn terminating(&mut self, h: u32) -> bool {
             self.exiting && h == 3
         }
-        fn rip(&mut self, h: u32) -> Result<usize, Failure> {
+        fn control(&mut self, h: u32) -> Result<(usize, usize), Failure> {
             if self.fail == Some("context") && h == 3 {
                 Err(Failure("context", 5))
             } else {
-                Ok(h as usize * 100)
+                Ok((h as usize * 100, h as usize * 1000))
             }
+        }
+        fn stack_base(&mut self, h: u32) -> usize {
+            h as usize * 1000 + 64
         }
         fn resume(&mut self, h: u32) {
             assert!(self.stopped[h as usize]);
@@ -250,8 +292,9 @@ mod tests {
     #[test]
     fn a_thread_created_during_enumeration_is_also_suspended() {
         let mut fake = Fake::default();
-        let result = freeze(&mut fake, 1, 8, |ips| {
+        let result = freeze(&mut fake, 1, 8, |ips, stacks| {
             assert_eq!(ips, &[200, 300]);
+            assert_eq!(stacks, &[(2000, 2064), (3000, 3064)]);
             42
         });
         assert_eq!(result.unwrap(), 42);
@@ -264,7 +307,7 @@ mod tests {
             exiting: true,
             ..Default::default()
         };
-        let result = freeze(&mut fake, 1, 8, |ips| {
+        let result = freeze(&mut fake, 1, 8, |ips, _| {
             assert_eq!(ips, &[200]);
             7
         });
@@ -278,9 +321,12 @@ mod tests {
                 fail: Some(failure),
                 ..Default::default()
             };
-            let result = freeze(&mut fake, 1, if failure == "limit" { 1 } else { 8 }, |_| {
-                panic!("must refuse the write")
-            });
+            let result = freeze(
+                &mut fake,
+                1,
+                if failure == "limit" { 1 } else { 8 },
+                |_, _| panic!("must refuse the write"),
+            );
             assert!(result.is_err(), "{failure}");
             assert!(!fake.stopped.iter().any(|&v| v), "{failure}");
             assert!(fake.resumed > 0);

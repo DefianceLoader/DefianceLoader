@@ -149,6 +149,16 @@ on the player's machine, and a modified install can remove any check.
 Callable from any thread. The startup log states the outcome
 (`multiplayer: allowed` or `multiplayer: blocked while active: ...`).
 
+## Loader service: session v1
+
+Provider: `defiance.loader`. Name: `session`. Table: Rust `SessionV1`, C
+`DefianceSessionV1`. For Core: `tracking()` once it reports missions,
+`mission(delta)` once a mission state's constructor (1) or destructor (-1) has
+returned, and `before_mission()` just before one is constructed, when the
+loader applies pending hot reloads; from then until `mission(1)` the state
+counts as being built, so no reload runs during it. Other plugins have no use
+for it.
+
 ## Loader service: trace v1
 
 Provider: `defiance.loader`. Name: `trace`. Exact service version: `1`. Table:

@@ -62,14 +62,8 @@ run = "python tools/stamp.py assemble"
 
 [tasks.variants]
 description = "Assemble and resolve the per-build payloads named in tools/layouts (needs those builds' DLLs)"
-run = [
-  "python tools/payload.py --layout gog-2026-09-14",
-  "python tools/icon.py --layout gog-2026-09-14",
-  "python tools/variant.py tools/layouts/gog-2026-09-14.json bin/gog/logic-updated.dll bin/gog/game-updated.dll",
-  "python tools/payload.py --layout steam-2026-09-22",
-  "python tools/icon.py --layout steam-2026-09-22",
-  "python tools/variant.py tools/layouts/steam-2026-09-22.json bin/steam/logic-updated.dll bin/steam/game-updated.dll",
-]
+# Every layout in tools/layouts, with its build's DLLs from bin/ (tools/builds.py).
+run = "python tools/builds.py variants"
 
 # Six Cargo workspaces: the loader's, the three standalone plugins', the service
 # examples' and the crash test plugin's. The generators that write Rust
@@ -81,6 +75,7 @@ run = [
   "cargo fmt --all --manifest-path plugins/regroup/Cargo.toml",
   "cargo fmt --all --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
   "cargo fmt --all --manifest-path plugins/squad-management-scroll/Cargo.toml",
+  "cargo fmt --all --manifest-path plugins/unit-inspection/Cargo.toml",
   "cargo fmt --all --manifest-path examples/services/Cargo.toml",
   "cargo fmt --all --manifest-path tools/crash-plugin/Cargo.toml",
 ]
@@ -92,6 +87,7 @@ run = [
   "cargo fmt --all --check --manifest-path plugins/regroup/Cargo.toml",
   "cargo fmt --all --check --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
   "cargo fmt --all --check --manifest-path plugins/squad-management-scroll/Cargo.toml",
+  "cargo fmt --all --check --manifest-path plugins/unit-inspection/Cargo.toml",
   "cargo fmt --all --check --manifest-path examples/services/Cargo.toml",
   "cargo fmt --all --check --manifest-path tools/crash-plugin/Cargo.toml",
 ]
@@ -121,6 +117,7 @@ run = [
   "cargo test --manifest-path plugins/regroup/Cargo.toml",
   "cargo test --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
   "cargo test --manifest-path plugins/squad-management-scroll/Cargo.toml",
+  "cargo test --manifest-path plugins/unit-inspection/Cargo.toml",
 ]
 
 [tasks.test-quick]
@@ -128,9 +125,12 @@ description = "Format check, every workspace's Rust tests, versions, layouts and
 depends = ["fmt-check", "test-rust"]
 run = [
   "python tools/comment_audit.py --check",
+  "python tools/test_builds.py",
+  "python tools/test_stamp.py",
   "python tools/test_versions.py",
   "python tools/test_layout.py",
   "python tools/test_variant.py",
+  "python tools/stamp.py test tools/test_chainlayout.py",
 ]
 
 [tasks.comment-audit]
@@ -155,42 +155,48 @@ run = 'target\release\defiance-pickup-inject.exe --force-scan'
 raw = true
 
 [tasks.test]
-description = "Build everything, then run every native test and the self test"
+description = "Build everything, then run every native test and the self test (native tests skip when they passed on the same inputs; DEFIANCE_NO_STAMP=1 runs them all)"
 depends = ["fmt-check", "build", "crash-test"]
 run = [
   "python tools/comment_audit.py --check",
+  "python tools/test_builds.py",
+  "python tools/test_stamp.py",
   "python tools/test_versions.py",
   "python tools/test_layout.py",
   "python tools/test_variant.py",
-  "python tools/test_chooser.py",
-  "python tools/test_move.py",
-  "python tools/test_orders.py",
-  "python tools/test_icon.py",
-  "python tools/test_preview.py",
-  "python tools/test_preview_subset.py",
-  "python tools/test_building_tab.py",
-  "python tools/test_selection.py",
-  "python tools/test_region.py",
-  "python tools/test_trace.py",
-  "python tools/test_pose.py",
-  "python tools/test_posture.py",
-  "python tools/test_firing.py",
+  "python tools/stamp.py test tools/test_chainlayout.py",
+  "python tools/stamp.py test tools/test_bindings.py",
+  "python tools/stamp.py test tools/test_unit_inspection.py",
+  "python tools/stamp.py test tools/test_chooser.py",
+  "python tools/stamp.py test tools/test_move.py",
+  "python tools/stamp.py test tools/test_orders.py",
+  "python tools/stamp.py test tools/test_icon.py",
+  "python tools/stamp.py test tools/test_preview.py",
+  "python tools/stamp.py test tools/test_preview_subset.py",
+  "python tools/stamp.py test tools/test_building_tab.py",
+  "python tools/stamp.py test tools/test_selection.py",
+  "python tools/stamp.py test tools/test_region.py",
+  "python tools/stamp.py test tools/test_trace.py",
+  "python tools/stamp.py test tools/test_pose.py",
+  "python tools/stamp.py test tools/test_posture.py",
+  "python tools/stamp.py test tools/test_firing.py",
   "cargo build --release --target-dir out/controls-parity -p defiance-plugin-core -p defiance-plugin-firing -p defiance-plugin-selection -p defiance-plugin-pickup --features defiance-plugin-core/parity-test,defiance-plugin-firing/parity-test,defiance-plugin-selection/parity-test,defiance-plugin-pickup/parity-test",
-  "python tools/test_pickup_rust.py out/controls-parity/release/defiance_plugin_feature_pickup.dll",
-  "python tools/test_firing_rust.py out/controls-parity/release",
-  "python tools/test_selection_rust.py out/controls-parity/release",
-  "python tools/test_ammo.py",
+  "python tools/stamp.py test tools/test_pickup_rust.py out/controls-parity/release/defiance_plugin_feature_pickup.dll",
+  "python tools/stamp.py test tools/test_firing_rust.py out/controls-parity/release",
+  "python tools/stamp.py test tools/test_selection_rust.py out/controls-parity/release",
+  "python tools/stamp.py test tools/test_ammo.py",
+  "python tools/test_package_unit_inspection.py",
   "python tools/test_stage.py",
   "python tools/test_config.py",
   "python tools/test_package.py",
-  "python tools/test_plugins.py",
+  "python tools/stamp.py test tools/test_plugins.py",
   "cargo test --workspace",
   "python tools/sigs.py",
   'target\release\defiance-pickup-inject.exe --self-test',
   # the patch as built, against copies of the GOG DLLs it was written for, and
   # the Steam DLLs; each only if its copy is kept in bin\<store> (not tracked)
-  'if exist bin\gog\logic.dll target\release\defiance-pickup-inject.exe --scan-check bin\gog',
-  'if exist bin\steam\logic.dll target\release\defiance-pickup-inject.exe --scan-check bin\steam',
+  'if exist bin\gog\2025-12-23\logic.dll target\release\defiance-pickup-inject.exe --scan-check bin\gog\2025-12-23',
+  'if exist bin\steam\2025-12-23\logic.dll target\release\defiance-pickup-inject.exe --scan-check bin\steam\2025-12-23',
 ]
 
 [tasks.probe]
@@ -203,13 +209,14 @@ raw = true
 # (tools/variants/reference). Player builds always assemble first; everything
 # builds without the game's DLLs from the committed payloads. See crates/loader/src/lib.rs for the design.
 [tasks.loader]
-description = "Build the loader, built-in plugins and the standalone regroup, expanded-ammo-menu and squad-management-scroll plugins"
+description = "Build the loader, built-in plugins and the standalone regroup, expanded-ammo-menu, squad-management-scroll and unit-inspection plugins"
 depends = ["assemble"]
 run = [
   "cargo build --release",
   "cargo build --release --manifest-path plugins/regroup/Cargo.toml",
   "cargo build --release --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
   "cargo build --release --manifest-path plugins/squad-management-scroll/Cargo.toml",
+  "cargo build --release --manifest-path plugins/unit-inspection/Cargo.toml",
   # the sidecar manifests come from the loader's authoritative built-in table
   'target\release\manifest-gen.exe --out target\release',
 ]
@@ -241,8 +248,10 @@ run = [
   "cargo test --manifest-path plugins/regroup/Cargo.toml",
   "cargo test --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
   "cargo test --manifest-path plugins/squad-management-scroll/Cargo.toml",
+  "cargo test --manifest-path plugins/unit-inspection/Cargo.toml",
   "python tools/test_package_squad_scroll.py",
   "python tools/test_build_resources.py",
+  "python tools/test_package_unit_inspection.py",
   "python tools/test_stage.py",
   "python tools/test_config.py",
   "python tools/test_package.py",
@@ -257,12 +266,17 @@ run = [
 ]
 
 [tasks.loader-stage]
-description = "Build, then copy the loader, built-ins, standalone plugins and the squad-scroll companion mod into the game (set DEFIANCE_GAME_DIR)"
+description = "Build, then copy the loader, built-ins, standalone plugins and the companion UI mods into the game (set DEFIANCE_GAME_DIR)"
 depends = ["loader"]
 run = "python tools/stage.py"
 
+[tasks.plugins-stage]
+description = "Build, then copy only the plugin DLLs and manifests into the game, which may be running (hot reload with [loader] hot_reload = true)"
+depends = ["loader"]
+run = "python tools/stage.py --plugins-only"
+
 [tasks.loader-package]
-description = "Package the loader, built-ins and standalone plugins, plus the squad-scroll companion mod when DEFIANCE_GAME_DIR is set"
+description = "Package the loader, built-ins and standalone plugins, plus the companion UI mods when DEFIANCE_GAME_DIR is set"
 depends = ["loader"]
 run = "python tools/package.py"
 

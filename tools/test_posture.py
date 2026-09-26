@@ -195,6 +195,48 @@ for label, args, want in (
 check("only ebp changes", [q(CAPTURE + i * 8) for i in range(7)] == MARKS[:1] + [SQUAD_AI] + MARKS[2:],
       str([hex(q(CAPTURE + i * 8)) for i in range(7)]))
 
+print("\n== the squad's stand-up skips a soldier pinned prone\n")
+# Called as the loop calls it, over cmp qword [rbx+0x28], 0 with rbx the
+# member's posture, whose +0x10 holds him as an AI object does; the jne that
+# follows skips him when ZF is clear. Only the flags may change.
+stand_site = scratch(0x200)
+put(stand_site, asm("; ".join(
+    ["push rbx", "sub rsp, 0x20", f"mov rbx, {ARG}", "mov rbx, qword ptr [rbx]"]
+    + [f"mov {r}, {v:#x}" for r, v in zip(VOLATILE, MARKS)]
+    # the gate's address goes in the frame, so every register holds its mark
+    + [f"mov r11, {block + labels['squad_stand_gate']}", "mov qword ptr [rsp], r11",
+       f"mov r11, {MARKS[6]:#x}", "call qword ptr [rsp]",
+       # mov and push leave the flags for setnz
+       "push r11", f"mov r11, {CAPTURE}", "setnz byte ptr [r11 + 0x40]",
+       "mov qword ptr [r11 + 0x48], rbx"]
+    + [f"mov qword ptr [r11 + {i * 8}], {r}" for i, r in enumerate(VOLATILE[:6])]
+    + ["pop rax", "mov qword ptr [r11 + 0x30], rax",
+       "add rsp, 0x20", "pop rbx", "ret"])))
+STAND_SITE = ctypes.CFUNCTYPE(None)(stand_site)
+
+
+def standing_up(pin=None, marker=0x7a5e, busy=0, links=True):
+    """Whether the loop skips this member: the jne taken."""
+    posture = soldier(pin, marker, links)
+    put(posture + 0x28, struct.pack("<Q", busy))
+    put(ARG, struct.pack("<Q", posture))
+    STAND_SITE()
+    return bool(q(CAPTURE + 0x40) & 0xff), posture
+
+
+for label, args, skipped in (
+        ("unpinned: stood up", (), False),
+        ("pinned prone: skipped", (3,), True),
+        ("pinned standing: stood up", (1,), False),
+        ("a pin without its marker: stood up", (3, 0x2211), False),
+        ("busy (+0x28 set): skipped, as the stock compare has it", (None, 0x7a5e, 1), True),
+        ("no soldier to be found: stood up", (None, 0x7a5e, 0, False), False)):
+    got, posture = standing_up(*args)
+    check(label, got == skipped, f"skipped {got}")
+check("every register survives, rbx included",
+      [q(CAPTURE + i * 8) for i in range(7)] == MARKS and q(CAPTURE + 0x48) == posture,
+      str([hex(q(CAPTURE + i * 8)) for i in range(7)]))
+
 print()
 print(f"{failures} failed" if failures else "all cases as expected")
 sys.exit(1 if failures else 0)

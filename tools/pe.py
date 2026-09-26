@@ -4,9 +4,10 @@ x64 PE, so .pdata gives exact function bounds; that is the backbone here.
 Addresses are image-relative (RVA) everywhere unless a name says 'file'.
 """
 import bisect, functools, re, struct
+import builds
 import capstone, pefile
 
-DLL = "bin/logic.orig.dll"
+DLL = str(builds.reference().logic)
 
 
 class Image:

@@ -277,6 +277,26 @@ pub fn start(addresses: &[(usize, String)], hits: u32, sink: fn(&str)) -> Result
     Ok(())
 }
 
+/// `[trace] when = mission`: the sites to arm once a mission loads.
+static DEFERRED: std::sync::Mutex<Option<(Vec<(usize, String)>, u32)>> =
+    std::sync::Mutex::new(None);
+
+/// Keep `addresses` to arm when the first mission loads ([`start_deferred`]).
+pub fn defer(addresses: Vec<(usize, String)>, hits: u32) {
+    *DEFERRED.lock().unwrap() = Some((addresses, hits));
+}
+
+/// Arm the deferred sites, once. Called as a mission's state is created.
+pub fn start_deferred() {
+    let Some((addresses, hits)) = DEFERRED.lock().unwrap().take() else {
+        return;
+    };
+    match start(&addresses, hits, crate::log::info) {
+        Ok(()) => crate::log::info("trace: armed now that a mission is loading"),
+        Err(e) => crate::log::warn(&format!("trace: {e}; not tracing")),
+    }
+}
+
 unsafe extern "C" fn service_trace(address: usize, hits: u32, label: *const c_char) -> i32 {
     let Some(label) = crate::crash::service_label(label) else {
         return 1;
@@ -694,7 +714,7 @@ mod tests {
             fn LoadLibraryExW(name: *const u16, file: *mut c_void, flags: u32) -> *mut c_void;
         }
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../bin/gog/logic-updated.dll");
+            .join("../../bin/gog/2026-09-14/logic.dll");
         if !path.is_file() {
             eprintln!("skipped: no {}", path.display());
             return;

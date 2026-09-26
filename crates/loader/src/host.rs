@@ -69,6 +69,15 @@ fn start_trace(config: &crate::config::Snapshot) {
         .integer(TRACE_SECTION, "hits")
         .unwrap_or(20)
         .clamp(1, 1000) as u32;
+    if config.text(TRACE_SECTION, "when").as_deref() == Some("mission") {
+        let labels: Vec<&str> = addresses.iter().map(|(_, label)| label.as_str()).collect();
+        crate::log::info(&format!(
+            "trace: {} armed when the first mission loads, {hits} hits each",
+            labels.join(", ")
+        ));
+        crate::trace::defer(addresses, hits);
+        return;
+    }
     match crate::trace::start(&addresses, hits, crate::log::info) {
         Ok(()) => crate::log::info(&format!(
             "trace: {} armed on every thread, {hits} hits each",
@@ -164,6 +173,8 @@ pub fn run() {
 
     // Leaked on purpose: a plugin may keep this pointer for the process's life.
     let api: &'static Api = Box::leak(Box::new(crate::resolve::build_api()));
+    // Shadow copies of earlier runs; this run makes its own.
+    crate::lifecycle::clean_cache(&config.paths.root.join("cache").join("plugins"));
 
     // The scan configuration loading made, so the plan and the settings agree.
     for warning in &config.catalog.warnings {
@@ -253,6 +264,16 @@ pub fn run() {
         crate::log::info(&format!("startup summary: {summary}"));
     }
     crate::log::info("loader ready");
+    let flag = |key: &str| {
+        config
+            .get(crate::config::builtin::LOADER_SECTION, key)
+            .and_then(|resolved| resolved.value.as_bool())
+            .unwrap_or(false)
+    };
+    let (develop, toggle) = (flag("hot_reload"), flag("live_toggle"));
+    if develop || toggle {
+        crate::reload::start_watcher(api, develop, toggle);
+    }
 }
 
 /// This is the production executor. Tests replace only the DLL operation;
@@ -377,23 +398,70 @@ fn is_game_process() -> bool {
 
 #[cfg(feature = "test-host")]
 pub fn test_plugins(exe_dir: &std::path::Path) -> Vec<(String, String)> {
+    let states = test_load(exe_dir);
+    unload();
+    states
+}
+
+/// The test host's `Api`, kept for reloads.
+#[cfg(feature = "test-host")]
+static TEST_API: std::sync::OnceLock<&'static Api> = std::sync::OnceLock::new();
+
+/// Startup as the host runs it, without waiting for game modules, leaving the
+/// plugins loaded.
+#[cfg(feature = "test-host")]
+pub fn test_load(exe_dir: &std::path::Path) -> Vec<(String, String)> {
     assert_eq!(exe_dir, crate::config::game_dir());
     let config = crate::config::load();
+    crate::lifecycle::clean_cache(&config.paths.root.join("cache").join("plugins"));
     let plan = crate::plan::plan(config.catalog.entries.clone(), config);
-    let api = Box::leak(Box::new(crate::resolve::build_api()));
+    let api: &'static Api =
+        TEST_API.get_or_init(|| Box::leak(Box::new(crate::resolve::build_api())));
     let result = run_plan(
         &plan,
         |node, owner, mask| load(node, api, owner, mask),
         crate::multiplayer::guarded,
     );
-    let states = plan
-        .nodes
+    let active: Vec<bool> = result
+        .states
+        .iter()
+        .map(|state| *state == RunState::Active)
+        .collect();
+    crate::multiplayer::record(&crate::multiplayer::blockers(&plan, &active));
+    plan.nodes
         .iter()
         .zip(result.states)
         .map(|(node, state)| (node.id.clone(), format!("{state:?}")))
-        .collect();
-    unload();
-    states
+        .collect()
+}
+
+/// A hot reload, as the watcher runs it.
+#[cfg(feature = "test-host")]
+pub fn test_reload(id: &str) -> Result<(), String> {
+    crate::reload::reload(TEST_API.get().expect("test_load first"), id)
+}
+
+/// An added plugin loaded, as the watcher does it.
+#[cfg(feature = "test-host")]
+pub fn test_add(id: &str) -> Result<(), String> {
+    crate::reload::add(TEST_API.get().expect("test_load first"), id)
+}
+
+/// A removed plugin unloaded, as the watcher does it.
+#[cfg(feature = "test-host")]
+pub fn test_remove(id: &str) -> Result<(), String> {
+    crate::reload::remove(TEST_API.get().expect("test_load first"), id)
+}
+
+/// A plugin switched on or off, as the watcher does it.
+#[cfg(feature = "test-host")]
+pub fn test_toggle(id: &str, on: bool) -> Result<(), String> {
+    let api = TEST_API.get().expect("test_load first");
+    if on {
+        crate::reload::enable(api, id)
+    } else {
+        crate::reload::disable(api, id)
+    }
 }
 
 #[cfg(test)]

@@ -1,9 +1,10 @@
 """Check the built DLL: what changed, and does the new code read back right."""
 import pathlib, sys
+import builds
 sys.path.insert(0, "tools")
 from pe import Image
 
-orig = pathlib.Path("bin/logic.orig.dll").read_bytes()
+orig = builds.reference().logic.read_bytes()
 new = pathlib.Path("out/logic.dll").read_bytes()
 print(f"sizes {len(orig)} -> {len(new)}"
       f"{'  (unchanged)' if len(orig) == len(new) else '  CHANGED'}")

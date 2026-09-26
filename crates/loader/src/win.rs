@@ -27,6 +27,20 @@ pub const THREAD_QUERY_INFORMATION: u32 = 0x0040;
 /// The protections that mean "this page can execute".
 const EXECUTE_PROTECTIONS: [u32; 4] = [0x10, 0x20, 0x40, 0x80];
 
+/// `SYSTEMTIME`.
+#[repr(C)]
+#[derive(Default)]
+pub struct SystemTime {
+    pub year: u16,
+    pub month: u16,
+    pub day_of_week: u16,
+    pub day: u16,
+    pub hour: u16,
+    pub minute: u16,
+    pub second: u16,
+    pub milliseconds: u16,
+}
+
 #[repr(C)]
 pub struct MemoryBasicInformation {
     pub base_address: *mut c_void,
@@ -91,6 +105,13 @@ extern "system" {
     pub fn GetModuleHandleExW(flags: u32, name: *const u16, module: *mut Handle) -> i32;
     pub fn GetModuleFileNameW(module: Handle, name: *mut u16, size: u32) -> u32;
     pub fn LoadLibraryW(name: *const u16) -> Handle;
+    pub fn FreeLibrary(module: Handle) -> i32;
+    pub fn RtlCaptureStackBackTrace(
+        skip: u32,
+        count: u32,
+        frames: *mut *mut c_void,
+        hash: *mut u32,
+    ) -> u16;
     pub fn GetProcAddress(module: Handle, name: *const u8) -> *mut c_void;
     pub fn VirtualAlloc(address: *mut c_void, size: usize, kind: u32, protect: u32) -> *mut c_void;
     pub fn VirtualFree(address: *mut c_void, size: usize, kind: u32) -> i32;
@@ -110,7 +131,12 @@ extern "system" {
     pub fn ResumeThread(thread: Handle) -> u32;
     pub fn CloseHandle(handle: Handle) -> i32;
     pub fn GetThreadContext(thread: Handle, context: *mut c_void) -> i32;
+    #[cfg(test)]
+    pub fn SetThreadContext(thread: Handle, context: *const c_void) -> i32;
+    #[cfg(test)]
+    pub fn TerminateThread(thread: Handle, code: u32) -> i32;
     pub fn OutputDebugStringW(message: *const u16);
+    pub fn GetLocalTime(time: *mut SystemTime);
     pub fn VirtualQuery(
         address: *const c_void,
         info: *mut MemoryBasicInformation,

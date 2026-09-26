@@ -100,7 +100,7 @@ garrison_members:
     sub rsp, 0x28
     lea rcx, [rbp - 0x10]
     mov rdx, rax
-    call selected_members
+    call entering_members
     add rsp, 0x28
     mov rdi, qword ptr [r13]          ; displaced instructions, including flags
     test rdi, rdi
@@ -148,13 +148,28 @@ no_occupant_view:
 ; rcx = borrowed command-local array, rdx = count; returns retained count.
 ; No marks means stock squad behavior. A subset keeps marked members in order.
 ; Never modify the original squad vector, allocate memory, or retain pointers.
+;
+; entering_members also pins each member it leaves behind that is a soldier
+; lying prone. The squad then stands up (fn_43d5a0: its prone flag, SquadAiFacet
+; +0x29e, cleared and every member stood); a prone pin makes
+; patch/posture-gate.asm skip that soldier, and the next whole-squad posture
+; order or move clears it as usual. A soldier's posture target is facets +0x58
+; -> +0x74 (3 prone); the pin is the selectable facet's +0x31 (3) with the
+; marker 0x7a5e at +0x32, as patch/pose.asm writes it.
+entering_members:
+    mov r8d, 1
+    jmp filter_members
 selected_members:
+    xor r8d, r8d
+filter_members:
     push rbx
     push rsi
     push rdi
     push r12
     push r13
-    sub rsp, 0x20
+    push r14
+    sub rsp, 0x28
+    mov r14d, r8d
     mov rsi, rcx
     mov r12, rdx
     xor ebx, ebx
@@ -182,17 +197,45 @@ pack_members:
     mov rcx, r13
     call member_selected
     test al, al
-    jz next_member
+    jz left_behind_member
     mov qword ptr [rsi + rdi*8], r13
     inc rdi
 next_member:
     inc rbx
     jmp pack_members
+left_behind_member:
+    test r14d, r14d
+    jz next_member
+    test r13, r13
+    jz next_member
+    mov rcx, r13
+    mov rax, qword ptr [rcx]
+    mov edx, 0x20
+    call qword ptr [rax + 0x98]       ; a soldier
+    test al, al
+    jz next_member
+    mov rcx, r13
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + 0xb0]
+    test rax, rax
+    jz next_member
+    mov rcx, qword ptr [rax + 0x58]   ; posture
+    test rcx, rcx
+    jz next_member
+    cmp dword ptr [rcx + 0x74], 3
+    jne next_member                   ; not lying prone
+    mov rcx, qword ptr [rax + 0x50]   ; selectable facet
+    test rcx, rcx
+    jz next_member
+    mov byte ptr [rcx + 0x31], 3
+    mov word ptr [rcx + 0x32], 0x7a5e
+    jmp next_member
 keep_members:
     mov rdi, r12
 packed_members:
     mov rax, rdi
-    add rsp, 0x20
+    add rsp, 0x28
+    pop r14
     pop r13
     pop r12
     pop rdi

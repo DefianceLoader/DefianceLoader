@@ -164,8 +164,9 @@ class SelectionTests(unittest.TestCase):
             "jmp r11"], 0, 0)
         cls.world_double = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p)(n.code(shim))
         cls.squad_of = C.CFUNCTYPE(C.c_void_p, C.c_void_p)(game_entry + labels["squad_of"])
+        # only building_select runs here; the marquee's cell is never read
         building_code, building_labels = b.assemble(
-            pathlib.Path("patch/region-individual.asm").read_text().splitlines(), 0, 0)
+            pathlib.Path("patch/region-individual.asm").read_text().splitlines(), 0, 0, 0x1000)
         building_set = n.code(building_code) + building_labels["building_select"]
         cls.building_vt = n.data(0x60, [(0x50, building_set),
             (0x58, n.code(img.read(0x1d7590, 0x12)))])

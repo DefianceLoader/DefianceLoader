@@ -34,3 +34,12 @@ dependencies = [
  "defiance-feature-sdk",
  "example-counter-contract",
 ]
+
+[[package]]
+name = "example-counter-watch"
+version = "0.1.0"
+dependencies = [
+ "defiance-api",
+ "defiance-feature-sdk",
+ "example-counter-contract",
+]

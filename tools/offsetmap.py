@@ -1,5 +1,8 @@
-"""Derive a build's object-layout offset changes from the one the patch was
-written for, by aligning the functions the two builds share.
+"""Derive a build's object-layout offset changes from its base, by aligning the
+functions the two builds share. The base is the build the patch was written
+for, or `--base NAME` (tools/builds.py), usually the new build's neighbour;
+tools/chainlayout.py composes a neighbour's changes with the neighbour's own
+layout.
 
 A game update moves functions but, where a class gained members, it also
 changes the small struct offsets and vtable slots instructions use. Those
@@ -17,15 +20,16 @@ The whole analysis is one pass over both modules and is cached, keyed by the
 two modules' hashes and this tool's version, because the same questions are
 asked repeatedly while a build is ported.
 
-    python tools/offsetmap.py logic bin/gog/logic-updated.dll
-    python tools/offsetmap.py game  bin/gog/game-updated.dll --occurrences 0x160 "call|rax|0x148"
-    python tools/offsetmap.py logic bin/gog/logic-updated.dll --json out/offsetmap-logic.json
+    python tools/offsetmap.py logic bin/gog/2026-09-14/logic.dll
+    python tools/offsetmap.py game  bin/gog/2026-09-14/game.dll --occurrences 0x160 "call|rax|0x148"
+    python tools/offsetmap.py logic bin/gog/2026-09-14/logic.dll --json out/offsetmap-logic.json
+    python tools/offsetmap.py game  bin/steam/2026-09-22/game.dll --base gog-2026-09-14
 """
 import bisect, collections, hashlib, json, pathlib, re, sys
 import capstone
 sys.path.insert(0, "tools")
 import sigs
-from builddiff import REFERENCE, functions, normalized, shape
+from builddiff import base_option, base_paths, functions, normalized, shape
 
 # Bump when the analysis changes shape, so a stale cache is not reused.
 VERSION = 3
@@ -64,10 +68,10 @@ def non_rip(ins):
             if op.type == capstone.x86.X86_OP_MEM and op.mem.base not in stack]
 
 
-def pairs_for(which, other_path):
-    """[(reference function start, other function start, [(old, new), ...]), ...]
+def pairs_for(which, other_path, base=None):
+    """[(base function start, other function start, [(old, new), ...]), ...]
     for every function the two builds share."""
-    ref, other = sigs.Module(REFERENCE[which][0]), sigs.Module(other_path)
+    ref, other = sigs.Module(base_paths(which, base)[0]), sigs.Module(other_path)
     rf, of = functions(ref), functions(other)
     where = collections.defaultdict(list)
     for s, e in of:
@@ -128,9 +132,10 @@ def _sha(path):
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 
 
-def analyze(which, other_path, refresh=False):
-    """The cached analysis of `other_path` against the reference build, or a
-    fresh one. Returns {version, ref_sha, tgt_sha, unambiguous:{key:new},
+def analyze(which, other_path, refresh=False, base=None):
+    """The cached analysis of `other_path` against the base build (the
+    reference unless `base` names another), or a fresh one. Keys name the
+    base's offsets. Returns {version, ref_sha, tgt_sha, unambiguous:{key:new},
     ambiguous:{key:{new:count}}, occurrences:{key:[[new, ref_fn, ref_ins,
     tgt_fn, tgt_ins], ...]}}.
 
@@ -140,13 +145,13 @@ def analyze(which, other_path, refresh=False):
     claims, because the two may be different classes' fields. `occurrences` is
     only the changed ones, with the function and instruction of each, so an
     ambiguous key can be resolved by inspecting the calls that moved."""
-    ref_sha, tgt_sha = _sha(REFERENCE[which][0]), _sha(other_path)
+    ref_sha, tgt_sha = _sha(base_paths(which, base)[0]), _sha(other_path)
     cache = CACHE / f"offsetmap-analysis-{which}-{ref_sha[:8]}-{tgt_sha[:8]}-v{VERSION}.json"
     if cache.exists() and not refresh:
         return json.loads(cache.read_text(encoding="utf-8"))
     table = collections.defaultdict(collections.Counter)
     occurrences = collections.defaultdict(list)
-    for s, t, pairs in pairs_for(which, other_path):
+    for s, t, pairs in pairs_for(which, other_path, base):
         for old, new in pairs:
             dx, dy = non_rip(old), non_rip(new)
             if len(dx) != len(dy):
@@ -177,10 +182,10 @@ def analyze(which, other_path, refresh=False):
     return data
 
 
-def collect(which, other_path, refresh=False):
+def collect(which, other_path, refresh=False, base=None):
     """{key: Counter(new disp)} over every aligned pair, for callers that want
     the raw counts. Named keys are as `analyze`."""
-    data = analyze(which, other_path, refresh)
+    data = analyze(which, other_path, refresh, base)
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
     table = collections.defaultdict(collections.Counter)
     for name, value in data["unambiguous"].items():
@@ -192,18 +197,19 @@ def collect(which, other_path, refresh=False):
 
 
 def main():
-    which, other = sys.argv[1], sys.argv[2]
-    data = analyze(which, other, refresh="--refresh" in sys.argv)
-    if "--json" in sys.argv:
-        path = sys.argv[sys.argv.index("--json") + 1]
+    argv, base = base_option(sys.argv)
+    which, other = argv[1], argv[2]
+    data = analyze(which, other, refresh="--refresh" in argv, base=base)
+    if "--json" in argv:
+        path = argv[argv.index("--json") + 1]
         pathlib.Path(path).write_text(json.dumps({k: data[k] for k in ("unambiguous", "ambiguous")},
                                                  indent=2, sort_keys=True) + "\n", encoding="utf-8")
         print(f"wrote {path}")
         return
-    if "--occurrences" in sys.argv:
+    if "--occurrences" in argv:
         # a full key (`call|rax|0x148`), or a bare displacement for every key
         # that carries it
-        wanted = sys.argv[sys.argv.index("--occurrences") + 1:]
+        wanted = argv[argv.index("--occurrences") + 1:]
         for key in wanted:
             names = [key] if "|" in key else sorted(
                 name for name in data["occurrences"] if name.rsplit("|", 1)[1] == f"{int(key, 16):#x}")

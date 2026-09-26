@@ -1,9 +1,13 @@
-# Two DLLs sharing a service
+# DLLs sharing a service
 
 This game-independent author example demonstrates one provider-owned global
 counter, exposed through a versioned function table. `example.counter-user`
 queries `example.counter`, increments twice, and verifies that both calls and
 the getter reach the same state. No game hooks or raw game pointers are involved.
+It also offers a `total` service passing on to the counter, which the third
+plugin, `example.counter-watch`, holds and passes on in its own `watch`: a
+chain of cached tables, which the tests use to check that a hot reload keeps
+alive every old copy a startup-only holder still reaches.
 
 From the repository root:
 

@@ -1,4 +1,5 @@
 {
+  "base": "gog-2025-12-23",
   "game_layout": {
     "call|r8|0x290": 672,
     "call|r8|0x660": 1640,
@@ -289,6 +290,7 @@
   "logic_sites": {
     "lie_down_gate": 2876064,
     "move_posture_2": 892345,
+    "squad_stand_1": 4524597,
     "stand_up_gate": 2876160
   },
   "logic_symbols": {

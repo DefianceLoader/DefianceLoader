@@ -1,6 +1,6 @@
 [package]
 name = "defiance-plugin-core"
-version = "0.2.0"
+version = "0.3.0"
 license = "MPL-2.0"
 edition = "2021"
 
@@ -14,6 +14,12 @@ defiance-feature-sdk = { path = "../../crates/feature-sdk" }
 
 [features]
 parity-test = []
+# Diagnostic, never shipped: alternate and time the two grass sorts.
+grass-compare = []
+# Diagnostic, never shipped: F11 switches the shadow cascade rotation.
+shadow-toggle = []
+# Diagnostic, never shipped: every squad's info panel shows its full details.
+inspect-probe = []
 
 [build-dependencies]
 defiance-build-support = { path = "../../crates/build-support" }

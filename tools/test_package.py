@@ -11,7 +11,9 @@ import zipfile
 
 import package
 import package_squad_scroll
+import package_unit_inspection
 from test_package_squad_scroll import AMMO_INFO, fixture as panel_fixture
+from test_package_unit_inspection import reload_bar
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -46,10 +48,12 @@ class PackageTests(unittest.TestCase):
         self.expanded.write_bytes(b"current expanded ammo")
         self.scroll = self.root / package.SQUAD_SCROLL_DLL
         self.scroll.write_bytes(b"current squad scroll")
+        self.inspection = self.root / package.UNIT_INSPECTION_DLL
+        self.inspection.write_bytes(b"current unit inspection")
         self.helper = self.source / "defiance-crash-helper.exe"
         self.helper.write_bytes(b"defiance-loader crash helper")
         for binary in [self.proxy, self.helper, self.source / "defiance_plugin_feature_selection.dll",
-                       self.regroup, self.expanded, self.scroll]:
+                       self.regroup, self.expanded, self.scroll, self.inspection]:
             binary.with_name(binary.stem.replace("-", "_") + ".pdb").write_bytes(b"fixture symbols")
         self.out = self.root / "defiance-loader.zip"
 
@@ -60,7 +64,8 @@ class PackageTests(unittest.TestCase):
                    "--source", str(self.source), "--out", str(self.out),
                    "--regroup-dll", str(self.regroup),
                    "--expanded-ammo-dll", str(self.expanded),
-                   "--squad-scroll-dll", str(self.scroll)]
+                   "--squad-scroll-dll", str(self.scroll),
+                   "--unit-inspection-dll", str(self.inspection)]
         if game is not None:
             command += ["--game", str(game)]
         return subprocess.run(command, capture_output=True, text=True, env=environment)
@@ -101,6 +106,7 @@ class PackageTests(unittest.TestCase):
             archive.writestr(package_squad_scroll.RESOURCE, panel_fixture())
             archive.writestr(package_squad_scroll.VEHICLE_RESOURCE, panel_fixture(vehicle=True))
             archive.writestr(package_squad_scroll.AMMO_RESOURCE, AMMO_INFO)
+            archive.writestr(package_unit_inspection.RESOURCE, reload_bar())
         result = self.build(game=game)
         self.assertEqual(result.returncode, 0, result.stderr)
         with zipfile.ZipFile(self.out) as archive:
@@ -110,6 +116,7 @@ class PackageTests(unittest.TestCase):
             self.assertIn("mods/defiance_squad_scroll/basis/" + package_squad_scroll.RESOURCE, names)
             self.assertIn("mods/defiance_squad_scroll/basis/" + package_squad_scroll.VEHICLE_RESOURCE, names)
             self.assertTrue(any(name.startswith("mods/defiance_squad_scroll/basis/textures/") for name in names))
+            self.assertIn("mods/defiance_unit_inspection/basis/" + package_unit_inspection.RESOURCE, names)
 
     def test_without_a_game_dir_packages_without_the_companion_mod(self):
         result = self.build()

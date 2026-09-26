@@ -12,12 +12,13 @@
      becomes a jmp to its replacement, and the pose sites call the pose split.
 """
 import hashlib, json, os, pathlib, re, struct, sys
+import builds
 import keystone
 import pefile
 sys.path.insert(0, "tools")
 from pe import Image
 
-SRC = "bin/logic.orig.dll"
+SRC = str(builds.reference().logic)
 DST = "out/logic.dll"
 MANIFEST = "out/manifest.json"
 
@@ -144,6 +145,11 @@ POSTURE_HOOKS = [
 MOVE_POSTURE_READ = bytes.fromhex("0fb6a99e020000")
 MOVE_POSTURE_SITES = [0xcffc6, 0xd0626]
 MOVE_POSTURE_PUSHES = ["rax", "rcx", "rdx", "r8", "r9", "r10", "r11"]
+# The squad's stand-up loop (fn_43d5a0) asks each member's posture whether to
+# stand him, cmp qword [rbx+0x28], 0; the compare becomes a call to
+# squad_stand_gate, which skips a soldier pinned prone.
+SQUAD_STAND_READ = bytes.fromhex("48837b2800")
+SQUAD_STAND_SITES = [0x43d639]
 # "Is it prone?" (AiUtilsImpl vt+0x2c0, fn_110bb0), which the squad panel asks
 # to choose between lie down and stand up, answered for the picked soldiers.
 PRONE_OFFSET = 0xd00                  # inside the block, after the pose split
@@ -717,6 +723,14 @@ def main():
         data[off:off + len(MOVE_POSTURE_READ)] = (b"\xe8" + struct.pack(
             "<i", posture_labels["move_posture"] - (site + 5))).ljust(len(MOVE_POSTURE_READ), b"\x90")
 
+    # and the squad's stand-up loop asks squad_stand_gate
+    for site in SQUAD_STAND_SITES:
+        off = img.rva_to_file(site)
+        if bytes(data[off:off + len(SQUAD_STAND_READ)]) != SQUAD_STAND_READ:
+            raise SystemExit(f"{site:#x} is not the expected compare in the squad's stand-up")
+        data[off:off + len(SQUAD_STAND_READ)] = b"\xe8" + struct.pack(
+            "<i", posture_labels["squad_stand_gate"] - (site + 5))
+
     # firing mode: jmps over the getters and setter, a call over the direct read
     jmp, call, nop = bytes.fromhex("e9"), bytes.fromhex("e8"), bytes.fromhex("90")
     for rva, displaced, label in FIRING_HOOKS:
@@ -788,6 +802,9 @@ def main():
                  unwind_info([], 0x28)),
                 (posture_labels["move_posture"],
                  posture_labels["move_posture_end"] - posture_labels["move_posture"],
+                 unwind_info(MOVE_POSTURE_PUSHES, 0x20)),
+                (posture_labels["squad_stand_gate"],
+                 posture_labels["squad_stand_end"] - posture_labels["squad_stand_gate"],
                  unwind_info(MOVE_POSTURE_PUSHES, 0x20)),
                 # the query's body, and its callable copy of the stock prologue
                 (prone_rva, prone_labels["stock_prone"] - prone_rva,

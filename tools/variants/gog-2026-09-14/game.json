@@ -488,6 +488,20 @@
       "site_group": 1787664,
       "site_pattern": "48895c241848895424105556574154415541564157488d6c24d94881ec00010000",
       "site_offset": 0
+    },
+    {
+      "site_name": "tactical_state_ctor",
+      "site_start": 3447216,
+      "site_group": 3447216,
+      "site_pattern": "48895c2410488974241848897c242048894c24085541564157488bec4881ec80000000",
+      "site_offset": 0
+    },
+    {
+      "site_name": "tactical_state_dtor",
+      "site_start": 3448192,
+      "site_group": 3448192,
+      "site_pattern": "48895c240848896c24104889742418574883ec20488bf9488d05????????488901",
+      "site_offset": 0
     }
   ],
   "verified_sha": ""

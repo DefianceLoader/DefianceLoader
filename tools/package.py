@@ -6,8 +6,9 @@ The package is a zip with
     DefianceLoader/plugins/      the plugin DLLs and their manifests — the
                                  built-ins, plus the standalone regroup,
                                  expanded-ammo-menu and squad-management-scroll
-    mods/defiance_squad_scroll/  the scrolling companion UI mod, when the game
-                                 directory is available to derive it
+    mods/defiance_squad_scroll/  the scrolling companion UI mod, and
+    mods/defiance_unit_inspection/  the unit-inspection reload bar mod, when
+                                 the game directory is available to derive them
 
 The ZIP also includes README.md: the player guide (INSTALL.md), the only
 document shipped; the developer and plugin docs stay in the repository. Regroup
@@ -25,9 +26,10 @@ launch; the archive contains no INI files.
 
 Without a game directory the squad-management-scroll plugin is still packaged,
 but without its companion UI mod; the plugin then logs a warning and leaves the
-stock panel in place until the mod is added.
+stock panel in place until the mod is added. Unit inspection likewise leaves
+the reload bars uncoloured without its mod.
 
-The companion UI mod alone (data files derived from the installed game's UI;
+The companion UI mods alone (data files derived from the installed game's UI;
 no code), for releases whose loader package is built without the game:
 
     python tools/package.py --companion-only --game "C:\\Games\\...\\Defiance"
@@ -42,13 +44,13 @@ import zipfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import stage  # noqa: E402  (the proxy name and plugin globs live there)
-import package_squad_scroll  # noqa: E402  (the companion UI overlay builder)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_SOURCE = ROOT / "target" / "release"
 REGROUP_DLL = "defiance_plugin_regroup.dll"
 EXPANDED_AMMO_DLL = "defiance_plugin_expanded_ammo_menu.dll"
 SQUAD_SCROLL_DLL = "defiance_plugin_squad_management_scroll.dll"
+UNIT_INSPECTION_DLL = "defiance_plugin_unit_inspection.dll"
 EXCLUDED = {"defiance_plugin_pickup.dll", "defiance_plugin_example.dll", REGROUP_DLL}
 
 
@@ -64,6 +66,17 @@ def game_root(path):
     return None
 
 
+def companion_mods(game):
+    """Every companion mod's entries, merged; ValueError names the failing mod."""
+    entries = {}
+    for directory, _, build in stage.COMPANION_MODS:
+        try:
+            entries.update(build(game)[0])
+        except ValueError as error:
+            raise ValueError(f"{directory}: {error}") from error
+    return entries
+
+
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--source", default=str(DEFAULT_SOURCE))
@@ -74,10 +87,12 @@ def main(argv):
                         default=ROOT / "plugins/expanded-ammo-menu/target/release" / EXPANDED_AMMO_DLL)
     parser.add_argument("--squad-scroll-dll", type=pathlib.Path,
                         default=ROOT / "plugins/squad-management-scroll/target/release" / SQUAD_SCROLL_DLL)
+    parser.add_argument("--unit-inspection-dll", type=pathlib.Path,
+                        default=ROOT / "plugins/unit-inspection/target/release" / UNIT_INSPECTION_DLL)
     parser.add_argument("--game", default=os.environ.get("DEFIANCE_GAME_DIR"),
-                        help="game directory (or its bin) for the squad-scroll companion UI mod")
+                        help="game directory (or its bin) for the companion UI mods")
     parser.add_argument("--companion-only", action="store_true",
-                        help="package only the companion UI mod (needs --game); "
+                        help="package only the companion UI mods (needs --game); "
                              "default --out out/defiance-squad-scroll-ui.zip")
     args = parser.parse_args(argv)
 
@@ -87,16 +102,16 @@ def main(argv):
             parser.error("--companion-only needs --game (or DEFIANCE_GAME_DIR): the mod is "
                          "derived from the installed game's UI files")
         try:
-            mod = package_squad_scroll.mod_entries(game)[0]
+            mod = companion_mods(game)
         except ValueError as error:
-            parser.error(f"could not build the squad-scroll companion mod: {error}")
+            parser.error(f"could not build the companion UI mods: {error}")
         out = pathlib.Path(args.out if "--out" in (argv or []) else
                            ROOT / "out" / "defiance-squad-scroll-ui.zip")
         out.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as package:
             for name, data in mod.items():
                 package.writestr(name, data)
-        print(f"packaged the companion UI mod ({len(mod)} files) into {out}")
+        print(f"packaged the companion UI mods ({len(mod)} files) into {out}")
         return 0
 
     source = pathlib.Path(args.source)
@@ -117,6 +132,8 @@ def main(argv):
          ROOT / "plugins/expanded-ammo-menu/defiance_plugin_expanded_ammo_menu.plugin.json", "true"),
         (pathlib.Path(args.squad_scroll_dll),
          ROOT / "plugins/squad-management-scroll/defiance_plugin_squad_management_scroll.plugin.json", None),
+        (pathlib.Path(args.unit_inspection_dll),
+         ROOT / "plugins/unit-inspection/defiance_plugin_unit_inspection.plugin.json", "true"),
     ]
     pairs = [(plugin, plugin.with_suffix(".plugin.json")) for plugin in plugins]
     for dll, manifest, expected in standalone:
@@ -139,9 +156,9 @@ def main(argv):
         parser.error(f"{args.game} has no basis.pak; pass the game directory or its bin")
     if game is not None:
         try:
-            mod = package_squad_scroll.mod_entries(game)[0]
+            mod = companion_mods(game)
         except ValueError as error:
-            parser.error(f"could not build the squad-scroll companion mod: {error}")
+            parser.error(f"could not build the companion UI mods: {error}")
 
     for required in [*binaries, *symbols, ROOT / "INSTALL.md",
                      *(path for pair in pairs for path in pair)]:
@@ -167,7 +184,7 @@ def main(argv):
         archive.writestr("builds.json", json.dumps(manifest, indent=2) + "\n")
         for symbol in symbols:
             archive.write(symbol, symbol.name)
-    companion = f", companion UI mod ({len(mod)} files)" if mod else " (no companion UI mod)"
+    companion = f", companion UI mods ({len(mod)} files)" if mod else " (no companion UI mods)"
     print(f"packaged {len(pairs)} plugin(s){companion} into {out}")
     print(f"matching release symbols: {symbols_out}")
     return 0

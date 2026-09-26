@@ -71,7 +71,7 @@ if ($current -ne $built.source_sha256 -and -not $Force) {
     Write-Host 'The game has most likely been updated. Installing anyway would put code'
     Write-Host 'built for the old layout into the new binary, which will crash. To rebuild:'
     Write-Host ''
-    Write-Host '  1. copy the new bin\logic.dll over bin\logic.orig.dll in this workspace'
+    Write-Host '  1. copy the new bin\logic.dll over bin\gog\2025-12-23\logic.dll in this workspace'
     Write-Host '  2. re-derive the addresses and offsets listed in notes\pickup.md'
     Write-Host '  3. update EXPECT_SOURCE_SHA in tools\build.py, then rebuild and retest'
     Write-Host ''

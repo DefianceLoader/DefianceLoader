@@ -11,6 +11,7 @@ enabled dword at +0x3c. A soldier AI's vt+0x3b8 answers zero, a squad's the
 member roster, which is what tells the two apart.
 """
 import ctypes, pathlib, struct, sys
+import builds
 from ctypes import wintypes
 import keystone
 sys.path.insert(0, "tools")
@@ -479,7 +480,7 @@ def wire_guns(men, guns, weapon_sets):
 print("\n== original ammunition-menu draw and click consumers\n")
 # Execute the original click handler, fillSlot's flag/icon branch, and the
 # actual hook site. Only rendering and entity lookup are replaced by sinks.
-game = Image("bin/game.orig.dll")
+game = Image(str(builds.reference().game))
 game_region = scratch(0x600000)
 from icon import TRACE_OFFSET
 ui_code, ui_labels = b.assemble(pathlib.Path("patch/icon-squad.asm").read_text().splitlines(), 0, TRACE_OFFSET,

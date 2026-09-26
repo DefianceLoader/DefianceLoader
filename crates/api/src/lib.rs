@@ -112,6 +112,23 @@ pub struct MultiplayerV1 {
     pub guard_installed: unsafe extern "C" fn(),
 }
 
+/// `defiance.loader` / `session`, service version 1. For Core: whether a
+/// mission is loaded, which the loader's hot reload waits on. Any thread.
+#[repr(C)]
+pub struct SessionV1 {
+    /// Core tracks missions from now on.
+    pub tracking: unsafe extern "C" fn(),
+    /// A mission state's constructor has returned (`delta` 1) or its
+    /// destructor has returned (-1). Called after the original, so the whole
+    /// construction and destruction count as a mission.
+    pub mission: unsafe extern "C" fn(delta: i32),
+    /// A mission's state is about to be constructed (a mission starting or a
+    /// save loading): from now until `mission(1)` it counts as being built,
+    /// and the loader applies pending reloads now, on the calling thread,
+    /// waiting for a reload already in progress.
+    pub before_mission: unsafe extern "C" fn(),
+}
+
 /// `defiance.selection` / `selection`, service version 1. Read-only, game-thread
 /// only. A non-null argument must be a live selectable facet of this game build.
 /// Null returns zero; pointers are never retained. No Rust-owned values cross ABI.

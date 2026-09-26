@@ -480,6 +480,38 @@ pub fn current() -> Option<&'static Snapshot> {
     SNAPSHOT.get()
 }
 
+/// The configuration as the files are now, for plugins added after startup
+/// (hot reload): their settings were not declared then. Set by [`refresh_later`].
+static LATER: std::sync::Mutex<Option<&'static Snapshot>> = std::sync::Mutex::new(None);
+
+/// Read the configuration again, as startup does (missing sections and keys
+/// written with their defaults, so an added plugin's settings appear in its
+/// group file), and keep it for [`get`]. Only a setting the startup snapshot
+/// does not have is answered from it: a plugin present at startup keeps its
+/// startup values, as settings are startup-only.
+pub fn refresh_later() -> &'static Snapshot {
+    let Discovered {
+        paths,
+        bootstrap,
+        inputs,
+        extras,
+        failures,
+        catalog,
+    } = discover(&game_dir());
+    let snapshot: &'static Snapshot = Box::leak(Box::new(build_snapshot(
+        paths, &inputs, &bootstrap, &extras, &failures, catalog,
+    )));
+    for problem in &snapshot.problems {
+        crate::log::warn(&format!("{}: {}", problem.owner, problem.message));
+    }
+    *LATER.lock().unwrap_or_else(|p| p.into_inner()) = Some(snapshot);
+    snapshot
+}
+
+fn later() -> Option<&'static Snapshot> {
+    *LATER.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 /// The compatibility adapter: a value from the configuration by `(section,
 /// key)`, both case-insensitive. Declared settings return their validated
 /// canonical string; a section that is not declared falls back to the legacy
@@ -495,7 +527,13 @@ pub fn get(section: &str, key: &str) -> Option<String> {
     if let Some(resolved) = snapshot.get(section, key) {
         return Some(resolved.canonical());
     }
-    snapshot.legacy(section, key).map(str::to_string)
+    if let Some(value) = snapshot.legacy(section, key) {
+        return Some(value.to_string());
+    }
+    // A plugin added after startup: its settings come from the later read.
+    later()
+        .and_then(|later| later.get(section, key))
+        .map(|resolved| resolved.canonical())
 }
 
 #[cfg(test)]

@@ -68,7 +68,7 @@ The menu remains a standalone workspace; mise run loader builds matching Core,
 regroup and manifests for the package. Output: `out/expanded-ammo-regroup.zip` and a separate symbols ZIP.
 
 To re-audit the sites and run the native game-code tests, provide the repository's
-local `bin/game.orig.dll` and `bin/steam/game.dll` and the Python dependencies
+local `bin/gog/2025-12-23/game.dll` and `bin/steam/2025-12-23/game.dll` and the Python dependencies
 from `mise run setup`, then run:
 
 ```powershell
@@ -163,7 +163,7 @@ player or manager falls back to the ordinary focused display.
 Regression coverage executes the supported game's constructor service-field
 initialization and LogicHybridServer's native player getter. It detects calling
 the world utility as a player context and rejects the previous DLL. The tests
-require bin/logic.orig.dll and bin/steam/logic.dll as well as the game DLLs.
+require bin/gog/2025-12-23/logic.dll and bin/steam/2025-12-23/logic.dll as well as the game DLLs.
 Tests also cover missing context/world/player during render and between render
 and click. Game-code fixtures still do not replace a live mission test.
 

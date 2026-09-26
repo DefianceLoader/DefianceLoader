@@ -8,7 +8,9 @@ import zipfile
 
 import package_squad_scroll
 import stage
+import package_unit_inspection
 from test_package_squad_scroll import AMMO_INFO, fixture as panel_fixture
+from test_package_unit_inspection import reload_bar
 
 
 class StagingTests(unittest.TestCase):
@@ -149,13 +151,17 @@ class StagingTests(unittest.TestCase):
             archive.writestr(package_squad_scroll.RESOURCE, panel_fixture())
             archive.writestr(package_squad_scroll.VEHICLE_RESOURCE, panel_fixture(vehicle=True))
             archive.writestr(package_squad_scroll.AMMO_RESOURCE, AMMO_INFO)
+            archive.writestr(package_unit_inspection.RESOURCE, reload_bar())
         install = stage.Staging(self.game, self.source, False, False)
         mod = self.root / "Game" / "mods" / stage.MOD_DIR
+        colours = self.root / "Game" / "mods" / package_unit_inspection.MOD_DIR
         install.install()
         self.assertTrue((mod / "mod.json").is_file())
         self.assertTrue((mod / "basis" / package_squad_scroll.RESOURCE).is_file())
+        self.assertTrue((colours / "basis" / package_unit_inspection.RESOURCE).is_file())
         install.uninstall()
         self.assertFalse(mod.exists())
+        self.assertFalse(colours.exists())
 
     def test_staging_accepts_the_game_root_or_its_bin(self):
         # Given the root, staging must operate in bin; otherwise `../DefianceLoader`
@@ -164,6 +170,7 @@ class StagingTests(unittest.TestCase):
             archive.writestr(package_squad_scroll.RESOURCE, panel_fixture())
             archive.writestr(package_squad_scroll.VEHICLE_RESOURCE, panel_fixture(vehicle=True))
             archive.writestr(package_squad_scroll.AMMO_RESOURCE, AMMO_INFO)
+            archive.writestr(package_unit_inspection.RESOURCE, reload_bar())
         self.assertEqual(stage.bin_directory(self.root / "Game"), self.game)
         self.assertEqual(stage.bin_directory(self.game), self.game)
         self.assertEqual(stage.bin_directory(self.root / "Elsewhere"), self.root / "Elsewhere")

@@ -2,6 +2,7 @@
 No installed game files are written. Each build/capacity gets a fresh process.
 """
 import ctypes as C
+import builds
 import hashlib, json, pathlib, struct, subprocess, sys
 from ctypes import wintypes as W
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
@@ -39,8 +40,10 @@ def resolve(module,source,at):
     assert len(matches)==1,(hex(at),matches)
     return matches[0]+at-start
 
-PATHS={0:'bin/game.orig.dll',1:'bin/steam/game.dll',2:'bin/gog/game-updated.dll',3:'bin/steam/game-updated.dll'}
-LOGIC={0:'bin/logic.orig.dll',1:'bin/steam/logic.dll',2:'bin/gog/logic-updated.dll',3:'bin/steam/logic-updated.dll'}
+# The builds by the index of the generated tables.
+BUILDS=("gog-2025-12-23", "steam-2025-12-23", "gog-2026-09-14", "steam-2026-09-22")
+PATHS={i:builds.build(n).game for i,n in enumerate(BUILDS)}
+LOGIC={i:builds.build(n).logic for i,n in enumerate(BUILDS)}
 # The AmmunitionMenu constructor slice (reference game.dll+0x3df21..0x3df62),
 # no relative operands, so the same bytes locate it in any build.
 CONSTRUCTOR=("488b9620010000488b820801000048898618010000488b8a18010000"
@@ -56,7 +59,7 @@ CONSTRUCTOR_SHIFTED=("488b9620010000488b822801000048898618010000488b8a38010000"
 
 def case(build_index,columns,combined=False):
     path=ROOT/PATHS[build_index]
-    module=Module(path); source=Module(ROOT/"bin/game.orig.dll")
+    module=Module(path); source=Module(builds.reference().game)
     LOFF=offsets_for(hashlib.sha256(path.read_bytes()).hexdigest())
     base=K.LoadLibraryExW(str(path),None,1) # DONT_RESOLVE_DLL_REFERENCES
     assert base,C.get_last_error()

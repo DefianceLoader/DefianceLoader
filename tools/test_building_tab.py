@@ -6,6 +6,7 @@ soldier setters/getters and ammunition UI query execute as x64 machine code.
 No running game is required.
 """
 import ctypes as c
+import builds
 import pathlib
 import struct
 import sys
@@ -155,7 +156,7 @@ def occupants(items, e=building):
     setq(active, 0x1b0, q(v, 8))
 
 
-logic = Image('bin/logic.orig.dll')
+logic = Image(str(builds.reference().logic))
 manager, manager_vt = alloc(0x58), alloc(0xa0)
 setq(manager, 0, manager_vt)
 setq(manager_vt, 0x98, blob(logic.read(0x4194f0, 0x51)))
@@ -214,7 +215,7 @@ setq(vtable, 0x540, c.cast(collect, c.c_void_p).value)
 setq(vtable, 0x548, blob(asm('xor eax,eax; ret')))
 setq(vtable, 0x700, blob(asm(f'mov r10,{lookup_calls}; inc qword ptr [r10]; mov r10,{player}; cmp rdx,r10; jne bad; mov rax,{manager}; ret; bad: mov r10,{lookup_bad_args}; inc qword ptr [r10]; xor eax,eax; ret')))
 game = alloc(0x500000)
-image = Image('bin/game.orig.dll')
+image = Image(str(builds.reference().game))
 for start, end in ((0x34c240, 0x34c3dd), (0x31bf60, 0x31c04b)):
     put(game + start, image.read(start, end-start))
 source = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else 'patch/building-control.asm')

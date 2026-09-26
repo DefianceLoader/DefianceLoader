@@ -23,7 +23,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-loader"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "defiance-api",
  "defiance-build-support",
@@ -58,7 +58,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-plugin-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "defiance-api",
  "defiance-build-support",
@@ -94,7 +94,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-plugin-garrison"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "defiance-api",
  "defiance-build-support",
@@ -130,7 +130,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-plugin-posture"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "defiance-api",
  "defiance-build-support",
@@ -148,7 +148,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-plugin-selection"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "defiance-api",
  "defiance-build-support",

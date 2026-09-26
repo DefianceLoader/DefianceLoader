@@ -128,6 +128,13 @@ pub unsafe fn multiplayer() -> Option<&'static defiance_api::MultiplayerV1> {
     unsafe { query(defiance_api::LOADER_PROVIDER, c"multiplayer", 1) }
 }
 
+/// Resolve the loader's session-v1 table, for Core's mission reports.
+/// # Safety
+/// Same lifecycle requirements as query; the calls may be made from any thread.
+pub unsafe fn session() -> Option<&'static defiance_api::SessionV1> {
+    unsafe { query(defiance_api::LOADER_PROVIDER, c"session", 1) }
+}
+
 /// Resolve Core's game-thread access table. Declare a direct defiance.core dependency.
 /// # Safety
 /// Calls through this table require live objects on their owning game thread.

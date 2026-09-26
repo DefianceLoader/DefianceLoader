@@ -1,8 +1,14 @@
 """Audit every inline AmmunitionMenu capacity/layout operand on supported builds.
 Reads local game DLLs; never modifies them. Generated Rust contains only patch
 instructions, not extracted functions/assets. Capacity is a startup-only setting.
+Every supported build (tools/builds.py) is located through its base: each
+operand's signature is taken where it is in the base, the neighbour that
+differs least.
+
+    python tools/ammo_menu_sites.py
 """
 import hashlib, json, pathlib, sys
+import builds
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from pe import Image
 from sigs import Module
@@ -65,64 +71,67 @@ def catalog(image):
     assert COUNT | SIZE | LAYOUT <= {s["rva"] for s in result}
     return sorted(result, key=lambda s:s["rva"])
 
+# The plugin's other anchors, as reference rvas with the bytes each checks.
+NAMED = [("redraw", 0x3ed10, 20), ("layout", 0x2d1920, 16)]
+COMBINED = [(0x3f8a0,15),(0x3f1d0,16),(0x3f800,15),(0x3b540,15),(0x3b9f0,15),(0x3bba0,15),(0x2cb730,16),(0x2c3380,16)]
+
+
+def locate(base, at, module):
+    """Where the point at `at` in `base` is in `module`: its signature there,
+    or, when compiler differences after it make that one ambiguous, a unique
+    window growing to its left."""
+    start, pattern, mask = base.signature(at, [])
+    matches = module.matches(pattern, mask)
+    if len(matches) != 1:
+        lo, hi = base.bounds(at)
+        insns = list(base.md.disasm(base.image[lo:hi],lo))
+        ix = next(i for i,ins in enumerate(insns) if ins.address == at)
+        for left in range(1,min(ix,16)+1):
+            selected = insns[ix-left:ix+1]
+            parts = [base.masked(ins) for ins in selected]
+            pattern = b"".join(p for p,m in parts)
+            mask = b"".join(m for p,m in parts)
+            start = selected[0].address
+            matches = module.matches(pattern,mask)
+            if len(matches)==1 and base.matches(pattern,mask)==[start]:
+                break
+        else:
+            raise AssertionError((at, matches))
+    return matches[0] + at - start
+
+
 def main():
-    source = ROOT/"bin/game.orig.dll"
+    source = builds.reference().game
     image = Image(source)
     assert hashlib.sha256(source.read_bytes()).hexdigest() == "f0184b9fe358172c83261419c8ba3d822a0aa6b06ed3cddb2f7aa3ebb9653db4"
     sites = catalog(image)
-    original = Module(source)
-    # Extra target DLLs name more builds to emit beside the reference and Steam,
-    # each located by the reference's signatures.
-    targets = [pathlib.Path(p) for p in sys.argv[1:]] or [source, ROOT/"bin/steam/game.dll"]
-    if source not in targets:
-        targets.insert(0, source)
-    builds = []
-    for path in targets:
+    points = [s["rva"] for s in sites] + [at for _, at, _ in NAMED] + [at for at, _ in COMBINED]
+    located = {}  # build name -> (module, {reference rva: rva})
+    entries = []
+    for build in sorted(builds.supported(), key=lambda b: len(b.lineage())):
+        path = build.require().game
         module = Module(path)
+        if build.base is None:
+            where = {at: at for at in points}
+        else:
+            base, base_where = located[build.base.name]
+            where = {at: locate(base, base_where[at], module) for at in points}
+        located[build.name] = module, where
         resolved = []
         for site in sites:
-            start, pattern, mask = original.signature(site["rva"], [])
-            matches = module.matches(pattern, mask)
-            if len(matches) != 1:
-                # Compiler differences after a site can invalidate the default
-                # forward-growing signature; seek a unique window to its left.
-                lo, hi = original.bounds(site["rva"])
-                insns = list(original.md.disasm(original.image[lo:hi],lo))
-                ix = next(i for i,ins in enumerate(insns) if ins.address == site["rva"])
-                found = False
-                for left in range(1,min(ix,16)+1):
-                    selected = insns[ix-left:ix+1]
-                    parts = [original.masked(ins) for ins in selected]
-                    pattern = b"".join(p for p,m in parts)
-                    mask = b"".join(m for p,m in parts)
-                    start = selected[0].address
-                    matches = module.matches(pattern,mask)
-                    if len(matches)==1 and original.matches(pattern,mask)==[start]:
-                        found=True
-                        break
-                assert found, (path,site,matches)
-            rva = matches[0] + site["rva"] - start
+            rva = where[site["rva"]]
             before = bytes.fromhex(site["before"])
             assert module.image[rva:rva+len(before)] == before, (path,site)
             resolved.append(dict(site,rva=rva))
         extra = {}
-        for name, at, length in [("redraw", 0x3ed10, 20), ("layout", 0x2d1920, 16)]:
-            start, pattern, mask = original.signature(at, [])
-            hits = module.matches(pattern, mask)
-            assert len(hits) == 1
-            rva = hits[0] + at - start
+        for name, at, length in NAMED:
+            rva = where[at]
             extra[name] = rva
             extra[name + "_before"] = module.image[rva:rva + length].hex()
-        extra["combined"] = []
-        for at, length in [(0x3f8a0,15),(0x3f1d0,16),(0x3f800,15),(0x3b540,15),(0x3b9f0,15),(0x3bba0,15),(0x2cb730,16),(0x2c3380,16)]:
-            start, pattern, mask = original.signature(at, [])
-            hits = module.matches(pattern, mask)
-            assert len(hits) == 1
-            rva = hits[0] + at - start
-            extra["combined"].append((rva,module.image[rva:rva+length].hex()))
-        builds.append(dict(sha=hashlib.sha256(path.read_bytes()).hexdigest(),sites=resolved,**extra))
+        extra["combined"] = [(where[at], module.image[where[at]:where[at]+length].hex()) for at, length in COMBINED]
+        entries.append(dict(sha=hashlib.sha256(path.read_bytes()).hexdigest(),sites=resolved,**extra))
     lines = ["// Generated by tools/ammo_menu_sites.py; do not hand-edit.\nuse super::{Build, Site, Kind, Offsets};\npub static BUILDS: &[Build] = &[\n"]
-    for build in builds:
+    for build in entries:
         lines.append('Build { sha: "'+build["sha"]+'", sites: &[\n')
         for s in build["sites"]:
             bytes_ = ",".join("0x"+s["before"][i:i+2] for i in range(0,len(s["before"]),2))
@@ -136,7 +145,7 @@ def main():
     lines.append("];\n")
     (ROOT/"plugins/expanded-ammo-menu/src/sites.rs").write_text("".join(lines))
     rustfmt(ROOT/"plugins/expanded-ammo-menu/src/sites.rs")
-    (ROOT/"out/ammo-menu-sites.json").write_text(json.dumps(builds,indent=2))
+    (ROOT/"out/ammo-menu-sites.json").write_text(json.dumps(entries,indent=2))
     print(f"Verified {len(sites)} operands per build, GOG and Steam; fixed storage, trailing fields, constructor, destructor, EH cleanup, redraw, hit testing and three-row layout")
 
 if __name__ == "__main__":

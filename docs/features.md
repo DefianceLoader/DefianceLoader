@@ -6,6 +6,13 @@ Switch one off with `enabled = false` under its ID and restart the game; the log
 names each plugin's state and why it is inactive. Features that build on
 another (for example movement on selection) switch off with it.
 
+To switch features without restarting, set `live_toggle = true` under
+`[loader]` in `core.ini` and restart once. From then on, saving a changed
+`enabled` takes effect at the main menu, or as the next mission starts or save
+loads. Core, the expanded ammo menu, squad scrolling and unit inspection
+still need a restart, and a feature that was off at startup comes on only
+after a restart.
+
 The gameplay features are single-player only: they change the game's simulation
 and send nothing to other players. While any of them is active the game will not
 go online; the Multiplayer menu shows an error instead, and the log lists the
@@ -25,12 +32,17 @@ Plugins: `defiance.selection`, `defiance.movement`, `defiance.posture`,
 | Shift-click | Add or remove the whole squad |
 | Ctrl-click a soldier | Select only that soldier |
 | Ctrl+Shift-click a soldier | Add or remove that soldier, within or across squads |
-| Drag a box | Select the individual soldiers inside it |
+| Drag a box | Select every squad with a soldier or its icon inside, as in the base game |
+| Ctrl-drag a box | Select only the soldiers inside it |
 | Double-click | Select every soldier of the same squad type on screen |
+
+Set `marquee = soldiers` under `[defiance.selection]` in `infantry.ini` to make
+a plain drag select the soldiers inside, as Ctrl-drag does.
 
 With part of a squad selected, move, posture (stand, crouch, prone), attack,
 building-entry and firing-mode (T) orders go only to the selected soldiers;
-their squadmates stay put. Select the whole squad to order everyone.
+their squadmates stay put, and squadmates lying prone stay down while the rest
+enter a building. Select the whole squad to order everyone.
 Building-panel exit orders use only that building's occupants. The first TAB
 from a building selects all its occupants; further presses cycle squad focus
 and then return to building control. Hold Ctrl with TAB (`squad_tab_modifier`
@@ -88,12 +100,62 @@ Plugin: `defiance.preview-weapon`. Squad previews, in mission and in squad
 management, show the first matching weapon instead of the last. It does not
 follow later changes to the weapon a soldier holds.
 
+## Unit inspection
+
+Plugin: `defiance.unit-inspection`. Click a squad you do not own to see its
+full details: commander, soldier count, rank and experience, and its weapons
+and ammunition in the ammo menu. Separate settings for allied, neutral and
+enemy squads; `ally_weapon_toggles` lets the ammo menu's toggles direct an
+ally's weapons. The ammo cards' reload bars show the squad's relation by
+colour (yours teal, allied yellow, neutral grey-blue, enemy red; each
+configurable), with its companion mod, in the `defiance-squad-scroll-ui`
+download, enabled in MODS. Squads only, on the 2026 game updates. Details:
+[plugins/unit-inspection](../plugins/unit-inspection/README.md).
+
 ## Regroup
 
 Plugin: `defiance.regroup` (experimental, off by default). Form a new infantry
 squad from the selected soldiers (Ctrl+Alt+R), or restore them (Ctrl+Alt+U).
 Single-player only, outside buildings and vehicles. Details and limits:
 [plugins/regroup](../plugins/regroup/README.md).
+
+## Performance
+
+Core. The game runs its rendering and simulation on one thread and keeps it on
+the first CPU, which often also handles the graphics card's interrupts. Core
+lets that thread use every CPU instead, which gives it more of its time on
+CPU-bound scenes. Under `[loader]` in `DefianceLoader/config/core.ini`,
+`main_thread_cpus = engine` restores the game's own choice; `spread` (every CPU
+but the first core) is experimental and caused long stutters in testing.
+
+Core also sorts grass by distance with each distance worked out once per
+frame, where the game works each out many times, in about half the time; the
+order is the same as the game's. `grass_sort = engine` under `[loader]` uses
+the game's own sort.
+
+Core redraws the shadow map one of its distance bands a frame, in turn,
+instead of all of them every frame, and the farthest band, which costs the
+most, half as often as the others. On a busy scene with high shadows this took
+the frame rate from about 31 to over 50 fps in testing. Each band is drawn with
+the view it keeps until its next turn, so shadows stay in place; in a band not
+redrawn this frame, a moving unit's shadow can trail it by a few frames.
+Under `[loader]`, `shadow_cascades = rotate` redraws every band equally often,
+`near` redraws the nearest band every frame and the others in turn, and `all`
+is the game's own.
+Fitting each band to what it covers, the game also walks every shadow caster
+in view and then throws the result away; Core skips that walk, which leaves
+the shadows the same (`shadow_fit = engine` keeps it).
+
+With shadows rotated, the main thread's biggest cost is preparing the objects
+in view each frame. Core puts those objects, and the meshes it groups for
+drawing, in order with what the order depends on read once per item, and
+inverts the matrices of moving objects with the game's own arithmetic without
+its many small calls; together that took about 3 ms off each frame in testing
+(51 to 58 fps). All give exactly the game's results. `view_sort = engine`,
+`mesh_sort = engine` and `matrix_inverse = engine` under `[loader]` use the
+game's own.
+
+None of these changes gameplay, and all are fine in multiplayer.
 
 ## Diagnostics
 

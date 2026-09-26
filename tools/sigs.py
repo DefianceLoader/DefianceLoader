@@ -16,6 +16,7 @@ matches exactly once in the module's code.
                                 kept in bin/<store>/
 """
 import re, sys
+import builds
 import capstone
 import pefile
 sys.path.insert(0, "tools")
@@ -171,11 +172,14 @@ def check_other(module, entries, label):
 if __name__ == "__main__":
     import json, pathlib
     failures = 0
-    for descriptor, name, reference in (("out/payload.json", "logic.dll", "bin/logic.orig.dll"),
-                                        ("out/payload-game.json", "game.dll", "bin/game.orig.dll")):
+    # The reference, then its release's copy in the other store, whose sites the
+    # reference's signatures must find directly.
+    copies = [builds.build(n) for n in builds.RELEASE_COPIES if n != builds.REFERENCE]
+    for descriptor, name, module in (("out/payload.json", "logic.dll", "logic"),
+                                     ("out/payload-game.json", "game.dll", "game")):
         entries = json.load(open(descriptor))["sites"]
-        failures += check(Module(reference), entries, f"gog {name}")
-        for other in sorted(pathlib.Path("bin").glob(f"*/{name}")):
-            failures += check_other(Module(str(other)), entries, f"{other.parent.name} {name}")
+        failures += check(Module(str(getattr(builds.reference(), module))), entries, f"gog {name}")
+        for other in (b for b in copies if b.present):
+            failures += check_other(Module(str(getattr(other, module))), entries, f"{other.name} {name}")
     print(f"\n{failures} failed" if failures else "\nall signatures unique at their sites")
     sys.exit(1 if failures else 0)

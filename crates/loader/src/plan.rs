@@ -447,6 +447,31 @@ fn order_active(planned: &[Planned], by_id: &BTreeMap<String, Vec<usize>>) -> Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn core_loads_in_place_and_features_from_copies() {
+        // The feature plugins find Core's module by its file name.
+        for builtin in builtin::BUILTINS {
+            let manifest =
+                manifest::parse(&manifest::render_builtin(builtin), builtin.dll).unwrap();
+            let node = Planned {
+                id: builtin.id.into(),
+                dll: builtin.dll.into(),
+                path: PathBuf::from(builtin.dll),
+                manifest: Some(manifest),
+                builtin: Some(builtin),
+                legacy: false,
+                decision: Decision::Initialize,
+                depends: Vec::new(),
+            };
+            assert_eq!(
+                crate::plugin::loads_from_copy(&node),
+                builtin.id != builtin::CORE_ID,
+                "{}",
+                builtin.id
+            );
+        }
+    }
     use crate::config::builtin;
     use crate::config::parse::parse;
     use crate::config::paths::Paths;

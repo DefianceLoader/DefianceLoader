@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["contract", "provider", "consumer"]
+members = ["contract", "provider", "consumer", "watch"]
 
 [profile.release]
 panic = "abort"

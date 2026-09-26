@@ -6,8 +6,11 @@
 ; correct him through fn_2aff10 (lay down) or fn_2b0200 (stand up): the idle
 ; check in fn_ce293, state constructors, attack-move and both movement states.
 ; The explicit order goes through the same two (AiPoseChangeState, fn_76b8d).
+; The squad's own stand-up, fn_43d5a0 (a subset sent into a building, among
+; others), clears the flag and stands every member with an inlined copy of
+; fn_2b0200's body instead; squad_stand_gate covers that loop.
 ;
-; So both are gated here. A pinned soldier refuses the change that contradicts
+; So all three are gated here. A pinned soldier refuses the change that contradicts
 ; his pin, wherever it comes from, and the pin is set only when the pose split
 ; orders him individually, which is also the only order that agrees with it.
 ; A whole-squad pose order clears the squad's pins first, and the move filter
@@ -26,8 +29,9 @@
 ; landed. Both functions return nothing, so refusing is a bare ret.
 ;
 ; The file patch's unwind records cover each gate up to its *_resume label,
-; pin_of up to pin_end and move_posture up to move_posture_end; the displaced
-; prologues and the ret lie outside them.
+; pin_of up to pin_end, move_posture up to move_posture_end and
+; squad_stand_gate up to squad_stand_end; the displaced prologues and the ret
+; lie outside them.
 ;
 ; The two movement states (fn_cfb70 at 0xcffc6, fn_d0220 at 0xd0626) decide
 ; from the squad's flag whether a walk is a crawl: movzx ebp, byte [rcx+0x29e],
@@ -143,3 +147,38 @@ posture_done:
     pop rax
     ret
 move_posture_end:
+
+; The squad's stand-up loop (fn_43d5a0 at 0x43d639) asks each member's posture,
+; rbx, cmp qword [rbx+0x28], 0, and stands him unless that is set (jne skips).
+; Called over that 5-byte compare, this answers with its flags: ZF clear, so
+; the jne skips him, for a soldier pinned prone, else the compare's own. The
+; posture's +0x10 holds its soldier as an AI object's does, so pin_of finds
+; him. Every register is preserved.
+squad_stand_gate:
+    push rax
+    push rcx
+    push rdx
+    push r8
+    push r9
+    push r10
+    push r11
+    sub rsp, 0x20
+    mov rcx, rbx
+    call pin_of
+    cmp al, 3
+    je stand_pinned
+    cmp qword ptr [rbx + 0x28], 0      ; the displaced compare
+    jmp stand_answer
+stand_pinned:
+    test rsp, rsp                      ; nonzero: ZF clear, so he is skipped
+stand_answer:
+    lea rsp, [rsp + 0x20]              ; lea and pop keep the flags
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdx
+    pop rcx
+    pop rax
+    ret
+squad_stand_end:

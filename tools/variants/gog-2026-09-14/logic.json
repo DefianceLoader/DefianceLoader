@@ -13,6 +13,7 @@
   "trace_offset": 4096,
   "ammo_scratch": 9984,
   "preview_dim_cell": 9952,
+  "marquee_cell": 10992,
   "setter_offset": 2048,
   "detours": [
     {
@@ -53,13 +54,13 @@
     },
     {
       "hook_rva": 1990432,
-      "hook_entry": 9585,
+      "hook_entry": 10668,
       "hook_feature": 2,
       "hook_displaced": "885130c3cc"
     },
     {
       "hook_rva": 4365752,
-      "hook_entry": 9523,
+      "hook_entry": 10606,
       "hook_feature": 2,
       "hook_displaced": "498b06498bce"
     },
@@ -271,32 +272,37 @@
       "rel_target": 2533619
     },
     {
-      "rel_offset": 9511,
+      "rel_offset": 10549,
+      "rel_feature": 2,
+      "rel_target": 4368704
+    },
+    {
+      "rel_offset": 10594,
       "rel_feature": 2,
       "rel_target": 4365456
     },
     {
-      "rel_offset": 9576,
+      "rel_offset": 10659,
       "rel_feature": 2,
       "rel_target": 4365758
     },
     {
-      "rel_offset": 9581,
+      "rel_offset": 10664,
       "rel_feature": 2,
       "rel_target": 4365923
     },
     {
-      "rel_offset": 11802,
+      "rel_offset": 11652,
       "rel_feature": 9,
       "rel_target": 413920
     },
     {
-      "rel_offset": 11956,
+      "rel_offset": 11806,
       "rel_feature": 9,
       "rel_target": 413920
     },
     {
-      "rel_offset": 12013,
+      "rel_offset": 11863,
       "rel_feature": 9,
       "rel_target": 415743
     },
@@ -336,7 +342,7 @@
   "pose_calls": [
     {
       "pose_site": 4517301,
-      "pose_entry": 11264,
+      "pose_entry": 11008,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 8,
@@ -344,7 +350,7 @@
     },
     {
       "pose_site": 4520397,
-      "pose_entry": 11487,
+      "pose_entry": 11231,
       "pose_tail": "9090",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -352,7 +358,7 @@
     },
     {
       "pose_site": 1106582,
-      "pose_entry": 11515,
+      "pose_entry": 11259,
       "pose_tail": "9090",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -360,7 +366,7 @@
     },
     {
       "pose_site": 1107904,
-      "pose_entry": 11535,
+      "pose_entry": 11279,
       "pose_tail": "9090",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -368,7 +374,7 @@
     },
     {
       "pose_site": 1144278,
-      "pose_entry": 11535,
+      "pose_entry": 11279,
       "pose_tail": "9090",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -376,7 +382,7 @@
     },
     {
       "pose_site": 3312100,
-      "pose_entry": 11535,
+      "pose_entry": 11279,
       "pose_tail": "9090",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -384,7 +390,7 @@
     },
     {
       "pose_site": 1121647,
-      "pose_entry": 11752,
+      "pose_entry": 11602,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -392,7 +398,7 @@
     },
     {
       "pose_site": 1122107,
-      "pose_entry": 11752,
+      "pose_entry": 11602,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -400,7 +406,7 @@
     },
     {
       "pose_site": 716461,
-      "pose_entry": 11829,
+      "pose_entry": 11679,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -408,7 +414,7 @@
     },
     {
       "pose_site": 733331,
-      "pose_entry": 11857,
+      "pose_entry": 11707,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -416,7 +422,7 @@
     },
     {
       "pose_site": 415670,
-      "pose_entry": 11978,
+      "pose_entry": 11828,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -424,7 +430,7 @@
     },
     {
       "pose_site": 414677,
-      "pose_entry": 12017,
+      "pose_entry": 11867,
       "pose_tail": "90",
       "pose_stock": 0,
       "pose_feature": 9,
@@ -432,7 +438,7 @@
     },
     {
       "pose_site": 4369071,
-      "pose_entry": 9472,
+      "pose_entry": 10240,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 2,
@@ -440,7 +446,7 @@
     },
     {
       "pose_site": 4369703,
-      "pose_entry": 9472,
+      "pose_entry": 10240,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 2,
@@ -448,7 +454,7 @@
     },
     {
       "pose_site": 4369856,
-      "pose_entry": 9472,
+      "pose_entry": 10240,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 2,
@@ -456,11 +462,19 @@
     },
     {
       "pose_site": 4370560,
-      "pose_entry": 9472,
+      "pose_entry": 10240,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 2,
       "pose_before": "e80becffff"
+    },
+    {
+      "pose_site": 4369184,
+      "pose_entry": 10518,
+      "pose_tail": "909090909090909090909090909090909090909090909090",
+      "pose_stock": 0,
+      "pose_feature": 2,
+      "pose_before": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff5050"
     },
     {
       "pose_site": 3333081,
@@ -509,6 +523,14 @@
       "pose_stock": 0,
       "pose_feature": 4,
       "pose_before": "0fb6a99e020000"
+    },
+    {
+      "pose_site": 4524597,
+      "pose_entry": 760,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 4,
+      "pose_before": "48837b2800"
     },
     {
       "pose_site": 2987659,
@@ -898,6 +920,13 @@
       "site_offset": 0
     },
     {
+      "site_name": "squad_stand_1",
+      "site_start": 4524597,
+      "site_group": 4524563,
+      "site_pattern": "48837b28000f85????????837b7801c74374010000000f84????????4c8b8b980000004c8d442420",
+      "site_offset": 0
+    },
+    {
       "site_name": "firing_call",
       "site_start": 2987659,
       "site_group": 2987440,
@@ -1077,6 +1106,13 @@
       "site_start": 4370560,
       "site_group": 4370448,
       "site_pattern": "e8????????84c0742f483bfe740e4c89374883c70848897c2428",
+      "site_offset": 0
+    },
+    {
+      "site_name": "marquee_select",
+      "site_start": 4369184,
+      "site_group": 4368960,
+      "site_pattern": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff50504883c308483b5dff",
       "site_offset": 0
     },
     {

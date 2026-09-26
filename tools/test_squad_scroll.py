@@ -10,6 +10,7 @@ ammunition, upgrade and perk rows) or `vehicle` (UnitManagerVehicleInfo, with
 weapon, ammunition and upgrade rows). Both run against every supported build.
 """
 import ctypes as C
+import builds
 from ctypes import wintypes as W
 import pathlib
 import re
@@ -24,8 +25,9 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 DLL = ROOT / 'plugins/squad-management-scroll/target/release/defiance_plugin_squad_management_scroll.dll'
 
 
-PATHS = {0: 'bin/game.orig.dll', 1: 'bin/steam/game.dll', 2: 'bin/gog/game-updated.dll',
-         3: 'bin/steam/game-updated.dll'}
+# The builds by the index of the generated tables.
+BUILDS = ("gog-2025-12-23", "steam-2025-12-23", "gog-2026-09-14", "steam-2026-09-22")
+PATHS = {i: builds.build(n).game for i, n in enumerate(BUILDS)}
 
 # Per panel kind: the unit member on the panel, the four widget-array bases
 # (weapons, ammunition, upgrades, perks; 0 when the panel has no such row), the
@@ -573,7 +575,7 @@ def case(build, mode, kind='squad'):
     # Execute the actual game drag-position math and notification dispatcher,
     # rather than only fabricating a slider-change event. Rendering remains a
     # stub; the native code maps screen coordinates and emits 0x481 itself.
-    module, reference = Module(path), Module(ROOT/'bin/game.orig.dll')
+    module, reference = Module(path), Module(builds.reference().game)
     position = base + resolve(module,reference,0x2c5f20)
     notify = base + resolve(module,reference,0x2c59c0)
     listener_vt = alloc(16)

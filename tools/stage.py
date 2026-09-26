@@ -7,11 +7,12 @@ bootstrap `root` key (default `../DefianceLoader`, resolved against bin), or the
 legacy unsectioned `plugins` key when present, resolved against bin exactly as
 before. Relative paths are resolved against bin, not the working directory.
 
-It also stages the standalone regroup, expanded-ammo-menu and
-squad-management-scroll plugins from their own workspaces, and, when the game
-directory holds the PAKs, derives and writes the squad-management-scroll
-companion UI mod under `mods/defiance_squad_scroll`. Uninstall removes both,
-again only when they are recognised as ours.
+It also stages the standalone regroup, expanded-ammo-menu,
+squad-management-scroll and unit-inspection plugins from their own workspaces,
+and, when the game directory holds the PAKs, derives and writes the companion
+UI mods (`COMPANION_MODS`: `mods/defiance_squad_scroll`,
+`mods/defiance_unit_inspection`). Uninstall removes them, again only when they
+are recognised as ours.
 
 It never writes, moves or deletes configuration or logs.
 
@@ -36,6 +37,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import package_squad_scroll  # noqa: E402  (the companion UI overlay builder)
+import package_unit_inspection  # noqa: E402  (the reload bar mod builder)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 GENERATED = ROOT / "crates" / "loader" / "src" / "proxy_generated.rs"
@@ -48,16 +50,23 @@ BACKUP_SUFFIX = ".defiance-backup"
 # a foreign one of the same name. The proxy carries the config/log prefix, a
 # plugin its own `defiance.<name>` string.
 MARKERS = (b"defiance-loader", b"defiance.")
-# The companion mod the squad-management-scroll plugin needs, and its directory
-# name under the game's `mods`. The name is checked before the tree is removed.
+# The companion mods the plugins need: (directory under the game's `mods`, the
+# name its mod.json carries, builder). The name is checked before a tree is
+# overwritten or removed.
 MOD_DIR = "defiance_squad_scroll"
 MOD_NAME = "Defiance squad inventory scrolling"
+COMPANION_MODS = [
+    (MOD_DIR, MOD_NAME, package_squad_scroll.mod_entries),
+    (package_unit_inspection.MOD_DIR, package_unit_inspection.MOD_NAME,
+     package_unit_inspection.mod_entries),
+]
 # Standalone plugins built from their own workspaces, staged beside the loader
 # plugins so staging matches the loader package.
 STANDALONE = [
     ("plugins/regroup", "defiance_plugin_regroup"),
     ("plugins/expanded-ammo-menu", "defiance_plugin_expanded_ammo_menu"),
     ("plugins/squad-management-scroll", "defiance_plugin_squad_management_scroll"),
+    ("plugins/unit-inspection", "defiance_plugin_unit_inspection"),
 ]
 
 
@@ -84,13 +93,13 @@ def bin_directory(path):
     return path
 
 
-def is_our_mod(mod_dir):
-    """Whether a `mods/defiance_squad_scroll` tree is the one this project wrote."""
+def is_our_mod(mod_dir, name=MOD_NAME):
+    """Whether a companion mod tree is the one this project wrote."""
     try:
         data = json.loads((mod_dir / "mod.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
-    return data.get("name") == MOD_NAME
+    return data.get("name") == name
 
 
 def standalone_pairs():
@@ -203,17 +212,20 @@ class Staging:
         self.backup = game / (self.real + BACKUP_SUFFIX)
         self.plugin_dir = plugin_directory(game)
         root = game_root(game)
-        self.mod_dir = (root / "mods" / MOD_DIR) if root else (game.parent / "mods" / MOD_DIR)
-        self.mod_entries = {}
-        self.mod_reason = ""
-        if companion:
-            if root is None:
-                self.mod_reason = "the game directory with basis.pak was not found beside bin"
-            else:
-                try:
-                    self.mod_entries = package_squad_scroll.mod_entries(root)[0]
-                except ValueError as error:
-                    self.mod_reason = str(error)
+        # One {dir, name, entries, reason} per companion mod.
+        self.mods = []
+        for directory, name, build in COMPANION_MODS:
+            mod = dict(dir=(root or game.parent) / "mods" / directory, prefix=f"mods/{directory}/",
+                       name=name, entries={}, reason="")
+            if companion:
+                if root is None:
+                    mod["reason"] = "the game directory with basis.pak was not found beside bin"
+                else:
+                    try:
+                        mod["entries"] = build(root)[0]
+                    except ValueError as error:
+                        mod["reason"] = str(error)
+            self.mods.append(mod)
 
     def act(self, verb, path, extra=""):
         print(f"  {'(dry-run) ' if self.dry else ''}{verb} {path}{extra}")
@@ -222,7 +234,22 @@ class Staging:
         self.act("copy", source, f" -> {destination}")
         if not self.dry:
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, destination)
+            # Write beside it and swap in, so a hot-reload watcher never reads a
+            # half-written DLL.
+            partial = destination.with_name(destination.name + ".partial")
+            shutil.copy2(source, partial)
+            os.replace(partial, destination)
+
+    def install_plugins(self):
+        """Copy only the plugin DLLs and their manifests: the hot-reload
+        workflow while the game runs, when the proxy DLL itself is locked."""
+        print(f"installing {len(self.plugins)} plugin(s) into {self.plugin_dir}")
+        for plugin in self.plugins:
+            self.copy(plugin, self.plugin_dir / plugin.name)
+        for manifest in self.manifests:
+            self.copy(manifest, self.plugin_dir / manifest.name)
+        print("done. With [loader] hot_reload = true, a running game reloads the "
+              "changed plugins at the menu or when a mission starts or a save loads.")
 
     def install(self):
         print(f"installing the loader as {self.real} and {len(self.plugins)} plugin(s) into {self.plugin_dir}")
@@ -261,29 +288,32 @@ class Staging:
         print(f"done. Start the game; the log is {self.game / 'defiance-loader.log'}")
 
     def write_mod(self):
-        """Write the squad-scroll companion UI mod, when its sources are available."""
-        if not self.mod_entries:
-            if self.mod_reason:
-                print(f"  warning: squad-scroll companion mod not installed: {self.mod_reason}")
-            return
-        if self.mod_dir.exists() and not is_our_mod(self.mod_dir) and not self.force:
-            raise SystemExit(f"{self.mod_dir} is not ours; move it aside or pass --force")
-        prefix = f"mods/{MOD_DIR}/"
-        for name, data in self.mod_entries.items():
-            relative = name[len(prefix):] if name.startswith(prefix) else pathlib.PurePosixPath(name).name
-            self.act("write", self.mod_dir / relative)
-            if not self.dry:
-                destination = self.mod_dir / relative
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_bytes(data)
+        """Write the companion UI mods whose sources are available."""
+        for mod in self.mods:
+            if not mod["entries"]:
+                if mod["reason"]:
+                    print(f"  warning: companion mod {mod['dir'].name} not installed: {mod['reason']}")
+                continue
+            if mod["dir"].exists() and not is_our_mod(mod["dir"], mod["name"]) and not self.force:
+                raise SystemExit(f"{mod['dir']} is not ours; move it aside or pass --force")
+        for mod in self.mods:
+            prefix = mod["prefix"]
+            for name, data in mod["entries"].items():
+                relative = name[len(prefix):] if name.startswith(prefix) else pathlib.PurePosixPath(name).name
+                self.act("write", mod["dir"] / relative)
+                if not self.dry:
+                    destination = mod["dir"] / relative
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(data)
 
     def remove_mod(self):
-        """Remove the companion mod tree, only when it is the one this project wrote."""
-        if not self.mod_dir.exists() or not is_our_mod(self.mod_dir):
-            return
-        self.act("remove", self.mod_dir, " (companion UI mod)")
-        if not self.dry:
-            shutil.rmtree(self.mod_dir)
+        """Remove the companion mod trees this project wrote."""
+        for mod in self.mods:
+            if not mod["dir"].exists() or not is_our_mod(mod["dir"], mod["name"]):
+                continue
+            self.act("remove", mod["dir"], " (companion UI mod)")
+            if not self.dry:
+                shutil.rmtree(mod["dir"])
 
     def uninstall(self):
         print(f"removing the loader and its plugins from {self.game}")
@@ -339,6 +369,8 @@ def main(argv):
     parser.add_argument("--force", action="store_true",
                         help="overwrite or remove a file that is not recognised as ours")
     parser.add_argument("--dry-run", action="store_true", help="print the plan and change nothing")
+    parser.add_argument("--plugins-only", action="store_true",
+                        help="copy only the plugin DLLs and manifests (while the game runs, for hot reload)")
     args = parser.parse_args(argv)
 
     if not args.game:
@@ -347,9 +379,12 @@ def main(argv):
     if not game.is_dir():
         parser.error(f"{game} is not a directory")
     staging = Staging(game, pathlib.Path(args.source), args.force, args.dry_run,
-                      extra_plugins=standalone_pairs(), expect_standalone=True)
+                      extra_plugins=standalone_pairs(), expect_standalone=True,
+                      companion=not args.plugins_only)
     if args.uninstall:
         staging.uninstall()
+    elif args.plugins_only:
+        staging.install_plugins()
     else:
         staging.install()
     return 0

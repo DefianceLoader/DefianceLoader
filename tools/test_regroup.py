@@ -5,6 +5,7 @@ objects. This verifies a building block, not live transfers, spawning or saves.
 No running game is opened or modified. Windows x64 only.
 """
 import ctypes as C
+import builds
 import hashlib
 import pathlib
 import unittest
@@ -85,14 +86,13 @@ class GunnerRemovalTests(unittest.TestCase):
 
 class KeyboardStateTests(unittest.TestCase):
     def test_both_builds_update_the_modifier_offsets_used_by_regroup(self):
-        reference = Image("bin/game.orig.dll")
+        reference = Image(str(builds.reference().game))
         # Actual native bitset-to-modifier-byte code. Preserve RBX around this
         # extracted straight-line fragment; it has no calls or relative data.
         fragment = reference.read(0x2da319, 0x2da34f - 0x2da319)
-        for path in ["bin/gog/game.dll", "bin/steam/game.dll", "bin/gog/game-updated.dll",
-                     "bin/steam/game-updated.dll"]:
-            with self.subTest(build=path):
-                image = Image(path)
+        for name in ("gog-2025-12-23", "steam-2025-12-23", "gog-2026-09-14", "steam-2026-09-22"):
+            with self.subTest(build=name):
+                image = Image(str(builds.build(name).game))
                 self.assertEqual(image.data.count(fragment), 1)
                 native = Native()
                 try:
@@ -117,12 +117,12 @@ class PerkRosterCopyTests(unittest.TestCase):
         # becomes an observable canary rather than a real return address.
         crt = C.CDLL("msvcrt")
         memcpy = C.cast(crt.memcpy, C.c_void_p).value
-        for path, start in [("bin/gog/logic.dll", 0x33151d),
-                            ("bin/steam/logic.dll", 0x3315ad),
-                            ("bin/gog/logic-updated.dll", 0x3401bd),
-                            ("bin/steam/logic-updated.dll", 0x34024d)]:
-            with self.subTest(build=path):
-                im = Image(path)
+        for name, start in [("gog-2025-12-23", 0x33151d),
+                            ("steam-2025-12-23", 0x3315ad),
+                            ("gog-2026-09-14", 0x3401bd),
+                            ("steam-2026-09-22", 0x34024d)]:
+            with self.subTest(build=name):
+                im = Image(str(builds.build(name).logic))
                 length = im.read(start, 14)
                 setup = im.read(start + 0x13, 13)
                 self.assertEqual([i.mnemonic for i in im.md.disasm(length, start)],
@@ -159,14 +159,14 @@ class UiRosterExportTests(unittest.TestCase):
         import struct
         crt = C.CDLL("msvcrt")
         memset = C.cast(crt.memset, C.c_void_p).value
-        for path, export_at, resize_at in [
-            ("bin/gog/logic.dll", 0x110240, 0xcf4a0),
-            ("bin/steam/logic.dll", 0x1102d0, 0xcf530),
-            ("bin/gog/logic-updated.dll", 0x118360, 0xd7540),
-            ("bin/steam/logic-updated.dll", 0x1183f0, 0xd75d0),
+        for name, export_at, resize_at in [
+            ("gog-2025-12-23", 0x110240, 0xcf4a0),
+            ("steam-2025-12-23", 0x1102d0, 0xcf530),
+            ("gog-2026-09-14", 0x118360, 0xd7540),
+            ("steam-2026-09-22", 0x1183f0, 0xd75d0),
         ]:
-            with self.subTest(build=path):
-                im = Image(path)
+            with self.subTest(build=name):
+                im = Image(str(builds.build(name).logic))
                 n = Native()
                 try:
                     copy_sizes = []

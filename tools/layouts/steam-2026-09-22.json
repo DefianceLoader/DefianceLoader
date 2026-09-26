@@ -1,4 +1,10 @@
 {
+  "base": "gog-2026-09-14",
+  "game_decided": {
+    "mov|rax|0x160": 352,
+    "mov|rbx|0x118": 280,
+    "mov|rcx|0x200": 512
+  },
   "game_layout": {
     "call|r8|0x290": 672,
     "call|r8|0x660": 1640,
@@ -188,9 +194,7 @@
     "mov|rsi|0x93c": 2388
   },
   "game_sha256": "d926a213731d73bac8ccc56b50e2b4292fe8613c7a9bb7c8b9fc9132c122ed25",
-  "game_sites": {
-    "attack_recipient": 3341203
-  },
+  "game_sites": {},
   "game_symbols": {
     "ai_attack_order": 896,
     "ai_attack_ready": 904,
@@ -200,6 +204,7 @@
     "gunner_get": 304,
     "squad_roster": 976
   },
+  "logic_decided": {},
   "logic_layout": {
     "call|r8|0x140": 256,
     "call|r8|0x890": 2200,
@@ -286,11 +291,7 @@
     "test|r14|0x698": 1712
   },
   "logic_sha256": "30264904e1d5199b954bafbd7828cf7190930c246d35fa7b94eefa915e8f0c38",
-  "logic_sites": {
-    "lie_down_gate": 2876208,
-    "move_posture_2": 892489,
-    "stand_up_gate": 2876304
-  },
+  "logic_sites": {},
   "logic_symbols": {
     "ai_can_attack": 936,
     "ammo_pool_get": 456,

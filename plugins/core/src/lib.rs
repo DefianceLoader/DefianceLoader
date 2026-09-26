@@ -12,10 +12,22 @@ use defiance_api::{Api, Plugin, ABI_VERSION, LOG_ERROR, LOG_INFO, LOG_WARN};
 use defiance_core::install::{self, Scan};
 use defiance_core::{GamePatch, Patch, Target};
 use std::path::PathBuf;
+mod affinity;
 mod ammo_menu;
 mod game;
+mod grass;
+/// Diagnostic, never shipped (feature `inspect-probe`), kept privately.
+#[cfg(feature = "inspect-probe")]
+mod inspect_probe;
+mod inverse;
+mod marquee;
+mod mesh_sort;
 mod multiplayer;
 mod preview;
+mod session;
+mod shadow;
+mod shadow_fit;
+mod view_sort;
 defiance_feature_sdk::service_handshake!();
 
 #[cfg(feature = "parity-test")]
@@ -237,12 +249,17 @@ struct Runtime {
     /// The game's lobby connection, which the multiplayer guard hooks; None
     /// when its signature was not found in this build.
     lobby_connect: Option<usize>,
+    /// The tactical state's constructor and destructor, which the mission
+    /// report hooks; None when either signature was not found.
+    tactical_state: Option<(usize, usize)>,
     /// The game block cell for the squad TAB modifier's virtual key, and the
     /// block's size, which bounds it.
     tab_modifier_offset: usize,
     game_block_bytes: usize,
     /// The logic block cell for the squad preview's material callback.
     preview_dim_cell: usize,
+    /// The logic block cell for the marquee's key test and mode.
+    marquee_cell: usize,
     logic_block_bytes: usize,
 }
 static RUNTIME: std::sync::OnceLock<Runtime> = std::sync::OnceLock::new();
@@ -258,6 +275,17 @@ static ENABLED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 #[no_mangle]
 pub extern "C" fn defiance_configure_enabled_v1(mask: u64) {
     ENABLED.store(mask, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Called by the host when it unloads a feature plugin (hot reload): the
+/// plugin's patch spans are restored, so the feature may be installed again.
+#[no_mangle]
+pub extern "C" fn defiance_feature_removed_v1(feature: u32) {
+    if let Some(runtime) = RUNTIME.get() {
+        if feature < 32 {
+            *runtime.installed.lock().unwrap() &= !(1 << feature);
+        }
+    }
 }
 
 fn say(api: &Api, level: u32, message: &str) {
@@ -439,6 +467,21 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
                 None
             }
         };
+        let site = |name| install::game_site(&game_raw, &game_target, scan, name);
+        let tactical_state = match (site("tactical_state_ctor"), site("tactical_state_dtor")) {
+            (Ok(ctor), Ok(dtor)) => Some((
+                game_target.base as usize + ctor,
+                game_target.base as usize + dtor,
+            )),
+            (Err(e), _) | (_, Err(e)) => {
+                say(
+                    api,
+                    LOG_WARN,
+                    &format!("session: {e}; hot reload stays off"),
+                );
+                None
+            }
+        };
         let record = format!(
             "pid={:#x}\nbase={:#x}\nblock={:#x}\ntrace={:#x}\nentry={:#x}\n",
             logic_target.process_id, logic_target.base as usize, logic.block, hook.rva, hook.entry
@@ -471,6 +514,7 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
             tab_modifier_offset: game_patch.tab_modifier_offset,
             game_block_bytes: game_patch.block_bytes,
             preview_dim_cell: logic_patch.preview_dim_cell,
+            marquee_cell: logic_patch.marquee_cell,
             logic_block_bytes: logic_patch.block_bytes,
             logic,
             game,
@@ -478,6 +522,7 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
             available,
             record,
             lobby_connect,
+            tactical_state,
             native_entries,
         })
     };
@@ -505,6 +550,18 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
             if let Some(address) = RUNTIME.get().and_then(|runtime| runtime.lobby_connect) {
                 multiplayer::install(api, address);
             }
+            if let Some((ctor, dtor)) = RUNTIME.get().and_then(|runtime| runtime.tactical_state) {
+                session::install(api, ctor, dtor);
+            }
+            affinity::install(api, &config_text(api, "loader", "main_thread_cpus"));
+            grass::install(api, &config_text(api, "loader", "grass_sort"));
+            inverse::install(api, &config_text(api, "loader", "matrix_inverse"));
+            view_sort::install(api, &config_text(api, "loader", "view_sort"));
+            mesh_sort::install(api, &config_text(api, "loader", "mesh_sort"));
+            shadow::install(api, &config_text(api, "loader", "shadow_cascades"));
+            shadow_fit::install(api, &config_text(api, "loader", "shadow_fit"));
+            #[cfg(feature = "inspect-probe")]
+            inspect_probe::install(api);
             say(
                 api,
                 LOG_INFO,
@@ -648,6 +705,11 @@ unsafe fn install_feature(
                 preview::dim_material as unsafe extern "C" fn(usize, usize) -> usize as usize,
             )
         };
+    }
+    if feature == 2 && runtime.marquee_cell + 16 <= runtime.logic_block_bytes {
+        // Likewise the marquee's key test and mode, before its hooks.
+        let setting = config_text(api, "defiance.selection", "marquee");
+        unsafe { marquee::write(runtime.logic.block + runtime.marquee_cell, &setting) };
     }
     for write in &writes {
         let result = if let Some(&replacement) = native.get(&write.address) {

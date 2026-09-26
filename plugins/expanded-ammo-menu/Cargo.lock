@@ -23,7 +23,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-plugin-expanded-ammo-menu"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "defiance-api",
  "defiance-build-support",

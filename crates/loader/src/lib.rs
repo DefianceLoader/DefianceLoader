@@ -27,6 +27,7 @@ pub mod crash;
 mod hooks;
 mod host;
 mod json;
+mod lifecycle;
 mod log;
 mod manifest;
 mod multiplayer;
@@ -34,9 +35,11 @@ mod plan;
 mod plugin;
 mod proxy;
 mod proxy_generated;
+mod reload;
 mod resolve;
 mod rtti;
 mod services;
+mod session;
 mod threads;
 mod trace;
 mod win;
@@ -56,6 +59,41 @@ pub mod test_host {
     /// waiting for game modules. Used by the game-independent author examples.
     pub fn run_plugins(exe_dir: &std::path::Path) -> Vec<(String, String)> {
         crate::host::test_plugins(exe_dir)
+    }
+    /// As `run_plugins`, leaving the plugins loaded.
+    pub fn load_plugins(exe_dir: &std::path::Path) -> Vec<(String, String)> {
+        crate::host::test_load(exe_dir)
+    }
+    /// Hot-reload one loaded plugin (and its dependants).
+    pub fn reload_plugin(id: &str) -> Result<(), String> {
+        crate::host::test_reload(id)
+    }
+    /// Load a plugin added to the plugins directory after startup.
+    pub fn add_plugin(id: &str) -> Result<(), String> {
+        crate::host::test_add(id)
+    }
+    /// Unload a plugin removed from the plugins directory.
+    pub fn remove_plugin(id: &str) -> Result<(), String> {
+        crate::host::test_remove(id)
+    }
+    /// Switch a plugin on or off, as the watcher does after its config file's
+    /// `enabled` changed.
+    pub fn toggle_plugin(id: &str, on: bool) -> Result<(), String> {
+        crate::host::test_toggle(id, on)
+    }
+    /// The IDs of the old copies a reload kept mapped.
+    pub fn retained_plugins() -> Vec<String> {
+        crate::lifecycle::retained()
+            .into_iter()
+            .map(|plugin| plugin.id)
+            .collect()
+    }
+    /// The loaded plugins' IDs and owner numbers, in load order.
+    pub fn loaded_plugins() -> Vec<(String, usize)> {
+        crate::lifecycle::loaded()
+            .into_iter()
+            .map(|plugin| (plugin.id, plugin.owner))
+            .collect()
     }
 }
 

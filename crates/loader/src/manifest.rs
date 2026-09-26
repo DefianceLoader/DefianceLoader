@@ -39,6 +39,10 @@ pub struct Manifest {
     /// would need to match, so it may stay active in multiplayer. Absent means
     /// false; an active plugin without it blocks multiplayer.
     pub multiplayer_safe: bool,
+    /// `hot_reload`: the plugin may be unloaded and loaded again while the game
+    /// runs (development reloads). Absent means true; a plugin that changes
+    /// the game only at startup declares false.
+    pub hot_reload: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -258,6 +262,17 @@ pub fn parse(text: &str, expected_dll: &str) -> Result<Manifest, String> {
         }
     };
 
+    let hot_reload = match map.get("hot_reload") {
+        None | Some(Value::Bool(true)) => true,
+        Some(Value::Bool(false)) => false,
+        Some(other) => {
+            return Err(format!(
+                "`hot_reload` must be a boolean, not {}",
+                json::kind(other)
+            ))
+        }
+    };
+
     if multiplayer_safe
         && builtin::NOT_MULTIPLAYER_SAFE
             .iter()
@@ -279,6 +294,7 @@ pub fn parse(text: &str, expected_dll: &str) -> Result<Manifest, String> {
         depends,
         conflicts,
         multiplayer_safe,
+        hot_reload,
     })
 }
 
@@ -393,6 +409,10 @@ pub fn render_builtin(builtin: &Builtin) -> String {
             "multiplayer_safe".into(),
             Value::Bool(builtin.multiplayer_safe),
         ),
+        (
+            "hot_reload".into(),
+            Value::Bool(builtin::hot_reload(builtin)),
+        ),
     ]);
     json::render(&document)
 }
@@ -446,6 +466,13 @@ pub fn check_builtin(manifest: &Manifest, builtin: &Builtin) -> Result<(), Strin
         return Err(format!(
             "manifest group `{}` is not `{}`",
             manifest.group, builtin.group
+        ));
+    }
+    if manifest.hot_reload != builtin::hot_reload(builtin) {
+        return Err(format!(
+            "manifest hot_reload {} is not {}",
+            manifest.hot_reload,
+            builtin::hot_reload(builtin)
         ));
     }
     if manifest.multiplayer_safe != builtin.multiplayer_safe {

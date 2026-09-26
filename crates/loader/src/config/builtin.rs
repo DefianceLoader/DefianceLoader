@@ -50,6 +50,12 @@ pub struct Builtin {
     pub multiplayer_safe: bool,
 }
 
+/// Whether a built-in may be unloaded while the game runs: every feature
+/// plugin, not Core, which holds the shared payload and the guards.
+pub fn hot_reload(builtin: &Builtin) -> bool {
+    builtin.id != CORE_ID
+}
+
 /// Standalone plugins shipped with the loader that change gameplay: their
 /// manifests may not declare `multiplayer_safe`, so an edit cannot let them
 /// online. The built-ins take their flag from this table instead.
@@ -57,13 +63,14 @@ pub const NOT_MULTIPLAYER_SAFE: &[&str] = &[
     "defiance.expanded-ammo-menu",
     "defiance.regroup",
     "defiance.squad-management-scroll",
+    "defiance.unit-inspection",
 ];
 
 pub const BUILTINS: &[Builtin] = &[
     Builtin {
         id: CORE_ID,
         dll: "defiance_plugin_core.dll",
-        version: "0.2.0",
+        version: "0.3.0",
         group: "core",
         summary: "Required support for the infantry and weapon features. Core has no enabled toggle; disable individual features instead.",
         depends: &[],
@@ -73,7 +80,7 @@ pub const BUILTINS: &[Builtin] = &[
     Builtin {
         id: "defiance.selection",
         dll: "defiance_plugin_feature_selection.dll",
-        version: "0.4.0",
+        version: "0.5.0",
         group: "infantry",
         summary: "Select individual soldiers within a squad and show which soldiers are selected. Disabling this also prevents posture, movement, attack, garrison, firing, ammunition, expanded ammo menu and regroup from loading. Pickup and squad-management scrolling can remain enabled. Restart required.",
         depends: &[CORE_ID],
@@ -83,7 +90,7 @@ pub const BUILTINS: &[Builtin] = &[
     Builtin {
         id: "defiance.posture",
         dll: "defiance_plugin_feature_posture.dll",
-        version: "0.3.0",
+        version: "0.3.1",
         group: "infantry",
         summary: "Give selected soldiers their own standing, crouching or prone posture instead of changing the entire squad. Requires selection. Disabling this also disables individual movement; it does not remove the game's normal squad posture controls. Restart required.",
         depends: &["defiance.selection"],
@@ -113,7 +120,7 @@ pub const BUILTINS: &[Builtin] = &[
     Builtin {
         id: "defiance.garrison",
         dll: "defiance_plugin_feature_garrison.dll",
-        version: "0.3.0",
+        version: "0.3.1",
         group: "infantry",
         summary: "Send selected soldiers into buildings without sending their unselected squadmates; support exit orders for soldiers occupying the building. Requires selection. Disable to keep the game's normal building-entry and exit behavior. Restart required.",
         depends: &["defiance.selection"],
@@ -213,21 +220,42 @@ pub const SQUAD_TAB_MODIFIER: SettingDecl = SettingDecl {
     sensitive: false,
 };
 
+/// Selection's marquee: whole squads, as the base game selects them, or the
+/// soldiers inside the box. Core writes the mode into the logic payload when
+/// selection installs (`patch/region-individual.asm`).
+pub const MARQUEE: SettingDecl = SettingDecl {
+    key: "marquee",
+    ty: ValueType::Choice(&["squads", "soldiers"]),
+    default: "squads",
+    description: "What dragging a box selects. squads: every squad with a soldier or its icon inside, as in the base game; hold Ctrl to select the soldiers inside instead. soldiers: only the soldiers inside. Restart required.",
+    restart: Restart::Startup,
+    sensitive: false,
+};
+
 /// Settings a gameplay feature declares besides `enabled`.
-const EXTRA_SETTINGS: &[(&str, SettingDecl)] = &[("defiance.selection", SQUAD_TAB_MODIFIER)];
+const EXTRA_SETTINGS: &[(&str, SettingDecl)] = &[
+    ("defiance.selection", SQUAD_TAB_MODIFIER),
+    ("defiance.selection", MARQUEE),
+];
+
+/// The most settings any one built-in declares besides `enabled`.
+const MOST_EXTRAS: usize = 2;
 
 /// The declared settings for a plugin ID: `enabled` and its extras for a
 /// gameplay feature, none for core (its policy lives in `[loader]` and
 /// `[logging]`).
-const BUILTIN_SETTINGS: [[SettingDecl; 2]; BUILTINS.len()] = {
-    let mut settings = [[ENABLED, ENABLED]; BUILTINS.len()];
+const BUILTIN_SETTINGS: [[SettingDecl; 1 + MOST_EXTRAS]; BUILTINS.len()] = {
+    let mut settings = [[ENABLED; 1 + MOST_EXTRAS]; BUILTINS.len()];
     let mut i = 0;
     while i < BUILTINS.len() {
         settings[i][0].description = BUILTINS[i].summary;
+        let mut slot = 1;
         let mut e = 0;
         while e < EXTRA_SETTINGS.len() {
             if const_eq(EXTRA_SETTINGS[e].0, BUILTINS[i].id) {
-                settings[i][1] = EXTRA_SETTINGS[e].1;
+                // more extras than MOST_EXTRAS fail the build here
+                settings[i][slot] = EXTRA_SETTINGS[e].1;
+                slot += 1;
             }
             e += 1;
         }
@@ -310,6 +338,78 @@ pub const LOADER_SETTINGS: &[SettingDecl] = &[
         restart: Restart::Startup,
     sensitive: false,
     },
+    SettingDecl {
+        key: "hot_reload",
+        ty: ValueType::Bool,
+        default: "false",
+        description: "For plugin development: when a plugin's DLL in the plugins folder is replaced while the game runs, unload the old one and load the new one, as soon as no mission is loaded. Leave false for normal play. Restart required.",
+        restart: Restart::Startup,
+        sensitive: false,
+    },
+    SettingDecl {
+        key: "live_toggle",
+        ty: ValueType::Bool,
+        default: "false",
+        description: "Switch plugins on and off while the game runs: after changing a plugin's enabled setting in its config file and saving, the plugin is unloaded or loaded at the main menu or as the next mission starts or save loads, instead of at the next restart. Plugins that only load at startup (Core, the expanded ammo menu, squad scrolling) still need a restart. Restart required to turn this on.",
+        restart: Restart::Startup,
+        sensitive: false,
+    },
+    SettingDecl {
+        key: "main_thread_cpus",
+        ty: ValueType::Choice(&["all", "spread", "engine"]),
+        default: "all",
+        description: "Which CPUs the game's main thread may run on. all: every CPU. spread: every CPU except the first core (experimental: it caused long stutters in testing). engine: the game's own choice, the first CPU only. Restart required.",
+        restart: Restart::Startup,
+        sensitive: false,
+    },
+    SettingDecl {
+        key: "grass_sort",
+        ty: ValueType::Choice(&["cached", "engine"]),
+        default: "cached",
+        description: "How grass is ordered by distance each frame. cached: each distance is worked out once per frame, giving the same order as the game's own sort in about half the time. engine: the game's own sort. Restart required.",
+        restart: Restart::Startup,
+        sensitive: false,
+    },
+    SettingDecl {
+        key: "view_sort",
+        ty: ValueType::Choice(&["cached", "engine"]),
+        default: "cached",
+        description: "How the objects in view are put in order each frame. cached: what the order depends on is read once per object, giving the same order as the game's own sort. engine: the game's own sort. Restart required.",
+        restart: Restart::Startup,
+        sensitive: false,
+    },
+    SettingDecl {
+        key: "mesh_sort",
+        ty: ValueType::Choice(&["cached", "engine"]),
+        default: "cached",
+        description: "How the meshes in view are grouped for drawing each frame. cached: what the order depends on is read once per mesh, giving the same order as the game's own sort. engine: the game's own sort. Restart required.",
+        restart: Restart::Startup,
+        sensitive: false,
+    },
+    SettingDecl {
+        key: "matrix_inverse",
+        ty: ValueType::Choice(&["direct", "engine"]),
+        default: "direct",
+        description: "How the renderer inverts the matrices of objects that moved. direct: the game's own arithmetic in the same order, so the results are identical, without its many small calls. engine: the game's own function. Restart required.",
+        restart: Restart::Startup,
+        sensitive: false,
+    },
+    SettingDecl {
+        key: "shadow_fit",
+        ty: ValueType::Choice(&["trimmed", "engine"]),
+        default: "trimmed",
+        description: "How each shadow band is fitted to what it covers. trimmed: skips a pass over every shadow caster in view whose result the game throws away; the shadows are the same. engine: the game's own. Restart required.",
+        restart: Restart::Startup,
+        sensitive: false,
+    },
+    SettingDecl {
+        key: "shadow_cascades",
+        ty: ValueType::Choice(&["all", "rotate", "near", "far_half"]),
+        default: "far_half",
+        description: "Which parts of the shadow map are redrawn each frame. far_half: one of its distance bands a frame, in turn, the farthest (which costs the most) half as often as the others; on busy scenes with high shadows this can take the frame rate from about 31 to 55 fps. rotate: one band a frame, each equally often. near: the nearest band every frame and one of the others in turn. all: every part every frame, as the game does. Restart required.",
+        restart: Restart::Startup,
+        sensitive: false,
+    },
 ];
 
 /// Diagnostic call-stack tracing (crate::trace), in `[trace]` of `core.ini`.
@@ -329,6 +429,14 @@ pub const TRACE_SETTINGS: &[SettingDecl] = &[
         ty: ValueType::Integer { min: 1, max: 1000 },
         default: "20",
         description: "How many times each traced address is logged before tracing it goes quiet. Restart required.",
+        restart: Restart::Startup,
+        sensitive: false,
+    },
+    SettingDecl {
+        key: "when",
+        ty: ValueType::Choice(&["startup", "mission"]),
+        default: "startup",
+        description: "When tracing starts: at startup, or when the first mission loads (so the main menu's scene does not use up the hits). startup or mission. Restart required.",
         restart: Restart::Startup,
         sensitive: false,
     },
@@ -425,15 +533,19 @@ mod tests {
     }
 
     #[test]
-    fn selection_declares_its_squad_tab_modifier_only() {
+    fn selection_declares_its_squad_tab_modifier_and_marquee_only() {
         let keys = |id| settings(id).iter().map(|d| d.key).collect::<Vec<_>>();
         assert_eq!(
             keys("defiance.selection"),
-            ["enabled", "squad_tab_modifier"]
+            ["enabled", "squad_tab_modifier", "marquee"]
         );
         assert_eq!(keys("defiance.movement"), ["enabled"]);
         let decl = setting("defiance.selection", "squad_tab_modifier").unwrap();
         assert_eq!(decl.default, "ctrl");
+        assert_eq!(
+            setting("defiance.selection", "marquee").unwrap().default,
+            "squads"
+        );
         assert!(setting("defiance.selection", "enabled")
             .unwrap()
             .description

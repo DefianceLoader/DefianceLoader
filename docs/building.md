@@ -38,6 +38,7 @@ cargo build --release
 cargo build --release --manifest-path plugins/regroup/Cargo.toml
 cargo build --release --manifest-path plugins/expanded-ammo-menu/Cargo.toml
 cargo build --release --manifest-path plugins/squad-management-scroll/Cargo.toml
+cargo build --release --manifest-path plugins/unit-inspection/Cargo.toml
 target\release\manifest-gen.exe --out target\release
 python tools/package.py --out out/defiance-loader.zip
 python tools/checksums.py out/defiance-loader.zip --out out/SHA256SUMS.txt
@@ -52,17 +53,18 @@ Builds on another machine or toolchain version are not guaranteed to be
 byte-identical to the release; compare behaviour and the source tag, or use
 the attestation above to check the released files themselves.
 
-## The squad-scroll companion UI mod
+## The companion UI mods
 
 The squad-management-scroll plugin needs a small UI mod that adds scrollbars to
 the game's unit panels; the same mod right-aligns the in-mission ammo card's
 user count so two-digit fractions fit, and carries darker copies of the game's
-standard materials for the squad preview's unselected soldiers. It is plain
+standard materials for the squad preview's unselected soldiers. Unit
+inspection's mod holds a greyscale copy of the ammo card's reload bar texture,
+which the plugin colours (`tools/package_unit_inspection.py`). Both are plain
 text and DDS textures, derived from the game's own UI and material definitions,
-so it can only be built on a machine with the game
-installed, and it is distributed as a separate download
-(`defiance-squad-scroll-ui.zip`). The game's archives are encrypted; set
-`DEFIANCE_PAK_PASSWORD` to their password first.
+so they can only be built on a machine with the game installed, and they are
+distributed as a separate download (`defiance-squad-scroll-ui.zip`). The game's
+archives are encrypted; set `DEFIANCE_PAK_PASSWORD` to their password first.
 
 ```bat
 python tools/package.py --companion-only --game "C:\Games\...\Terminator Dark Fate - Defiance"

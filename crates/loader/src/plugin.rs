@@ -2,28 +2,16 @@
 //!
 //! Identity checks, the feature-mask and crash handshakes, the service
 //! extension handshake and the hook/service lifecycle live here, apart from the
-//! host's startup orchestration in `host.rs`. A plugin that fails has its
-//! `stop` called and its hooks removed; the DLL itself is left loaded, since
-//! pulling it out from under anything it started is worse.
+//! host's startup orchestration in `host.rs`. A plugin loads from a shadow copy
+//! (`lifecycle::shadow_copy`) and, once initialized, is recorded for
+//! `lifecycle::unload`. A plugin that fails has its `stop` called and its hooks
+//! removed; the DLL itself is left loaded, since pulling it out from under
+//! anything it started is worse.
 
 use crate::plan::Planned;
 use crate::win;
 use core::ffi::CStr;
 use defiance_api::{Api, Entry, ABI_VERSION, PLUGIN_ENTRY};
-#[cfg(feature = "test-host")]
-use std::sync::Mutex;
-
-/// Plugins that initialised, for `unload` to stop in reverse. Only the
-/// in-process test host unloads, so a shipping run does not record them.
-#[cfg(feature = "test-host")]
-struct Loaded {
-    owner: usize,
-    name: String,
-    stop: Option<unsafe extern "C" fn()>,
-}
-
-#[cfg(feature = "test-host")]
-static LOADED: Mutex<Vec<Loaded>> = Mutex::new(Vec::new());
 
 /// Why loading a planned plugin did not finish. `degraded` is set when its
 /// spans could not all be restored: the host must then stop installing, since
@@ -51,6 +39,12 @@ fn c_string(text: *const core::ffi::c_char) -> String {
         .into_owned()
 }
 
+/// Whether a plugin loads from a shadow copy: only one its manifest allows to
+/// be reloaded while the game runs.
+pub fn loads_from_copy(node: &Planned) -> bool {
+    node.manifest.as_ref().is_some_and(|m| m.hot_reload)
+}
+
 /// Load one planned plugin DLL, verify its exported identity against the
 /// manifest, and run its `init`. A plugin that fails is logged, `stop` is
 /// called, and any hook it managed to install before failing is removed; the
@@ -69,7 +63,28 @@ pub fn load(
     {
         return Err(LoadFailure::plain("manifest ABI does not match the host"));
     }
-    let wide = win::wide(&node.path.to_string_lossy());
+    // A reloadable plugin loads from a copy, so the DLL in the plugins
+    // directory stays replaceable. The others load in place under their own
+    // file names, which other plugins may look them up by (the feature
+    // plugins find Core's module as `defiance_plugin_core.dll`).
+    let shadow = if !loads_from_copy(node) {
+        node.path.clone()
+    } else {
+        crate::config::current()
+            .map(|config| config.paths.root.join("cache").join("plugins"))
+            .ok_or_else(|| "no configuration".to_string())
+            .and_then(|cache| {
+                crate::lifecycle::shadow_copy(&node.path, &cache).map_err(|e| e.to_string())
+            })
+            .unwrap_or_else(|e| {
+                crate::log::warn(&format!(
+                    "{}: loading in place, not from a copy ({e}); it cannot be reloaded",
+                    node.id
+                ));
+                node.path.clone()
+            })
+    };
+    let wide = win::wide(&shadow.to_string_lossy());
     let module = unsafe { win::LoadLibraryW(wide.as_ptr()) };
     if module.is_null() {
         return Err(LoadFailure::plain(format!(
@@ -197,23 +212,30 @@ pub fn load(
             degraded: failed > 0,
         });
     }
-    #[cfg(feature = "test-host")]
-    LOADED.lock().unwrap().push(Loaded {
+    crate::lifecycle::record(crate::lifecycle::Loaded {
         owner,
+        id: node.id.clone(),
         name,
+        path: node.path.clone(),
+        reloadable: shadow != node.path && node.manifest.as_ref().is_some_and(|m| m.hot_reload),
+        shadow,
+        module: module as usize,
+        code: crate::lifecycle::code_ranges(module as usize),
         stop: plugin.stop,
+        feature: node.builtin.map_or(0, |builtin| builtin.feature),
+        stamp: crate::lifecycle::stamp(&node.path),
+        multiplayer_safe: crate::plan::multiplayer_safe(node),
     });
     Ok(())
 }
 
 /// Stop every plugin, newest first, and take its hooks out. Nothing calls this
-/// in a shipping run — the loader lives as long as the process — but it is what
-/// the in-process test host uses. DLLs and published stubs stay mapped: a real
-/// unload would additionally need to wait for all in-flight plugin calls.
+/// in a shipping run, which unloads one plugin at a time
+/// (`lifecycle::unload`); it is what the in-process test host uses. DLLs stay
+/// mapped.
 #[cfg(feature = "test-host")]
 pub fn unload() {
-    let plugins: Vec<Loaded> = std::mem::take(&mut *LOADED.lock().unwrap());
-    for plugin in plugins.into_iter().rev() {
+    for plugin in crate::lifecycle::loaded().into_iter().rev() {
         if let Some(stop) = plugin.stop {
             unsafe { stop() };
         }
@@ -231,5 +253,6 @@ pub fn unload() {
                 plugin.name
             ));
         }
+        crate::lifecycle::forget(plugin.owner);
     }
 }

@@ -74,6 +74,9 @@ pub struct Patch {
     /// The squad preview's cell: Core's dimmed-material callback at +0, which
     /// Core writes with the selection feature (`patch/preview-dim.asm`).
     pub preview_dim_cell: usize,
+    /// The marquee's cell: `GetAsyncKeyState` at +0 and the mode at +8, which
+    /// Core writes with the selection feature (`patch/region-individual.asm`).
+    pub marquee_cell: usize,
     pub detours: Vec<Hook>,
     pub setter_offset: usize,
     pub trace_fixups: Vec<Fixup>,
@@ -185,6 +188,7 @@ impl Patch {
             trace_offset: number("trace_offset"),
             ammo_scratch: number("ammo_scratch"),
             preview_dim_cell: number("preview_dim_cell"),
+            marquee_cell: number("marquee_cell"),
             setter_offset: number("setter_offset"),
             detours: many("hook_rva")
                 .into_iter()

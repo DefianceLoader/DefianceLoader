@@ -10,6 +10,7 @@ own code, so the code is placed at the start of one large allocation and the
 cursor lands inside it; the test reads and writes that dword directly.
 """
 import ctypes, json, pathlib, sys
+import builds
 from ctypes import wintypes
 import keystone
 sys.path.insert(0, "tools")
@@ -115,7 +116,7 @@ def squad(members, slot_type, used, maximum, no_pickup=False):
 # --- the two functions under test -------------------------------------------
 PROTO = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int)
 
-stock_img = Image("bin/logic.orig.dll")
+stock_img = Image(str(builds.reference().logic))
 call_stock = PROTO(blob(stock_img.read(0x43e0f0, 0x43e23b - 0x43e0f0)))
 
 # the patched chooser, with room for the cursor its code reaches past itself

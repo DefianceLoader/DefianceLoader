@@ -60,9 +60,40 @@ struct Installed {
     original: Vec<u8>,
     owner: usize,
     owner_name: String,
+    /// The executable allocation serving the hook, `[start, end)`: the
+    /// trampoline with its relay, or a call stub. Empty for a byte patch.
+    code: (usize, usize),
 }
 
 static INSTALLED: Mutex<Vec<Installed>> = Mutex::new(Vec::new());
+/// The allocations of removed hooks, with their owners: `(owner, start, end)`.
+/// They stay mapped, since a thread may still be in one, and a relay or stub
+/// still jumps into its owner's code, so unloading that owner must wait until
+/// no thread is in them either ([`owned_code`]).
+static RETIRED: Mutex<Vec<(usize, usize, usize)>> = Mutex::new(Vec::new());
+
+/// Every executable allocation `owner`'s hooks use or used: the trampolines,
+/// relays and call stubs of its installed and removed hooks. A relay or stub
+/// jumps into the owner's code, so a thread inside one reaches that code next
+/// even with no address of it on its stack.
+pub fn owned_code(owner: usize) -> Vec<(usize, usize)> {
+    let mut out: Vec<(usize, usize)> = INSTALLED
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .filter(|hook| hook.owner == owner && hook.code.1 > hook.code.0)
+        .map(|hook| hook.code)
+        .collect();
+    out.extend(
+        RETIRED
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .filter(|&&(o, _, _)| o == owner)
+            .map(|&(_, start, end)| (start, end)),
+    );
+    out
+}
 
 /// The plugin whose `init` is running on this thread.
 #[derive(Clone)]
@@ -326,6 +357,7 @@ unsafe fn install_entry(
         original,
         owner: owner.index,
         owner_name: owner.name,
+        code: (trampoline, trampoline + allocation_size),
     });
     allocation.forget(); // the installed hook owns the entire block
     Ok(trampoline as *mut c_void)
@@ -423,6 +455,7 @@ pub unsafe fn install_call_out(
         original,
         owner: owner.index,
         owner_name: owner.name,
+        code: (stub, stub + stub_size),
     });
     allocation.forget();
     Ok(reached)
@@ -458,6 +491,7 @@ pub unsafe fn patch_bytes(target: *mut c_void, before: &[u8], after: &[u8]) -> R
         original: before.to_vec(),
         owner: owner.index,
         owner_name: owner.name,
+        code: (0, 0),
     });
     Ok(())
 }
@@ -486,6 +520,14 @@ pub fn remove(target: *mut c_void) -> Result<(), String> {
     crate::crash::unmap(hook.target);
     // Keep the stub allocation and crash mapping: in-flight calls can return
     // here even when no suspended instruction pointer currently points at it.
+    // Its owner's unload still waits for threads inside it (`owned_code`).
+    if hook.code.1 > hook.code.0 {
+        RETIRED.lock().unwrap_or_else(|p| p.into_inner()).push((
+            hook.owner,
+            hook.code.0,
+            hook.code.1,
+        ));
+    }
     Ok(())
 }
 

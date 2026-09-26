@@ -1,4 +1,6 @@
-"""Compare another build of a DLL with the one the patch was written for.
+"""Compare another build of a DLL with its base: the one the patch was written
+for, or with `--base NAME` any supported build (tools/builds.py), usually the
+new build's neighbour.
 
 The signatures (tools/sigs.py) vouch for the patch sites; this vouches for the
 rest. Every .pdata function of the reference build is matched in the other by
@@ -9,15 +11,37 @@ changed. A changed object layout shows up as offsets changing across many
 functions, so a handful of changes, none holding a site, means the payload's
 assumptions carry over.
 
-    python tools/builddiff.py logic bin/steam/logic.dll
-    python tools/builddiff.py game  bin/steam/game.dll
+    python tools/builddiff.py logic bin/steam/2025-12-23/logic.dll
+    python tools/builddiff.py game  bin/steam/2025-12-23/game.dll
+    python tools/builddiff.py game  bin/gog/2026-09-25/game.dll --base gog-2026-09-14
 """
 import bisect, collections, hashlib, json, sys
+import builds
 sys.path.insert(0, "tools")
 import sigs
 
-REFERENCE = {"logic": ("bin/logic.orig.dll", "out/payload.json"),
-             "game": ("bin/game.orig.dll", "out/payload-game.json")}
+REFERENCE = {"logic": (str(builds.reference().logic), "out/payload.json"),
+             "game": (str(builds.reference().game), "out/payload-game.json")}
+
+
+def base_paths(which, name=None):
+    """(DLL, descriptor) of the build compared against: `name`, or the reference.
+    Another base's sites are its resolved variant's (tools/variants/)."""
+    base = builds.build(name) if name else builds.reference()
+    if base == builds.reference():
+        return REFERENCE[which]
+    dll = base.require().logic if which == "logic" else base.require().game
+    return str(dll), str(builds.ROOT / "tools" / "variants" / base.name / f"{which}.json")
+
+
+def base_option(argv):
+    """`argv` without its `--base NAME`, and NAME (None without one)."""
+    if "--base" not in argv:
+        return list(argv), None
+    i = argv.index("--base")
+    if i + 1 >= len(argv):
+        raise SystemExit("--base needs a build name")
+    return argv[:i] + argv[i + 2:], argv[i + 1]
 
 
 def functions(module):
@@ -41,8 +65,8 @@ def shape(module, start, end):
     return [(i.mnemonic, i.size) for i in module.md.disasm(module.image[start:end], start)]
 
 
-def main(which, other_path):
-    reference, descriptor = REFERENCE[which]
+def main(which, other_path, base=None):
+    reference, descriptor = base_paths(which, base)
     ref, other = sigs.Module(reference), sigs.Module(other_path)
     rf, of = functions(ref), functions(other)
     where = collections.defaultdict(list)
@@ -71,7 +95,10 @@ def main(which, other_path):
             data_only += 1
         else:
             changed.append((s, e))
-    sites = json.load(open(descriptor))["sites"]
+    try:
+        sites = json.load(open(descriptor))["sites"]
+    except OSError:
+        raise SystemExit(f"{descriptor} is missing: the base has no resolved sites to check")
     touched = [x["site_name"] for x in sites
                for s, e in changed if s <= x["site_start"] + x["site_offset"] < e]
     print(f"{which}.dll: {len(rf)} functions, {len(rf) - len(unmatched)} identical, "
@@ -82,4 +109,5 @@ def main(which, other_path):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1], sys.argv[2]))
+    args, base = base_option(sys.argv[1:])
+    sys.exit(main(args[0], args[1], base))

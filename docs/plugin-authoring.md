@@ -31,6 +31,13 @@ wrappers live in `crates/feature-sdk`.
    the game refuses to connect online while it is active. Such a plugin also
    starts only after Core has installed that guard, so it cannot run in an
    install without Core.
+   Add `"hot_reload": false` if the plugin can only be loaded at startup.
+   Otherwise the development hot reload may unload it while the game runs: its
+   `stop` must end its own threads, and it must leave no pointer to its code
+   outside the hooks and services the loader tracks. Its service functions
+   must keep working after `stop`: a consumer that can only load at startup
+   keeps calling the old copy, which stays loaded for it. State it left in game
+   objects stays for the next copy.
 4. Build from the repository root with `mise exec -- cargo build --release
    --manifest-path path/to/Cargo.toml`. Compile DLLs and the game for x64.
    To build and test the included service example, run `mise run services-test`.

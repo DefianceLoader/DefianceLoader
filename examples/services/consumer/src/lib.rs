@@ -1,6 +1,16 @@
 use defiance_api::{Api, Plugin, ABI_VERSION, LOG_ERROR, LOG_INFO};
-use example_counter_contract::CounterV1;
+use example_counter_contract::{CounterV1, TotalV1};
+use std::sync::OnceLock;
 defiance_feature_sdk::service_handshake!();
+
+/// The counter's table, cached as a consumer does, for `total`.
+static COUNTER: OnceLock<&'static CounterV1> = OnceLock::new();
+unsafe extern "C" fn total() -> u64 {
+    COUNTER
+        .get()
+        .map_or(0, |counter| unsafe { (counter.get)() })
+}
+static TOTAL: TotalV1 = TotalV1 { total };
 
 unsafe extern "C" fn init(api: *const Api) -> i32 {
     if api.is_null() || (*api).abi_version != ABI_VERSION || (*api).reserved != 0 {
@@ -31,6 +41,10 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
         LOG_INFO,
         c"counter-user: shared state verified (two increments)".as_ptr(),
     );
+    let _ = COUNTER.set(counter);
+    if defiance_feature_sdk::services::register(c"total", 1, &TOTAL).is_err() {
+        return 1;
+    }
     0
 }
 

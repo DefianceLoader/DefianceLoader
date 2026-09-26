@@ -5,6 +5,7 @@ Native loop fragments below exercise the actual filters, descriptor traversal,
 and fallback stores from both supported builds without launching the game.
 """
 import ctypes, pathlib, struct, sys
+import builds
 from ctypes import wintypes
 import keystone
 sys.path.insert(0, "tools")
@@ -208,8 +209,8 @@ def native_loops(path, mission_delta, squad_delta):
     assert slot(descriptors,3*0x38)==0xcafebabe
     print(f'PASS  {path}: native filters, per-soldier reset, scan, fallback and descriptor loop')
 
-native_loops('bin/game.orig.dll',0,0)
-native_loops('bin/steam/game.dll',0x48f0,0x5390)
+native_loops(str(builds.reference().game),0,0)
+native_loops(str(builds.build("steam-2025-12-23").game),0x48f0,0x5390)
 
 print()
 print(f"{failures} failed" if failures else "all cases as expected")

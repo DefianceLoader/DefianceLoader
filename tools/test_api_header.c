@@ -18,6 +18,8 @@ CHECK(offsetof(DefianceCrashRangesV1, unmap) == 8, "crash ranges unmap offset");
 CHECK(sizeof(DefianceTraceV1) == 16, "trace table layout");
 CHECK(offsetof(DefianceTraceV1, stop) == 8, "trace stop offset");
 CHECK(sizeof(DefianceMultiplayerV1) == 16, "multiplayer table layout");
+CHECK(sizeof(DefianceSessionV1) == 24, "session table layout");
+CHECK(offsetof(DefianceSessionV1, before_mission) == 16, "session before_mission offset");
 CHECK(offsetof(DefianceMultiplayerV1, guard_installed) == 8, "multiplayer guard offset");
 CHECK(sizeof(DefianceMemberStateV1) == 24, "member snapshot layout");
 CHECK(sizeof(DefianceGameAccessV1) == 56, "game access table layout");
