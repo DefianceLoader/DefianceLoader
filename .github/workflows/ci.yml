@@ -44,6 +44,7 @@ jobs:
           cargo test --manifest-path plugins/regroup/Cargo.toml
           cargo test --manifest-path plugins/expanded-ammo-menu/Cargo.toml
           cargo test --manifest-path plugins/squad-management-scroll/Cargo.toml
+          cargo test --manifest-path plugins/unit-inspection/Cargo.toml
       - name: Test the native hook lifecycle with real thread suspension
         run: cargo test -p defiance-loader --features test-host --test hook_lifecycle --test hook_regressions
       - uses: actions/setup-python@v7
@@ -52,7 +53,9 @@ jobs:
       - name: Install the Python test dependencies
         run: python -m pip install -r tools/requirements.txt
       - name: Test staging paths and uninstall
-        run: python tools/test_stage.py
+        run: |
+          python tools/test_stage.py
+          python tools/test_package_unit_inspection.py
       - name: Test release metadata enforcement
         run: python tools/test_build_resources.py
       - name: Test the explicit configuration migration

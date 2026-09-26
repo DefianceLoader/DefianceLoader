@@ -41,6 +41,7 @@ jobs:
           cargo build --release --manifest-path plugins/regroup/Cargo.toml
           cargo build --release --manifest-path plugins/expanded-ammo-menu/Cargo.toml
           cargo build --release --manifest-path plugins/squad-management-scroll/Cargo.toml
+          cargo build --release --manifest-path plugins/unit-inspection/Cargo.toml
           target\release\manifest-gen.exe --out target\release
       - name: Package and checksum
         id: package
