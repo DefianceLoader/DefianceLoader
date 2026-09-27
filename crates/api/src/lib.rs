@@ -129,6 +129,19 @@ pub struct SessionV1 {
     pub before_mission: unsafe extern "C" fn(),
 }
 
+/// `defiance.loader` / `original`, service version 1. Memory as it was before
+/// any plugin hooked or patched it through the loader, so checking bytes a
+/// plugin only reads or calls does not depend on which plugin started first.
+/// Check the live bytes where you write. Callable from any thread.
+#[repr(C)]
+pub struct OriginalV1 {
+    /// Copy `length` bytes at `address` into `out`, with every loader-owned
+    /// hook and byte patch they overlap undone. The range must lie in one
+    /// readable region (one section of a module). Returns 0; 1 for a null
+    /// argument or zero length; 2 when the range is not readable.
+    pub read: unsafe extern "C" fn(address: usize, out: *mut u8, length: usize) -> i32,
+}
+
 /// `defiance.selection` / `selection`, service version 1. Read-only, game-thread
 /// only. A non-null argument must be a live selectable facet of this game build.
 /// Null returns zero; pointers are never retained. No Rust-owned values cross ABI.
@@ -181,17 +194,71 @@ pub struct GameAccessV1 {
     pub set_squad_firing: unsafe extern "C" fn(ai: *mut c_void, value: u8) -> i32,
 }
 
-/// Built-in migration interface: replace a verified named function entry while
-/// retaining the rest of its feature's patch plan. Internal, not a game service.
+/// A function a patch unit names in its `natives`, replaced outright by
+/// `detour` instead of the unit's own jmp: the rest of the unit still installs.
 #[repr(C)]
 pub struct NativeReplacementV1 {
     pub name: *const c_char,
     pub detour: *mut c_void,
 }
 
+/// One patch unit for Core's `patch` service: its descriptor (UTF-8 JSON, the
+/// format `tools/units.py` writes) and its blob. Neither is retained after
+/// `PatchV1::prepare` returns.
+#[repr(C)]
+pub struct PatchUnitV1 {
+    pub descriptor: *const u8,
+    pub descriptor_len: usize,
+    pub code: *const u8,
+    pub code_len: usize,
+}
+
+/// `defiance.core` / `patch`, version 1: install patch units for the calling
+/// plugin. Call during init, in this order: `prepare` finds (relocating if the
+/// build calls for it) and links the units near their module, writing
+/// nothing to the game; `cell` gives a prepared unit's named cell, for the
+/// plugin to fill before its hooks go live; `install` checks every site and
+/// writes them all under the calling plugin's ownership, or none. The host
+/// restores them when the plugin fails or is unloaded; the linked code stays
+/// for the process's life.
+#[repr(C)]
+pub struct PatchV1 {
+    /// A handle for the prepared units, or null (the reason is logged). The
+    /// handle is valid for the process's life.
+    pub prepare: unsafe extern "C" fn(
+        api: *const Api,
+        units: *const PatchUnitV1,
+        count: usize,
+    ) -> *mut c_void,
+    /// The address of the cell `name` of a unit in `prepared`, or 0.
+    pub cell: unsafe extern "C" fn(prepared: *mut c_void, name: *const c_char) -> usize,
+    /// 0 when every site was written. `replacements` name `natives` replaced
+    /// in Rust; a non-null `call_detour` takes the units' one call write
+    /// instead of its entry. Nonzero leaves the game unchanged.
+    pub install: unsafe extern "C" fn(
+        api: *const Api,
+        prepared: *mut c_void,
+        replacements: *const NativeReplacementV1,
+        count: usize,
+        call_detour: *mut c_void,
+    ) -> i32,
+}
+
+/// `defiance.core` / `build`, version 1: the game build Core recognised.
+#[repr(C)]
+pub struct BuildV1 {
+    /// The build whose units apply: `reference` (the build they are written
+    /// for, or one Core finds them in by signature) or a layout variant's
+    /// name (`tools/variants/<name>`). NUL-terminated, process lifetime.
+    pub name: unsafe extern "C" fn() -> *const c_char,
+}
+
 pub const LOG_INFO: u32 = 0;
 pub const LOG_WARN: u32 = 1;
 pub const LOG_ERROR: u32 = 2;
+/// Written only when `[logging] level = debug`. A loader older than this
+/// level writes it as info.
+pub const LOG_DEBUG: u32 = 3;
 
 /// What the loader hands a plugin at `init`. Every function pointer is valid
 /// for the life of the process. Strings passed in are NUL-terminated UTF-8;
@@ -371,6 +438,13 @@ mod tests {
         assert_eq!(size_of::<SelectionV1>(), size_of::<*const c_void>());
         assert_eq!(size_of::<AmmoMenuV1>(), 2 * size_of::<*const c_void>());
         assert_eq!(size_of::<GameAccessV1>(), 7 * size_of::<*const c_void>());
+        assert_eq!(size_of::<PatchUnitV1>(), 4 * size_of::<*const c_void>());
+        assert_eq!(size_of::<PatchV1>(), 3 * size_of::<*const c_void>());
+        assert_eq!(size_of::<BuildV1>(), size_of::<*const c_void>());
+        assert_eq!(
+            size_of::<NativeReplacementV1>(),
+            2 * size_of::<*const c_void>()
+        );
         assert_eq!(size_of::<MemberStateV1>(), 24);
         assert_eq!(core::mem::offset_of!(MemberStateV1, selected), 16);
     }

@@ -26,7 +26,7 @@ DLL = ROOT / 'plugins/squad-management-scroll/target/release/defiance_plugin_squ
 
 
 # The builds by the index of the generated tables.
-BUILDS = ("gog-2025-12-23", "steam-2025-12-23", "gog-2026-09-14", "steam-2026-09-22")
+BUILDS = ("gog-2025-12-23", "steam-2025-12-23", "gog-2026-09-14", "steam-2026-09-22", "gog-2026-09-25", "steam-2026-09-25")
 PATHS = {i: builds.build(n).game for i, n in enumerate(BUILDS)}
 
 # Per panel kind: the unit member on the panel, the four widget-array bases
@@ -137,6 +137,7 @@ def case(build, mode, kind='squad'):
     # withholds one, which the plugin must refuse rather than default.
     settings = {'perk_slots': b'9', 'upgrade_slots': b'5' if mode == 'upslots5' else b'20',
                 'upgrades': b'false' if mode == 'noupgrades' else b'true',
+                'fit_upgrades': b'false' if mode == 'nofit' else b'true',
                 'vehicles': b'false' if mode == 'novehicles' else b'true'}
     if mode == 'noconfig': del settings['upgrade_slots']
     setting_bufs = {k: C.create_string_buffer(v) for k, v in settings.items()}
@@ -159,7 +160,7 @@ def case(build, mode, kind='squad'):
     if mode == 'code': put(addr('thumb'), bytes([C.c_ubyte.from_address(addr('thumb')).value ^ 1]))
     if mode == 'vtable': put(addr(panel_kind['vtable']) + 8, struct.pack('<Q', addr('dispatch') + 1))
     result = init(C.byref(api))
-    if mode not in ('ok', 'noupgrades', 'novehicles', 'upslots5'):
+    if mode not in ('ok', 'noupgrades', 'novehicles', 'upslots5', 'nofit'):
         assert result != 0 and not owned, (mode, result, messages)
         if mode.startswith('fail'): assert C.string_at(base, size) == original
         else: assert calls == 0
@@ -188,9 +189,9 @@ def case(build, mode, kind='squad'):
     pq(hv+0x58, get_service)
     # The upgrade display is the script service's vt+8 called with the key
     # static (+8) and the element. The stock refresh initialises that static;
-    # the fixture seeds it directly.
-    key_static, key_seen = alloc(0x20), []
-    pq(addr('upgrade_key'), key_static)
+    # the fixture seeds it directly, apart from the training key.
+    key_static, upgrade_static, key_seen = alloc(0x20), alloc(0x20), []
+    pq(addr('upgrade_key'), upgrade_static)
     # The squad's rank, reached as the stock perk refresh reaches it: holder
     # vt+0x68 -> vt+0x38 -> the build's rank slot, called with the squad's
     # experience (+0x70) and the thresholds at the panel's [+0x2b8]+0x28. It
@@ -232,12 +233,48 @@ def case(build, mode, kind='squad'):
         names = alloc(0x20); msvc(names, owner); lists[owner] = names
     infos = [alloc(0x40) for _ in range(10)]
     available = [9]
+    # The upgrade table, walked the same way with the upgrade key. A record fits
+    # the vehicle types its nine lists name (+0x190..+0x250, each a vector of
+    # pointers to entries named at +0x28), or the squads its one squad list
+    # names (+0x268, entries named at the build's squad_fit_name; an empty name
+    # fits every squad), and carries its conflict tags at +0x30. Rows 1-3 fit
+    # rangers tagged armor, armor and ammo+armor (all sharing armor: one card),
+    # row 4 names no unit (fits every squad, no vehicle), row 5 repeats row 1's
+    # record; of the next 34 rows the first `untagged` fit rangers with no tag,
+    # the rest militia. The last row is empty.
+    up_columns, up_rows = 2, 41
+    up_cells = alloc(up_rows*up_columns*0x20)
+    for row in range(1, up_rows-1): msvc(up_cells + row*up_columns*0x20, f'upgrade_{row}')
+    up_table_name, up_table = alloc(0x20), alloc(0x28)
+    pq(up_table, up_cells); pq(up_table+0x18, up_columns); pq(up_table+0x20, up_rows)
+    squad_name = rvas['squad_fit_name']
+    def up_record(owner, fits_at, *tags):
+        record, entry, storage = alloc(0x280), alloc(0x880), alloc(8)
+        if kind == 'squad': fits_at, named = 0x268, squad_name
+        else: named = 0x28
+        msvc(entry+named, owner); pq(storage, entry)
+        pq(record+fits_at, storage); pq(record+fits_at+8, storage+8)
+        strings = alloc(0x20*max(1, len(tags)))
+        for i, tag in enumerate(tags): msvc(strings+i*0x20, tag)
+        pq(record+0x30, strings); pq(record+0x38, strings+0x20*len(tags))
+        return record
+    up_fixed = [up_record('Fnd_rangers', 0x190, 'armor'), up_record('Fnd_rangers', 0x250, 'armor'),
+                up_record('Fnd_rangers', 0x1d8, 'ammo', 'armor'), up_record('', 0x190)]
+    up_fixed.append(up_fixed[0])
+    up_other = up_record('Res_militia', 0x190)
+    up_plain = [(up_record('Fnd_rangers', 0x220), up_record('Res_militia', 0x220)) for _ in range(34)]
+    untagged, fixed_fit, paths_seen = [30], [True], []
+    anyone = int(kind == 'squad')  # row 4 fits squads only
     @cb(C.c_void_p, C.c_void_p, C.c_void_p)
-    def table_path(_, key): key_seen.append(key); return table_name
+    def table_path(_, key):
+        key_seen.append(key); paths_seen.append(key)
+        return up_table_name if key == upgrade_static + 8 else table_name
     @cb(C.c_void_p, C.c_void_p)
     def get_tables(_): return tables
     @cb(C.c_void_p, C.c_void_p, C.c_void_p)
-    def get_table(_, name): assert name == table_name; return table
+    def get_table(_, name):
+        if name == up_table_name: return up_table
+        assert name == table_name; return table
     # The upgrade column uses the same script-service slot (vt+8) with the
     # upgrade key and the element; return the element as its display so the
     # binding can be checked. Training rows keep the perk-row behaviour.
@@ -248,6 +285,11 @@ def case(build, mode, kind='squad'):
         key_seen.append(key)
         if up_lo <= where < up_hi:
             return where
+        if key == upgrade_static + 8:
+            row = (where - up_cells) // (up_columns*0x20)
+            assert 1 <= row < up_rows-1, 'the header and the empty row are never looked up'
+            if row <= 5: return up_fixed[row-1] if fixed_fit[0] else up_other
+            return up_plain[row-6][0 if row-6 < untagged[0] else 1]
         row = (where - cells) // (columns*0x20)
         assert 1 <= row <= 10, 'the header and the empty row are never looked up'
         names = lists['Fnd_rangers' if row <= available[0] else 'Res_militia']
@@ -378,6 +420,15 @@ def case(build, mode, kind='squad'):
         assert i32(sliders[2]+0x1bc)==0
         print(f'PASS build={build} {kind} upslots5: upgrade column capped at five', flush=True)
         return
+    if mode == 'nofit':
+        # The setting off: the column is upgrade_slots long however few the
+        # type can hold, and the upgrade table is never walked.
+        untagged[0] = 0; refresh(panel)
+        assert i32(sliders[2]+0x1b8)==15
+        assert upgrade_static + 8 not in paths_seen
+        assert not [m for m in messages if 'holds' in m]
+        print(f'PASS build={build} {kind} nofit: upgrade column upgrade_slots long', flush=True)
+        return
     assert bindings(0)==[records_w+i*0x48 for i in range(1,7)]
     assert bindings(1)==[records_a+i*0x28 for i in range(6)]
     # The upgrade column binds each of its five widgets to the element at the
@@ -463,6 +514,37 @@ def case(build, mode, kind='squad'):
     before = i32(sliders[2]+0x1bc); assert drag_start(item) == before
     wheel(upgrade_cards[0],120*20)
     assert upgrade_bindings()==[upgrade_records+i*0x20 for i in range(5)]
+    # The column is as long as the unit's type can hold (fit_upgrades): each
+    # untagged upgrade that fits it and one armor (the three armor-tagged ones
+    # conflict), capped at upgrade_slots. Each type's answer is logged once,
+    # and again on a change.
+    fitted = lambda: [m for m in messages if 'holds' in m]
+    line = lambda holds, fit: f'squad scrolling: Fnd_rangers holds {holds} upgrades at once ({fit} fit it, 40 upgrade table rows)'
+    assert fitted()==[line(31 + anyone, 33 + anyone)], fitted()
+    assert paths_seen.count(upgrade_static + 8) > 1
+    untagged[0] = 9 - anyone; refresh(panel); refresh(panel)
+    assert i32(sliders[2]+0x1b8)==5, 'ten cards'
+    assert fitted()[1:]==[line(10, 12)], fitted()
+    wheel(upgrade_cards[0],-120*20); assert i32(sliders[2]+0x1bc)==5
+    assert [b or 0 for b in upgrade_bindings()]==[upgrade_records+i*0x20 for i in range(5,8)]+[0,0]
+    wheel(upgrade_cards[0],120*20)
+    # a drag start still shows the first empty card, which the ten include
+    i32(item+0x2c, 0); tagged(item, 'engine')
+    assert drag_start(item) == 4
+    wheel(upgrade_cards[0],120*20)
+    # Never shorter than what it owns: eight upgrades, no empty card, and a
+    # drag start that conflicts with none has nothing to show.
+    untagged[0] = 0; refresh(panel)
+    assert i32(sliders[2]+0x1b8)==3
+    assert drag_start(item) == 0
+    # An answer of none, or no answer (the key static unset), keeps upgrade_slots.
+    fixed_fit[0] = False; refresh(panel)
+    assert i32(sliders[2]+0x1b8)==15
+    fixed_fit[0] = True; pq(addr('upgrade_key'), 0); refresh(panel)
+    assert i32(sliders[2]+0x1b8)==15
+    pq(addr('upgrade_key'), upgrade_static); untagged[0] = 30; refresh(panel)
+    assert i32(sliders[2]+0x1b8)==15
+    assert upgrade_bindings()==[upgrade_records+i*0x20 for i in range(5)]
     refresh(panel)
     assert bindings(0)[0]==records_w+2*0x48 and bindings(1)[0]==records_a+2*0x28
     if panel_kind['perks']:
@@ -518,7 +600,7 @@ def case(build, mode, kind='squad'):
         # The row is capped at the trainings the squad's type can take: rangers
         # with eight available and seven owned get one open card, not two.
         wheel(perk_cards[0],480); available[0] = 8; key_seen.clear(); refresh(panel)
-        assert key_seen and set(key_seen) == {key_static + 8}, key_seen
+        assert key_static + 8 in key_seen and set(key_seen) <= {key_static + 8, upgrade_static + 8}, key_seen
         assert i32(sliders[3]+0x1b8)==3
         wheel(perk_cards[0],-480); assert i32(sliders[3]+0x1bc)==3
         assert perk_bindings()==[perk_records+i*0x20 for i in range(3,7)]+[('blank',1,1)], perk_bindings()
@@ -621,7 +703,7 @@ if __name__ == '__main__':
             if not (ROOT / PATHS[build]).exists():
                 continue
             for kind in ['squad','vehicle']:
-                modes = ['code','vtable','fail1','fail2','fail3','fail4','fail5','fail6','fail7','fail8','fail9','fail10','noconfig','ok','noupgrades','upslots5']
+                modes = ['code','vtable','fail1','fail2','fail3','fail4','fail5','fail6','fail7','fail8','fail9','fail10','noconfig','ok','noupgrades','upslots5','nofit']
                 if kind == 'vehicle':
                     modes.append('novehicles')
                 for mode in modes:

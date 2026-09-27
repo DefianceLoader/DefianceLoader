@@ -1,0 +1,452 @@
+{
+ "unit_schema": 1,
+ "name": "selection-game",
+ "plugin": "selection",
+ "module": "game.dll",
+ "source_sha256": "bc2af42369f9f6fe70e206ae4846f8f0e46ac01cca9a325c8159ee04a9b5e405",
+ "unit_bytes": 3612,
+ "code_offset": 160,
+ "cells": [
+  {
+   "name": "trace",
+   "offset": 0,
+   "bytes": 96
+  },
+  {
+   "name": "state",
+   "offset": 96,
+   "bytes": 64
+  },
+  {
+   "name": "tab_modifier",
+   "offset": 136,
+   "bytes": 8
+  }
+ ],
+ "writes": [
+  {
+   "kind": "jmp",
+   "rva": 2054784,
+   "before": "4889742410574883ec40",
+   "tail": "9090909090",
+   "entry": 459,
+   "label": "double_click"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2055152,
+   "before": "48895c24084889742410",
+   "tail": "9090909090",
+   "entry": 349,
+   "label": "single_click"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2195076,
+   "before": "c64587000f57c0",
+   "tail": "9090",
+   "entry": 3200,
+   "label": "subset_mark"
+  },
+  {
+   "kind": "jmp",
+   "rva": 3268912,
+   "before": "ff9048050000",
+   "tail": "90",
+   "entry": 1031,
+   "label": "building_tab_refresh"
+  },
+  {
+   "kind": "jmp",
+   "rva": 3360651,
+   "before": "488b5c2430",
+   "tail": "",
+   "entry": 628,
+   "label": "world_toggle"
+  },
+  {
+   "kind": "jmp",
+   "rva": 3360700,
+   "before": "ff5060488b5c2430",
+   "tail": "909090",
+   "entry": 542,
+   "label": "world_select"
+  },
+  {
+   "kind": "jmp",
+   "rva": 3453316,
+   "before": "498b064c8bc7488d542420498bceff9080000000",
+   "tail": "909090909090909090909090909090",
+   "entry": 820,
+   "label": "world_double"
+  },
+  {
+   "kind": "jmp",
+   "rva": 3466438,
+   "before": "ff9048050000",
+   "tail": "90",
+   "entry": 976,
+   "label": "building_tab_collect"
+  },
+  {
+   "kind": "jmp",
+   "rva": 3466598,
+   "before": "e82585ceff",
+   "tail": "",
+   "entry": 1005,
+   "label": "building_tab_apply"
+  },
+  {
+   "kind": "jmp",
+   "rva": 3494534,
+   "before": "488b86a0000000",
+   "tail": "9090",
+   "entry": 715,
+   "label": "ctrl_select"
+  },
+  {
+   "kind": "jmp",
+   "rva": 3565740,
+   "before": "498b064885c07409",
+   "tail": "909090",
+   "entry": 3265,
+   "label": "subset_refresh"
+  },
+  {
+   "kind": "jmp",
+   "rva": 3567527,
+   "before": "488bc8488bd84c8b00",
+   "tail": "90909090",
+   "entry": 1052,
+   "label": "building_icon_select"
+  }
+ ],
+ "fixups": [
+  {
+   "kind": "abs64",
+   "target": 2055162,
+   "offset": 448
+  },
+  {
+   "kind": "abs64",
+   "target": 2054992,
+   "offset": 502
+  },
+  {
+   "kind": "abs64",
+   "target": 2054805,
+   "offset": 531
+  },
+  {
+   "kind": "abs64",
+   "target": 3360708,
+   "offset": 617
+  },
+  {
+   "kind": "abs64",
+   "target": 3360656,
+   "offset": 704
+  },
+  {
+   "kind": "abs64",
+   "target": 3453336,
+   "offset": 957
+  },
+  {
+   "kind": "abs64",
+   "target": 3494678,
+   "offset": 779
+  },
+  {
+   "kind": "abs64",
+   "target": 3494623,
+   "offset": 792
+  },
+  {
+   "kind": "abs64",
+   "target": 3466444,
+   "offset": 994
+  },
+  {
+   "kind": "abs64",
+   "target": 3466603,
+   "offset": 1020
+  },
+  {
+   "kind": "abs64",
+   "target": 266272,
+   "offset": 1938
+  },
+  {
+   "kind": "abs64",
+   "target": 223888,
+   "offset": 2464
+  },
+  {
+   "kind": "abs64",
+   "target": 3268918,
+   "offset": 1041
+  },
+  {
+   "kind": "abs64",
+   "target": 3567556,
+   "offset": 1303
+  },
+  {
+   "kind": "abs64",
+   "target": 2195083,
+   "offset": 3254
+  },
+  {
+   "kind": "abs64",
+   "target": 3565762,
+   "offset": 3339
+  },
+  {
+   "kind": "abs64",
+   "target": 3565939,
+   "offset": 3324
+  },
+  {
+   "kind": "export",
+   "dll": "user32.dll",
+   "name": "GetAsyncKeyState",
+   "offset": 556
+  },
+  {
+   "kind": "export",
+   "dll": "user32.dll",
+   "name": "GetAsyncKeyState",
+   "offset": 644
+  },
+  {
+   "kind": "export",
+   "dll": "user32.dll",
+   "name": "GetAsyncKeyState",
+   "offset": 810
+  },
+  {
+   "kind": "export",
+   "dll": "user32.dll",
+   "name": "GetAsyncKeyState",
+   "offset": 2449
+  }
+ ],
+ "natives": [],
+ "anchors": [],
+ "sites": [
+  {
+   "site_name": "single_click",
+   "site_start": 2055152,
+   "site_group": 2055152,
+   "site_pattern": "48895c24084889742410574883ec20488bfa410fb6f0488b9140010000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "double_click",
+   "site_start": 2054784,
+   "site_group": 2054784,
+   "site_pattern": "4889742410574883ec40488bf9e8????????488bf04885c00f84????????488b8f48010000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "world_select",
+   "site_start": 3360690,
+   "site_group": 3360665,
+   "site_pattern": "4885d2750233d2488bcbff5060488b5c24304883c4205ec3",
+   "site_offset": 10
+  },
+  {
+   "site_name": "world_toggle",
+   "site_start": 3360641,
+   "site_group": 3360628,
+   "site_pattern": "4885d2750233d2488bcb488b5c24304883c4205e48ff6070",
+   "site_offset": 10
+  },
+  {
+   "site_name": "world_double",
+   "site_start": 3453316,
+   "site_group": 3452848,
+   "site_pattern": "498b064c8bc7488d542420498bceff9080000000e9????????",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ctrl_select",
+   "site_start": 3494534,
+   "site_group": 3493776,
+   "site_pattern": "488b86a0000000482b869800000048c1f8034883f8017741488b4e78488b01488b57104885d27409488b52104885d27503498bd7ff9040080000488bc84885c0740a488b00ff505884c07544488b07488bcfff505884c07537488d5577488bcee8????????488d4d67483bc8740a488b184c893848895d67488b4d774885c9740a488b01ba01000000ff104885db7523",
+   "site_offset": 0
+  },
+  {
+   "site_name": "building_tab_collect",
+   "site_start": 3466438,
+   "site_group": 3466272,
+   "site_pattern": "ff9040050000488b4c2420488b542428483bca754b4885c9",
+   "site_offset": 0
+  },
+  {
+   "site_name": "building_tab_apply",
+   "site_start": 3466598,
+   "site_group": 3466272,
+   "site_pattern": "e8????????0f57c9488bcbe8????????90488b4c24204885c9",
+   "site_offset": 0
+  },
+  {
+   "site_name": "building_tab_refresh",
+   "site_start": 3268912,
+   "site_group": 3268848,
+   "site_pattern": "ff9040050000488b4c2430483b4c24387549488b8e28010000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "building_icon_select",
+   "site_start": 3567527,
+   "site_group": 3567513,
+   "site_pattern": "488bc8488bd84c8b0041ff90980000004c8b03488bd7488bcb41ff5060",
+   "site_offset": 0
+  },
+  {
+   "site_name": "subset_mark",
+   "site_start": 2195076,
+   "site_group": 2194736,
+   "site_pattern": "c64587000f57c0f30f7f458f488b01ff50504883c008488d4c2430",
+   "site_offset": 0
+  },
+  {
+   "site_name": "subset_refresh",
+   "site_start": 3565740,
+   "site_group": 3565648,
+   "site_pattern": "498b064885c07409488b40104885c0750233c0483bc70f84????????488bd7498bcee8????????498b064885c00f84????????48837810000f84????????488b8b08040000488b01488bd7ff9048020000488bd784c07409488d8b20010000eb55488b8b08040000488b01ff90b0020000488bd784c07409488d8bc0010000eb35488b8b08040000488b01ff904002000084c07517488b8b08040000488b01488bd7ff90e002000084c07410488d8b58010000488bd7488b01ff5008488bd7488bcbe8????????",
+   "site_offset": 0
+  },
+  {
+   "site_name": "anchor",
+   "site_start": 2054992,
+   "site_group": 2054992,
+   "site_pattern": "48895c2408574883ec20488b81180100004c8b8120010000493bc074180f1f00",
+   "site_offset": 0
+  },
+  {
+   "site_name": "focus_append",
+   "site_start": 266272,
+   "site_group": 266272,
+   "site_pattern": "405355415541574883ec28488b41084c8bfa488b11498bef482bea482bc24d8be848c1fd03",
+   "site_offset": 0
+  },
+  {
+   "site_name": "focus_assign",
+   "site_start": 223888,
+   "site_group": 223888,
+   "site_pattern": "48895c2418565741564883ec204c8bc24c8bf133c0894424404885d27420488d542448",
+   "site_offset": 0
+  }
+ ],
+ "verified_sha": "",
+ "labels": {
+  "squad_of": 160,
+  "squad_fallback": 335,
+  "squad_done": 338,
+  "single_click": 349,
+  "single_ctrl": 408,
+  "single_tail": 446,
+  "double_click": 459,
+  "double_resolve": 497,
+  "double_tail": 526,
+  "world_select": 542,
+  "ws_keep": 598,
+  "ws_ready": 603,
+  "world_toggle": 628,
+  "wt_keep": 685,
+  "wt_ready": 689,
+  "ctrl_select": 715,
+  "cs_ignore": 777,
+  "cs_select": 790,
+  "control_down": 803,
+  "world_double": 820,
+  "wd_next": 877,
+  "wd_done": 949,
+  "wd_resume": 955,
+  "building_tab_collect": 976,
+  "building_tab_apply": 1005,
+  "building_tab_refresh": 1031,
+  "building_icon_select": 1052,
+  "icon_find_building": 1075,
+  "icon_not_selected": 1143,
+  "icon_found": 1148,
+  "icon_next": 1205,
+  "icon_marked": 1275,
+  "icon_stock": 1280,
+  "icon_done": 1292,
+  "building_focus_candidates": 1314,
+  "candidates_new": 1410,
+  "candidates_building": 1460,
+  "candidates_next": 1495,
+  "candidates_done": 1552,
+  "focus_manager": 1574,
+  "manager_none": 1623,
+  "manager_done": 1625,
+  "focus_member": 1631,
+  "member_none": 1694,
+  "member_done": 1696,
+  "focus_group": 1702,
+  "group_own": 1753,
+  "group_done": 1766,
+  "focus_active": 1767,
+  "active_none": 1873,
+  "active_done": 1875,
+  "focus_append_unique": 1881,
+  "append_scan": 1888,
+  "append_new": 1904,
+  "append_done": 1918,
+  "append_grow": 1919,
+  "building_focus_apply": 1954,
+  "apply_squad": 2039,
+  "apply_squad_next": 2085,
+  "apply_change": 2090,
+  "apply_manager_ready": 2122,
+  "apply_next": 2183,
+  "apply_mark": 2240,
+  "apply_selected": 2261,
+  "apply_selected_state": 2343,
+  "apply_building": 2361,
+  "apply_focus": 2406,
+  "tab_modifier_down": 2433,
+  "modifier_off": 2459,
+  "focus_assign_ref": 2462,
+  "focus_clear": 2475,
+  "focus_inside": 2537,
+  "inside_next": 2551,
+  "inside_no": 2580,
+  "focus_has_group": 2583,
+  "group_scan": 2600,
+  "group_present": 2640,
+  "group_absent": 2647,
+  "group_checked": 2649,
+  "focus_validate": 2657,
+  "validate_occupant": 2800,
+  "validate_member_selected": 2871,
+  "validate_groups": 2922,
+  "validate_group": 2943,
+  "validate_roster": 3028,
+  "validate_member": 3092,
+  "validate_roster_done": 3150,
+  "validate_yes": 3160,
+  "validate_no": 3167,
+  "validate_done": 3169,
+  "subset_mark": 3200,
+  "subset_mark_done": 3240,
+  "subset_refresh": 3265,
+  "subset_refresh_shown": 3277,
+  "subset_refresh_same": 3292,
+  "subset_refresh_skip": 3335,
+  "subset_refresh_resume": 3337,
+  "subset_record": 3350,
+  "subset_record_member": 3455,
+  "subset_record_done": 3499,
+  "subset_record_store": 3519,
+  "subset_record_out": 3531,
+  "subset_facet": 3541,
+  "subset_facet_none": 3604,
+  "subset_facet_done": 3606
+ }
+}

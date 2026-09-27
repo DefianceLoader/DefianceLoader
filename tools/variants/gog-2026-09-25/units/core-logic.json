@@ -1,0 +1,30 @@
+{
+ "unit_schema": 1,
+ "name": "core-logic",
+ "plugin": "core",
+ "module": "logic.dll",
+ "source_sha256": "1216d627c7288c7db6940168363be582232ed4d3cb860b8b8c8d7489652eca74",
+ "unit_bytes": 0,
+ "code_offset": 0,
+ "cells": [],
+ "writes": [],
+ "fixups": [],
+ "natives": [],
+ "anchors": [
+  {
+   "rva": 4528736,
+   "bytes": "48895c240848896c2410488974241857415641574883ec204c63f233ff450fb6"
+  }
+ ],
+ "sites": [
+  {
+   "site_name": "chooser",
+   "site_start": 4528736,
+   "site_group": 4528736,
+   "site_pattern": "48895c240848896c2410488974241857415641574883ec204c63f233ff450fb6f8",
+   "site_offset": 0
+  }
+ ],
+ "verified_sha": "",
+ "labels": {}
+}

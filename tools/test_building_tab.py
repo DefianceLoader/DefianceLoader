@@ -311,8 +311,8 @@ for target, expected_men in ((squad_a, men_a[:2] + men_b[:2]), (squad_b, men_a[:
     check('intermediate TAB never resolves or clears the manager', q(lookup_calls) - previous_calls, int(changes_selection))
     check('native building reference count balances focus plus anchor', q(q(building, 0x100), 8), 1 + int(bool(q(state))) + int(q(ui, 0x2d8) == q(building, 0x100)))
 # Test the actual existing ammunition UI query using these same marks.
-from icon import TRACE_OFFSET
-ui_code, ui_labels = b.assemble(pathlib.Path('patch/icon-squad.asm').read_text().splitlines(), 0, TRACE_OFFSET,
+from icon import AMMO_STEP_OFFSET, TRACE_OFFSET
+ui_code, ui_labels = b.assemble(b.source("patch/icon-squad.asm", "patch/ammo-panel.asm"), 0, TRACE_OFFSET, AMMO_STEP_OFFSET,
                                symbols=b.GAME_SYMBOLS)
 ui_block = blob(ui_code.ljust(TRACE_OFFSET + 0x100, bytes(1)))
 one = blob(asm('mov eax,1; ret'))

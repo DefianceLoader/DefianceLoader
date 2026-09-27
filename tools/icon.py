@@ -1,4 +1,4 @@
-"""Assemble patch/icon-squad.asm for the injector.
+"""Assemble patch/icon-squad.asm and patch/ammo-panel.asm for the injector.
 
 This is the only patch that targets game.dll, and it never becomes a file
 patch: the block is allocated in the running process and the hooks are
@@ -22,7 +22,7 @@ PAYLOAD = pathlib.Path("out/payload-game.bin")
 DESCRIPTOR = pathlib.Path("out/payload-game.json")
 
 BLOCK_SIZE = 0x2000
-BUILDING_TAB_OFFSET = 0x1000  # keep existing code and diagnostic storage stable
+BUILDING_TAB_OFFSET = 0x1100  # after the selection and ammunition code and its trace
 # engine-owned reference, world/context/player identities, the narrowed squad
 # (+20, compared only), the squad TAB modifier's virtual key (+28, which Core
 # writes from the selection feature's setting) and the preview's shown entity
@@ -32,7 +32,11 @@ TAB_MODIFIER_OFFSET = BUILDING_STATE_OFFSET + 0x28
 SUBSET_STATE_OFFSET = BUILDING_STATE_OFFSET + 0x30
 PREVIEW_OFFSET = 0x1a00  # between the building TAB code and the engine-owned state
 SUBSET_OFFSET = 0x1b00   # the preview's selection marks, after the weapon guard
-TRACE_OFFSET = 0xf00   # squad_of records each hop here for --probe (0x60 bytes)
+TRACE_OFFSET = 0x10a0  # squad_of records each hop here for --probe (0x60 bytes)
+# The ammo slot step's settings and wheel remainder (patch/ammo-panel.asm's
+# {scratch}) and the camera wheel's last message, 0x30 bytes just before the
+# engine-owned state
+AMMO_STEP_OFFSET = BUILDING_STATE_OFFSET - 0x30
 EXPECT_SOURCE_SHA = "f0184b9fe358172c83261419c8ba3d822a0aa6b06ed3cddb2f7aa3ebb9653db4"
 # Other builds the signatures have been checked against (tools/sigs.py and
 # --scan-check), which the injector then relocates to without --scan. Steam:
@@ -75,7 +79,17 @@ HOOKS = [
     # squad's selection changes.
     (0x216c94, "c64587000f57c0", "subset_mark"),
     (0x36449c, "498b064885c07409", "subset_refresh"),
+    # The GUI base dispatch's button-release and wheel branches: on an ammo
+    # card they step the slot by one soldier.
+    (0x2c2e0d, "488b0148ffa088000000", "ammo_step_right"),
+    (0x2c2e2b, "488b0148ff6078", "ammo_step_left"),
+    (0x2c2e39, "488b0148ffa0d8000000", "ammo_step_wheel"),
+    # The camera's wheel axis: note what each message adds, so a wheel the
+    # ammo menu takes does not zoom.
+    (0x2dc4bd, "41807a18007469", "ammo_wheel_axis"),
 ]
+AMMO_HOOKS = ("ammo_panel", "attack_recipient", "attack_button", "ammo_step_right", "ammo_step_left",
+              "ammo_step_wheel", "ammo_wheel_axis")
 
 # placeholder -> the rva the injector should resolve into that slot, and the
 # feature that owns the slot (2 selection, 6 ammunition) so a selective
@@ -108,6 +122,9 @@ FIXUPS = [
     (0xaaaaaaaaaaaaaac4, 0x216c9b, "resume the preview soldier's descriptor", 2),
     (0xaaaaaaaaaaaaaac5, 0x3644b2, "resume the panel's shown-entity test", 2),
     (0xaaaaaaaaaaaaaac6, 0x364563, "the panel's preview rebuild", 2),
+    (0xaaaaaaaaaaaaaabc, 0x3fac0, "AmmunitionMenu mouse move, for the wheel step", 6),
+    (0xaaaaaaaaaaaaaabf, 0x3fac0, "AmmunitionMenu mouse move, for the click steps", 6),
+    (0xaaaaaaaaaaaaaabd, 0x40a80, "the AmmunitionMenu's entity", 6),
 ]
 
 # placeholder -> a Win32 export the injector resolves by name, since the
@@ -117,6 +134,7 @@ EXPORTS = [
     (0xaaaaaaaaaaaaaaa8, "user32.dll", "GetAsyncKeyState"),   # world_toggle
     (0xaaaaaaaaaaaaaaad, "user32.dll", "GetAsyncKeyState"),   # ctrl_select
     (0xaaaaaaaaaaaaaabb, "user32.dll", "GetAsyncKeyState"),   # squad TAB modifier
+    (0xaaaaaaaaaaaaaabe, "user32.dll", "GetAsyncKeyState"),   # ammo step modifier
 ]
 
 # read by the injector before it writes anything, as a version check on a part
@@ -128,6 +146,7 @@ ANCHOR_RVA = 0x1f42d0
 CALLEE_SITES = {0x3f1d0: "ammo_fill_slot", 0x3f800: "ammo_hide_slot", 0x40e80: "focus_append",
                 0x368f0: "focus_assign",
                 0x2cb730: "ammo_label_text", 0x2c3380: "ammo_progress_refresh",
+                0x3fac0: "ammo_menu_hover", 0x40a80: "ammo_menu_entity",
                 0x1b30a0: "lobby_connect",
                 # TacticalMapGameState's constructor and destructor: Core counts
                 # loaded missions for hot reload (plugins/core/src/session.rs)
@@ -150,7 +169,7 @@ def main():
     img = Image(GAME)
 
     code, labels = b.assemble(
-        pathlib.Path("patch/icon-squad.asm").read_text().splitlines(), 0, TRACE_OFFSET,
+        b.source("patch/icon-squad.asm", "patch/ammo-panel.asm"), 0, TRACE_OFFSET, AMMO_STEP_OFFSET,
         layout=b.GAME_LAYOUT, symbols=b.GAME_SYMBOLS)
     if len(code) > TRACE_OFFSET:
         raise SystemExit(f"{len(code)} bytes would overlap the trace at {TRACE_OFFSET:#x}")
@@ -173,7 +192,7 @@ def main():
     subset, subset_labels = b.assemble(
         pathlib.Path("patch/preview-subset.asm").read_text().splitlines(), SUBSET_OFFSET, TRACE_OFFSET,
         SUBSET_STATE_OFFSET, layout=b.GAME_LAYOUT, symbols=b.GAME_SYMBOLS)
-    if len(code) > SUBSET_OFFSET or SUBSET_OFFSET + len(subset) > BUILDING_STATE_OFFSET:
+    if len(code) > SUBSET_OFFSET or SUBSET_OFFSET + len(subset) > AMMO_STEP_OFFSET:
         raise SystemExit("the preview subset code does not fit before the engine state")
     code += bytes(SUBSET_OFFSET - len(code)) + subset
     labels.update(subset_labels)
@@ -186,7 +205,7 @@ def main():
             raise SystemExit(f"{rva:#x} holds {actual.hex()}, not {displaced}")
         if label not in labels:
             raise SystemExit(f"the payload has no {label} label")
-        feature = (6 if label in ("ammo_panel", "attack_recipient", "attack_button")
+        feature = (6 if label in AMMO_HOOKS
                    else 10 if label.startswith("preview_") else 2)
         hooks.append({"rva": rva, "displaced": displaced, "entry": labels[label], "hook_feature": feature})
 
@@ -236,7 +255,15 @@ def main():
                          "make them shared symbols:\n  " + "\n  ".join(
                              f"{name}: {code}   ({key} -> {new:#x})" for name, code, key, new in gaps))
 
+    # Every label's block offset, for tools/module_writes.py to name the
+    # routine each hook reaches.
+    names = {}
+    for label, offset in labels.items():
+        names.setdefault(offset, set()).add(label)
     payload_path.parent.mkdir(exist_ok=True)
+    descriptor_path.with_suffix(".labels.json").write_text(json.dumps(
+        {str(offset): sorted(found) for offset, found in sorted(names.items())}, indent=1) + "\n",
+        encoding="utf-8", newline="\n")
     payload_path.write_bytes(code)
     descriptor_path.write_text(json.dumps({
         "feature_schema": 1,
@@ -248,6 +275,7 @@ def main():
         "block_bytes": BLOCK_SIZE,
         "trace_offset": TRACE_OFFSET,
         "tab_modifier_offset": TAB_MODIFIER_OFFSET,
+        "ammo_step_offset": AMMO_STEP_OFFSET,
         "anchor_rva": ANCHOR_RVA,
         "anchor": img.read(ANCHOR_RVA, 32).hex(),
         "hooks": hooks,

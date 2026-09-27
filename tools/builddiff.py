@@ -20,18 +20,20 @@ import builds
 sys.path.insert(0, "tools")
 import sigs
 
-REFERENCE = {"logic": (str(builds.reference().logic), "out/payload.json"),
-             "game": (str(builds.reference().game), "out/payload-game.json")}
+REFERENCE = {"logic": (str(builds.reference().logic), ["out/payload.json"]),
+             "game": (str(builds.reference().game), ["out/payload-game.json"])}
 
 
 def base_paths(which, name=None):
-    """(DLL, descriptor) of the build compared against: `name`, or the reference.
-    Another base's sites are its resolved variant's (tools/variants/)."""
+    """(DLL, [descriptor, ...]) of the build compared against: `name`, or the
+    reference. Another base's sites are its resolved units' for that module
+    (tools/variants/<name>/units/)."""
     base = builds.build(name) if name else builds.reference()
     if base == builds.reference():
         return REFERENCE[which]
     dll = base.require().logic if which == "logic" else base.require().game
-    return str(dll), str(builds.ROOT / "tools" / "variants" / base.name / f"{which}.json")
+    units = builds.ROOT / "tools" / "variants" / base.name / "units"
+    return str(dll), [str(p) for p in sorted(units.glob(f"*-{which}.json"))]
 
 
 def base_option(argv):
@@ -66,7 +68,7 @@ def shape(module, start, end):
 
 
 def main(which, other_path, base=None):
-    reference, descriptor = base_paths(which, base)
+    reference, descriptors = base_paths(which, base)
     ref, other = sigs.Module(reference), sigs.Module(other_path)
     rf, of = functions(ref), functions(other)
     where = collections.defaultdict(list)
@@ -95,10 +97,12 @@ def main(which, other_path, base=None):
             data_only += 1
         else:
             changed.append((s, e))
+    if not descriptors:
+        raise SystemExit(f"{base}: no resolved {which} units to check (run `mise run variants`)")
     try:
-        sites = json.load(open(descriptor))["sites"]
-    except OSError:
-        raise SystemExit(f"{descriptor} is missing: the base has no resolved sites to check")
+        sites = [x for d in descriptors for x in json.load(open(d))["sites"]]
+    except OSError as e:
+        raise SystemExit(f"{e.filename} is missing: the base has no resolved sites to check")
     touched = [x["site_name"] for x in sites
                for s, e in changed if s <= x["site_start"] + x["site_offset"] < e]
     print(f"{which}.dll: {len(rf)} functions, {len(rf) - len(unmatched)} identical, "

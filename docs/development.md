@@ -14,9 +14,9 @@ crates/loader         the proxy DLL that hosts plugins inside the game
 plugins/              Core, the gameplay plugins, and three standalone plugin
                       workspaces (regroup, expanded-ammo-menu,
                       squad-management-scroll)
-patch/*.asm           the assembly patches Core applies
+patch/*.asm           the built-in plugins' assembly, as patch units
 tools/                analysis, build, packaging and test tooling
-tools/variants/       assembled patch payloads per supported game build
+tools/variants/       assembled patch units per supported game build
 injector/             an external injector that patches a running game
 examples/services/    cross-plugin service examples
 ```
@@ -28,7 +28,9 @@ and `game.dll` go in `bin/<store>/<date>/`: the GOG release the patches were
 written against in `bin/gog/2025-12-23/`, later ones beside it (for example
 `bin/gog/2026-09-14/`, `bin/steam/2026-09-22/`). The date is the one
 `tools/layouts/` names the build by, the store's release date, or the DLLs'
-link date when that is unknown.
+link date when that is unknown. The same build's `world2.dll` and
+`galileo.dll`, which only Core patches, can go beside them, so that the tests
+cover Core's hooks there too.
 
 ## Setup
 
@@ -54,8 +56,9 @@ mise run loader-package   # out/defiance-loader.zip, plus release symbols
 ```
 
 `loader` assembles first: with the reference DLLs present it reassembles when
-`patch/` or the tooling changed and refreshes `tools/variants/reference`, which
-Core embeds; commit those files with the patch change. Staging and packaging
+`patch/` or the tooling changed and refreshes `tools/variants/reference`, whose
+units the built-in plugins embed; commit those files with the patch change, and
+run `mise run variants` for the other builds' units. Staging and packaging
 include the companion UI mods when the game folder is available.
 
 The installed layout:
@@ -176,7 +179,7 @@ argument registers to `defiance-loader.log`. It uses hardware breakpoints, so
 it changes no code and works on addresses other patches already own; at most
 four sites, each released once it has logged its hits. Frames prefixed `?`
 were recovered by scanning the stack and can be stale; frames in patch payloads
-are named by their crash range (`core.logic assembly payload+0x…`). Leave
+are named by their crash range (`selection-logic unit+0x…`). Leave
 `sites` empty for normal play. A plugin under development can arm sites itself
 through the loader's `trace` service ([plugin-api.md](plugin-api.md)).
 

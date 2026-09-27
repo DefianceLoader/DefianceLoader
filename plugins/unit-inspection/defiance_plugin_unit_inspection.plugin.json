@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.unit-inspection",
   "dll": "defiance_plugin_unit_inspection.dll",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "abi": 5,
   "group": "infantry",
   "settings": [
@@ -10,7 +10,7 @@
       "key": "enabled",
       "type": "bool",
       "default": "true",
-      "description": "Show the full unit info panel in missions for squads you do not own: the commander's name, the soldier count, rank and experience, and the ammo menu with its weapons, instead of only the name and relation. The show_allied, show_neutral and show_enemy settings choose for whom. The ammo menu's weapon toggles stay inert for those squads unless ally_weapon_toggles allows them for allies. Squads only; vehicles and buildings keep the game's panel. Single-player: blocks online multiplayer while active. Restart required."
+      "description": "Show the full unit info panel in missions for squads you do not own: the commander's name, the soldier count, rank and experience, and the ammo menu with its weapons, instead of only the name and relation. The show_allied, show_neutral and show_enemy settings choose for whom. The ammo menu's weapon toggles stay inert for those squads unless ally_weapon_toggles allows them for allies. Vehicles and platforms show their weapons too. Single-player: blocks online multiplayer while active. Restart required."
     },
     {
       "key": "show_allied",
@@ -62,5 +62,6 @@
     }
   ],
   "depends": [],
-  "conflicts": []
+  "conflicts": [],
+  "hot_reload": false
 }

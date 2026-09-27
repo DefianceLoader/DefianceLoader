@@ -482,10 +482,10 @@ print("\n== original ammunition-menu draw and click consumers\n")
 # actual hook site. Only rendering and entity lookup are replaced by sinks.
 game = Image(str(builds.reference().game))
 game_region = scratch(0x600000)
-from icon import TRACE_OFFSET
-ui_code, ui_labels = b.assemble(pathlib.Path("patch/icon-squad.asm").read_text().splitlines(), 0, TRACE_OFFSET,
+from icon import AMMO_STEP_OFFSET, TRACE_OFFSET
+ui_code, ui_labels = b.assemble(b.source("patch/icon-squad.asm", "patch/ammo-panel.asm"), 0, TRACE_OFFSET, AMMO_STEP_OFFSET,
                                symbols=b.GAME_SYMBOLS)
-ui_block = scratch(0x1000)
+ui_block = scratch(0x2000)   # the slot step's cell sits at AMMO_STEP_OFFSET
 put(ui_block, ui_code)
 for placeholder, target in ((0xaaaaaaaaaaaaaaae, 0x3f079), (0xaaaaaaaaaaaaaaaf, 0x3f1d0), (0xaaaaaaaaaaaaaab0, 0x3f800), (0xaaaaaaaaaaaaaab1, 0x2cb730), (0xaaaaaaaaaaaaaab7, 0x2c3380)):
     put(ui_block + ui_code.index(struct.pack("<Q", placeholder)), struct.pack("<Q", game_region + target))
@@ -939,6 +939,275 @@ put(sq["base"] + 0x48 + 0x30, struct.pack("<I", 4))
 SET(men[0]["ai"], 1, 1)
 check("a single unit's disable releases its loaded launcher", dword(guns[0] + 0xdc) == 0)
 check("and no other unit's", dword(guns[1] + 0xdc) == 2)
+
+
+print("\n== the wheel and clicks step a card's slot by one soldier\n")
+# Enter ammo_step_wheel/ammo_step_left/ammo_step_right as the GUI base dispatch
+# reaches them: rcx the object, rdx the source widget, r9 the event. The menu is told apart
+# by its vt+90 (the placeholders' mouse-move handler); its vt+70 is the press
+# leaf whose `lea rax, [rcx + end]` bounds the cards, vt+38 its refresh.
+def fill(placeholder, value):
+    put(ui_block + ui_code.index(struct.pack("<Q", placeholder)), struct.pack("<Q", value))
+hover = scratch(0x10)
+put(hover, asm("ret"))
+fill(0xaaaaaaaaaaaaaabc, hover)
+fill(0xaaaaaaaaaaaaaabf, hover)
+fill(0xaaaaaaaaaaaaaabd, game_region + 0x40a80)     # the entity: [menu+8]
+keys = scratch(0x10)                                  # +0 the answer, +8 the key asked
+async_key = scratch(0x40)
+put(async_key, asm(f"mov rax, {keys}; mov [rax+8], ecx; movzx eax, word ptr [rax]; ret"))
+fill(0xaaaaaaaaaaaaaabe, async_key)
+step_cell = ui_block + AMMO_STEP_OFFSET
+press = scratch(0x10)
+put(press, asm("lea rax, [rcx + 0x7f8]; ret"))
+refresh = scratch(0x10)
+put(refresh, asm("inc dword ptr [rcx + 0x8f0]; ret"))
+native = scratch(0x10)                                # the stock slots: count the calls
+put(native, asm("inc dword ptr [rcx + 0x8f4]; ret"))
+toggle = scratch(0x10)                                # the stock click, the toggle
+put(toggle, asm("inc dword ptr [rcx + 0x8f8]; ret"))
+step_vt = obj(0x100, [(0x38, refresh), (0x70, press), (0x78, toggle), (0x88, native), (0x90, hover),
+                      (0xd8, native)])
+WHEEL = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)(
+    ui_block + ui_labels["ammo_step_wheel"])
+RIGHT = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)(
+    ui_block + ui_labels["ammo_step_right"])
+LEFT = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)(
+    ui_block + ui_labels["ammo_step_left"])
+# The camera wheel axis's hook is entered by a jump from inside its message
+# handler (axis, _, message, wparam, lparam): r10 holds the axis there.
+axis_entry = scratch(0x20)
+put(axis_entry, asm(f"mov r10, rcx; mov rax, {ui_block + ui_labels['ammo_wheel_axis']}; jmp rax"))
+AXIS = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint64,
+                        ctypes.c_uint64)(axis_entry)
+def event(message, delta=0, lparam=0):
+    e = obj(0x20)
+    put(e, struct.pack("<I", message))
+    put(e + 8, struct.pack("<QQ", (delta & 0xffff) << 16, lparam))
+    return e
+answer = lambda value: asm(f"mov rax, {value}; ret")
+
+
+def step_case(n=3):
+    """A squad of n riflemen, each gun loaded with two rounds of record 0's
+    weapon; a menu over it with card 0 and card 8; the player's selection
+    holding the soldiers."""
+    crew = [soldier(SOLDIER_VT) for _ in range(n)]
+    sq = squad(crew)
+    put(sq["data"], struct.pack("<Q", FIRE_DATA_VT))
+    rifle = obj(0x130, [(0x11c, 0x20), (0x30, 1)])
+    put(sq["base"], struct.pack("<Q", rifle))
+    put(sq["base"] + 0x2c, struct.pack("<II", 12, 2 * n))
+    guns = [obj(0x150, [(0x18, obj(0x18, [(0x10, m["entity"])])),
+                        (0x50, rifle), (0x58, obj(0x18, [(0x10, sq["data"])])),
+                        (0xdc, 2)]) for m in crew]
+    wire_guns(crew, guns, [[rifle]] * n)
+    entity = q(q(sq["ai"] + 0x10) + 0x10)
+    own = q(q(entity + 8) + 0x50)
+    put(own + 0x10, struct.pack("<Q", q(sq["ai"] + 0x10)))   # a soldier's parent -> this squad
+    manager = obj(0x50)
+    def select(entities):
+        vector = obj(8 * max(1, len(entities)), [(i * 8, e) for i, e in enumerate(entities)])
+        put(manager + 0x40, struct.pack("<QQ", vector, vector + 8 * len(entities)))
+    select([m["entity"] for m in crew])
+    for m in crew:
+        put(m["facet"] + 0x30, b"\x01")
+    player = scratch(0x10)
+    put(player, answer(1))
+    lookup = scratch(0x20)
+    put(lookup, answer(manager))
+    context = obj(0x10, [(0, obj(0x50, [(0x40, player)]))])
+    world = obj(0x10, [(0, obj(0x710, [(0x700, lookup)]))])
+    menu = obj(0x900, [(0, step_vt), (8, entity), (0x128, context), (0x130, world)])
+    cards = [ui_control(), ui_control()]
+    put(menu + 0x180 + 0x18, struct.pack("<Q", cards[0]))
+    put(menu + 0x180 + 8 * 0xb8 + 0x28, struct.pack("<Q", cards[1]))
+    return {"crew": crew, "sq": sq, "guns": guns, "entity": entity, "menu": menu,
+            "cards": cards, "select": select}
+
+
+def off(case):
+    """Which soldiers are disabled for slot 0: a pin, else the shared flag."""
+    shared = dword(case["sq"]["base"] + 0x3c)
+    return [bool(byte(m["facet"] + 0x1f) & 1) if byte(m["facet"] + 0x19) == 0xA5
+            and byte(m["facet"] + 0x1e) & 1 else bool(shared) for m in case["crew"]]
+
+
+def spin(case, delta, source=None, lparam=0x00500040):
+    WHEEL(case["menu"], source or case["cards"][0], None, event(0x20a, delta, lparam))
+
+
+put(step_cell, bytes(0x30))
+put(step_cell, struct.pack("<I", 0x11))              # Ctrl, no click steps
+put(keys, struct.pack("<H", 0x8000))
+case = step_case()
+refreshes = lambda: dword(case["menu"] + 0x8f0)
+natives = lambda: dword(case["menu"] + 0x8f4)
+spin(case, 120)
+check("up with every soldier enabled changes nothing", off(case) == [False] * 3 and refreshes() == 0)
+check("the modifier asked for is the configured one", dword(keys + 8) == 0x11)
+spin(case, -120)
+check("down disables the last soldier in roster order", off(case) == [False, False, True])
+check("his loaded rifle is released, reservation returned",
+      dword(case["guns"][2] + 0xdc) == 0 and dword(case["guns"][1] + 0xdc) == 2
+      and dword(case["sq"]["base"] + 0x30) == 4 and dword(case["sq"]["base"] + 0x2c) == 12)
+check("the card shows two of three", STATE(case["entity"], case["sq"]["base"], 0) == 3)
+check("the menu is refreshed once", refreshes() == 1)
+check("the shared flag is left alone", dword(case["sq"]["base"] + 0x3c) == 0)
+spin(case, -120)
+spin(case, -120)
+check("repeated down empties the slot one by one", off(case) == [True] * 3)
+spin(case, -120)
+check("down with every soldier disabled changes nothing", refreshes() == 3)
+spin(case, 120)
+check("up enables the first disabled soldier", off(case) == [False, True, True])
+spin(case, 120)
+check("and then the next", off(case) == [False, False, True])
+check("the wheel never reaches the stock slot on the menu", natives() == 0)
+
+print()
+put(keys, bytes(2))
+spin(case, -120)
+check("without the modifier the wheel does nothing", off(case) == [False, False, True] and refreshes() == 5)
+put(keys, struct.pack("<H", 0x8000))
+spin(case, 60)
+check("half a notch waits", off(case) == [False, False, True])
+spin(case, 60)
+check("the second half steps", off(case) == [False, False, False])
+spin(case, -60)
+spin(case, 60)
+spin(case, -60)
+check("a reversal drops the unspent half", off(case) == [False, False, False])
+spin(case, -60)
+check("and a full notch the other way steps", off(case) == [False, False, True])
+put(step_cell + 8, bytes(4))
+spin(case, 240)
+check("a fast spin of two notches steps once", off(case) == [False, False, False])
+put(step_cell, struct.pack("<I", 0))
+put(keys, bytes(2))
+spin(case, -120)
+check("with no modifier the wheel alone steps", off(case) == [False, False, True])
+put(step_cell, struct.pack("<I", 0x11))
+put(keys, struct.pack("<H", 0x8000))
+
+print()
+before, count = off(case), refreshes()
+spin(case, -120, source=ui_control())
+check("a widget that is no card changes nothing", off(case) == before and refreshes() == count)
+spin(case, -120, source=case["cards"][1])
+check("card 8 has no pins: nothing changes", off(case) == before and refreshes() == count)
+other = obj(0x900, [(0, obj(0x100, [(0x90, native), (0xd8, native)]))])
+WHEEL(other, case["cards"][0], None, event(0x20a, -120))
+check("another GUI object reaches its own wheel slot", dword(other + 0x8f4) == 1 and off(case) == before)
+toggles = lambda: dword(case["menu"] + 0x8f8)
+RIGHT(case["menu"], case["cards"][0], None, event(0x205))
+LEFT(case["menu"], case["cards"][0], None, event(0x202))
+check("clicks are off by default: the stock slots run",
+      natives() == 1 and toggles() == 1 and off(case) == before)
+
+print()
+put(step_cell + 4, struct.pack("<I", 1))
+RIGHT(case["menu"], case["cards"][0], None, event(0x205))
+check("Ctrl+right-click disables one", off(case) == [False, True, True])
+LEFT(case["menu"], case["cards"][0], None, event(0x202))
+check("Ctrl+left-click enables one", off(case) == [False, False, True])
+check("neither reaches its stock slot", natives() == 1 and toggles() == 1)
+count = refreshes()
+LEFT(case["menu"], case["cards"][0], None, event(0x202))
+LEFT(case["menu"], case["cards"][0], None, event(0x202))
+check("a click with nothing to step still refreshes, drawing the card released",
+      off(case) == [False] * 3 and refreshes() == count + 2)
+RIGHT(case["menu"], case["cards"][0], None, event(0x205))
+put(keys, bytes(2))
+before, count = off(case), refreshes()
+RIGHT(case["menu"], case["cards"][0], None, event(0x205))
+LEFT(case["menu"], case["cards"][0], None, event(0x202))
+check("without the modifier each click goes to its stock slot",
+      natives() == 2 and toggles() == 2 and off(case) == before and refreshes() == count)
+put(step_cell, struct.pack("<I", 0))
+RIGHT(case["menu"], case["cards"][0], None, event(0x205))
+LEFT(case["menu"], case["cards"][0], None, event(0x202))
+check("with no modifier configured right-click alone disables, left-click toggles",
+      off(case) == [False, True, True] and toggles() == 3 and natives() == 2)
+put(step_cell, struct.pack("<II", 0x11, 0))
+put(keys, struct.pack("<H", 0x8000))
+other = obj(0x900, [(0, obj(0x100, [(0x78, toggle), (0x88, native), (0x90, native), (0xd8, native)]))])
+put(step_cell + 4, struct.pack("<I", 1))
+RIGHT(other, case["cards"][0], None, event(0x205))
+LEFT(other, case["cards"][0], None, event(0x202))
+check("another GUI object's clicks reach its own slots",
+      dword(other + 0x8f4) == 1 and dword(other + 0x8f8) == 1)
+put(step_cell + 4, bytes(4))
+
+print()
+# The camera's wheel axis accumulates whole notches before the GUI sees the
+# message; a wheel the menu takes gives them back.
+camera = obj(0x30, [(0x18, 1)])
+notches = lambda: struct.unpack("<i", bytes(ctypes.string_at(camera + 0x20, 4)))[0]
+AXIS(camera, None, 0x20a, 240 << 16, 0x00500040)
+check("the axis adds whole notches as its own code does", notches() == 2)
+AXIS(camera, None, 0x20a, (-120 & 0xffff) << 16, 0x00500040)
+AXIS(camera, None, 0x20a, 60 << 16, 0x00500040)
+check("toward zero, both ways", notches() == 1)
+AXIS(camera, None, 0x20a, (-120 & 0xffff) << 16, 0x00500040)
+spin(case, -120)
+check("a wheel the menu takes does not reach the camera", notches() == 1)
+AXIS(camera, None, 0x20a, 120 << 16, 0x00500040)
+spin(case, 120, lparam=0x00500041)
+check("another message's record is left alone", notches() == 2)
+spin(case, 120)
+check("and a mismatch drops it", notches() == 2)
+AXIS(camera, None, 0x20a, 120 << 16, 0x00500040)
+put(keys, bytes(2))
+spin(case, 120)
+check("without the modifier the camera keeps it", notches() == 3)
+put(keys, struct.pack("<H", 0x8000))
+AXIS(camera, None, 0x20a, 120 << 16, 0x00500040)
+WHEEL(other, case["cards"][0], None, event(0x20a, 120, 0x00500040))
+check("over another GUI object the camera keeps it", notches() == 4)
+put(camera + 0x18, bytes(1))
+AXIS(camera, None, 0x20a, 120 << 16, 0x00500040)
+spin(case, 120)
+check("a disabled axis adds nothing and nothing is taken back", notches() == 4)
+
+print()
+case = step_case()
+refreshes = lambda: dword(case["menu"] + 0x8f0)
+put(case["crew"][2]["facet"] + 0x30, bytes(1))
+spin(case, -120)
+check("with two of three marked, down disables the last marked one", off(case) == [False, True, False])
+spin(case, -120)
+spin(case, -120)
+check("and never an unmarked one", off(case) == [True, True, False])
+put(case["crew"][2]["facet"] + 0x30, b"\x01")
+put(case["sq"]["base"] + 0x3c, struct.pack("<I", 1))
+for m in case["crew"]:
+    put(m["facet"] + 0x19, bytes(1))
+spin(case, 120)
+check("up with the shared flag off pins the first soldier on", off(case) == [False, True, True])
+check("the shared flag stays off", dword(case["sq"]["base"] + 0x3c) == 1)
+
+print()
+case = step_case()
+refreshes = lambda: dword(case["menu"] + 0x8f0)
+second = step_case(1)
+second_own = q(q(second["entity"] + 8) + 0x50)
+put(second_own + 0x18, b"\x01")
+put(second_own + 0x30, b"\x01")
+case["select"]([m["entity"] for m in case["crew"]] + [second["entity"]])
+spin(case, -120)
+check("another squad selected too: nothing changes", off(case) == [False] * 3 and refreshes() == 0)
+case["select"]([m["entity"] for m in case["crew"]] + [second["crew"][0]["entity"]])
+spin(case, -120)
+check("a soldier of another squad selected: nothing changes", off(case) == [False] * 3 and refreshes() == 0)
+put(second["crew"][0]["facet"] + 0x30, bytes(1))
+spin(case, -120)
+check("an unselected unit in the list does not count", off(case) == [False, False, True])
+put(case["menu"] + 8, struct.pack("<Q", case["crew"][0]["entity"]))
+case["select"]([case["crew"][0]["entity"]])
+before, count = off(case), refreshes()
+spin(case, -120)
+check("a unit without a squad roster is not stepped", off(case) == before and refreshes() == count)
 
 
 print()

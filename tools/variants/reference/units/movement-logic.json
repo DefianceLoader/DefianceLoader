@@ -1,0 +1,49 @@
+{
+ "unit_schema": 1,
+ "name": "movement-logic",
+ "plugin": "movement",
+ "module": "logic.dll",
+ "source_sha256": "17ef48350153306e210e14a24b0ad398c56fb99d3d46c88f246df260ade85780",
+ "unit_bytes": 433,
+ "code_offset": 0,
+ "cells": [],
+ "writes": [
+  {
+   "kind": "call",
+   "rva": 4431922,
+   "before": "488b7c2430",
+   "tail": "",
+   "stock": 0,
+   "entry": 0,
+   "label": "move_filter"
+  }
+ ],
+ "fixups": [],
+ "natives": [],
+ "anchors": [],
+ "sites": [
+  {
+   "site_name": "move_call",
+   "site_start": 4431922,
+   "site_group": 4431648,
+   "site_pattern": "488b7c2430483bf90f84????????0f57c0f30f7f45884c896598",
+   "site_offset": 0
+  }
+ ],
+ "verified_sha": "d320f848508c45c9f04df235204b5fbc9ffbb1b7f869e4c5a58d80bb2ecc10ed",
+ "labels": {
+  "move_filter": 0,
+  "count_next": 37,
+  "count_done": 95,
+  "run_known": 141,
+  "prone_known": 162,
+  "pack_next": 171,
+  "kept": 263,
+  "left_behind": 277,
+  "pack_done": 305,
+  "keep": 310,
+  "tail": 313,
+  "unpin_next": 344,
+  "unpinned": 404
+ }
+}

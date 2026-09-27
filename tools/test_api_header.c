@@ -23,4 +23,10 @@ CHECK(offsetof(DefianceSessionV1, before_mission) == 16, "session before_mission
 CHECK(offsetof(DefianceMultiplayerV1, guard_installed) == 8, "multiplayer guard offset");
 CHECK(sizeof(DefianceMemberStateV1) == 24, "member snapshot layout");
 CHECK(sizeof(DefianceGameAccessV1) == 56, "game access table layout");
+CHECK(sizeof(DefianceNativeReplacementV1) == 16, "native replacement layout");
+CHECK(sizeof(DefiancePatchUnitV1) == 32, "patch unit layout");
+CHECK(offsetof(DefiancePatchUnitV1, code) == 16, "patch unit code offset");
+CHECK(sizeof(DefiancePatchV1) == 24, "patch table layout");
+CHECK(offsetof(DefiancePatchV1, install) == 16, "patch install offset");
+CHECK(sizeof(DefianceBuildV1) == 8, "build table layout");
 CHECK(offsetof(DefianceMemberStateV1, selected) == 16, "member flags offset");

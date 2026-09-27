@@ -4,19 +4,22 @@
 //! is a `GetModuleHandleW` away; there is no snapshot of another process and no
 //! file hash to check. What a plugin asks for instead is a signature unique in
 //! the running module, which is the same guarantee `--scan` gives the injector
-//! and the reason a plugin survives a game update that only moves code.
+//! and the reason a plugin survives a game update that only moves code. The
+//! module is searched as it was before any plugin hooked it
+//! ([`crate::original`]), so a match does not depend on start order.
 
 use crate::win;
 use core::ffi::{c_char, c_void, CStr};
 use core::ptr;
-use defiance_api::{Api, ABI_VERSION, LOG_ERROR, LOG_WARN};
+use defiance_api::{Api, ABI_VERSION, LOG_DEBUG, LOG_ERROR, LOG_WARN};
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-/// The `CString`s handed to `config_get`, kept so the pointers stay valid.
-static CONFIG_CACHE: OnceLock<Mutex<HashMap<(String, String), CString>>> = OnceLock::new();
+/// The `CString`s handed to `config_get`, every value each key has had (the
+/// current one last), kept so the pointers stay valid.
+static CONFIG_CACHE: OnceLock<Mutex<HashMap<(String, String), Vec<CString>>>> = OnceLock::new();
 
 /// A loaded module's base and mapped size, or `None` if it is not loaded.
 pub fn module(name: &str) -> Option<(*mut c_void, usize)> {
@@ -90,6 +93,7 @@ unsafe extern "C" fn api_log(level: u32, message: *const c_char) {
     match level {
         LOG_WARN => crate::log::warn(&text),
         LOG_ERROR => crate::log::error(&text),
+        LOG_DEBUG => crate::log::debug(&text),
         _ => crate::log::info(&text),
     }
 }
@@ -138,7 +142,18 @@ unsafe fn find_one(
     let text = unsafe { c_string(pattern) };
     let parsed =
         defiance_core::parse_pattern(&text).map_err(|e| format!("bad signature `{text}`: {e}"))?;
-    let image = unsafe { core::slice::from_raw_parts(base as *const u8, size) };
+    // Scan the original code, so a signature still matches where another
+    // plugin has hooked (`original`); hooking it is then refused by ownership.
+    let live = unsafe { core::slice::from_raw_parts(base as *const u8, size) };
+    let copy;
+    let image = if crate::hooks::written_within(base as usize, size) {
+        let mut bytes = live.to_vec();
+        crate::hooks::put_back_originals(base as usize, &mut bytes);
+        copy = bytes;
+        &copy[..]
+    } else {
+        live
+    };
     match defiance_core::scan(image, &parsed).as_slice() {
         [one] => Ok(*one),
         [] => Err(format!("signature `{text}` is not in the module")),
@@ -252,12 +267,16 @@ unsafe extern "C" fn api_config_get(section: *const c_char, key: *const c_char) 
     let Some(value) = crate::config::get(&section, &key) else {
         return ptr::null();
     };
+    let value = CString::new(value.replace('\0', "")).unwrap_or_default();
     let cache = CONFIG_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut cache = cache.lock().unwrap();
-    let stored = cache
-        .entry((section, key))
-        .or_insert_with(|| CString::new(value.replace('\0', "")).unwrap_or_default());
-    stored.as_ptr()
+    let mut cache = cache.lock().unwrap_or_else(|p| p.into_inner());
+    let values = cache.entry((section, key)).or_default();
+    // A value changed by a live settings reload is added, never replacing
+    // the old string: a pointer handed out before stays valid.
+    if values.last() != Some(&value) {
+        values.push(value);
+    }
+    values.last().expect("pushed").as_ptr()
 }
 
 unsafe extern "C" fn api_vtable_slot(class: *const c_char, slot: usize) -> *mut c_void {

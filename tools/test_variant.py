@@ -1,11 +1,12 @@
-"""Validate each tracked per-build variant against its own DLLs.
+"""Validate each tracked build's units against its own DLLs.
 
-A variant descriptor is resolved by `tools/variant.py`, and the loader applies
-it without relocation. That make the descriptor's expectations authoritative:
-every byte it says it will replace must be exactly what the target DLLs hold,
-its `source_sha256` must be the target's hash, and every fixup target must lie
-in the module. This re-checks all of that offline, so a stale or mis-resolved
-variant is caught before it ships. It also assembles each profile afresh from
+A variant's units are resolved by `tools/variant.py`, and Core applies them
+without relocation. That makes their expectations authoritative: every byte a
+unit says it will replace must be exactly what the target DLLs hold, its
+`source_sha256` must be the target's hash, and every fixup target must lie in
+the module. This re-checks all of that offline (and the reference build's units
+against the reference DLLs), so a stale or mis-resolved variant is caught
+before it ships. It also assembles each profile afresh from
 `patch/` and resolves it again: the tracked variant must be exactly that, so an
 edit to the shared source that was not carried into the variants fails here
 rather than shipping a stale per-build payload. It skips (without failing) a
@@ -46,71 +47,45 @@ def by_sha(sha):
     return None
 
 
-def spans(descriptor):
-    """(rva, length) for every write the loader prepares, all features on."""
-    out = [(descriptor["call_site"], len(bytes.fromhex(descriptor["call_before"]))),
-           (descriptor["move_call_site"], len(bytes.fromhex(descriptor["move_displaced"])))]
-    out += [(h["hook_rva"], len(bytes.fromhex(h["hook_displaced"]))) for h in descriptor["detours"]]
-    out += [(c["pose_site"], len(bytes.fromhex(c["pose_before"]))) for c in descriptor["pose_calls"]]
-    out += [(descriptor[f"{name}_rva"], len(bytes.fromhex(descriptor[f"{name}_before"])))
-            for name in ("select_is", "select_squad", "select_toggle", "select_type")]
-    return out
-
-
 def overlaps(spans):
-    """The loader refuses feature plans whose enabled spans overlap; all
-    features are enabled here, so none may."""
+    """Writes the loader would refuse because they overlap."""
     ordered = sorted(spans)
     return [(a, b) for (a, la), (b, _lb) in zip(ordered, ordered[1:]) if a + la > b]
 
 
-def check_logic(descriptor, image):
-    problems = []
-    problems += filter(None, [expected(image, descriptor["anchor_rva"], bytes.fromhex(descriptor["anchor"]), "anchor"),
-                              expected(image, descriptor["call_site"], bytes.fromhex(descriptor["call_before"]), "chooser call"),
-                              expected(image, descriptor["move_call_site"], bytes.fromhex(descriptor["move_displaced"]), "move call")])
-    for hook in descriptor["detours"]:
-        problems += filter(None, [expected(image, hook["hook_rva"], bytes.fromhex(hook["hook_displaced"]), hook.get("hook_entry", "detour"))])
-    for call in descriptor["pose_calls"]:
-        problems += filter(None, [expected(image, call["pose_site"], bytes.fromhex(call["pose_before"]), "retargeted call")])
-    for name in ("select_is", "select_squad", "select_toggle", "select_type"):
-        problems += filter(None, [expected(image, descriptor[f"{name}_rva"], bytes.fromhex(descriptor[f"{name}_before"]), name)])
-    size = image.pe.OPTIONAL_HEADER.SizeOfImage
-    for rva, length in spans(descriptor):
-        if rva + length > size:
-            problems.append(f"a write at {rva:#x} runs past the image")
-    for a, b in overlaps(spans(descriptor)):
-        problems.append(f"writes at {a:#x} and {b:#x} overlap")
-    # Each edit's replacement rel32 must reach the moved target it names.
-    names = {descriptor[f"{n}_rva"]: n for n in ("select_is", "select_squad", "select_toggle", "select_type")}
-    for fix in descriptor["edit_fixups"]:
-        name = names.get(fix["edit_rva"])
-        after = bytes.fromhex(descriptor[f"{name}_after"]) if name else b""
-        if not after or fix["edit_offset"] + 4 > len(after):
-            problems.append(f"the edit at {fix['edit_rva']:#x} has no replacement field")
-            continue
-        rel = struct.unpack_from("<i", after, fix["edit_offset"])[0]
-        reached = fix["edit_rva"] + fix["edit_offset"] + 4 + rel
-        if reached != fix["edit_target"]:
-            problems.append(f"the edit at {fix['edit_rva']:#x} reaches {reached:#x}, not {fix['edit_target']:#x}")
-    return problems
-
-
-def check_game(descriptor, image):
-    problems = []
-    problems += filter(None, [expected(image, descriptor["anchor_rva"], bytes.fromhex(descriptor["anchor"]), "anchor")])
-    for hook in descriptor["hooks"]:
-        problems += filter(None, [expected(image, hook["rva"], bytes.fromhex(hook["displaced"]), "hook")])
-    size = image.pe.OPTIONAL_HEADER.SizeOfImage
-    for fix in descriptor["fixups"]:
-        if not 0 <= fix["target_rva"] < size:
-            problems.append(f"fixup target {fix['target_rva']:#x} is outside the image")
-    hooks = [(h["rva"], len(bytes.fromhex(h["displaced"]))) for h in descriptor["hooks"]]
-    for rva, length in hooks:
-        if rva + length > size:
-            problems.append(f"a hook at {rva:#x} runs past the image")
-    for a, b in overlaps(hooks):
-        problems.append(f"hooks at {a:#x} and {b:#x} overlap")
+def check_units(folder, logic_image, game_image):
+    """A build's units (tools/units.py): every byte a write replaces, every
+    anchor and every call's stock function as its DLL holds them, every fixup
+    and edit aimed inside it, and no two writes of any units overlapping."""
+    problems, spans = [], []
+    for path in sorted(folder.glob("*.json")):
+        unit = json.loads(path.read_text(encoding="utf-8"))
+        image = logic_image if unit["module"] == "logic.dll" else game_image
+        size = image.pe.OPTIONAL_HEADER.SizeOfImage
+        label = path.stem
+        for w in unit["writes"]:
+            before = bytes.fromhex(w["before"])
+            problems += filter(None, [expected(image, w["rva"], before, f"{label} {w.get('label', 'edit')}")])
+            spans.append((unit["module"], w["rva"], len(before)))
+            if w.get("stock") and w["rva"] + 5 + struct.unpack_from("<i", before, 1)[0] != w["stock"]:
+                problems.append(f"{label}: the call at {w['rva']:#x} does not reach {w['stock']:#x}")
+            if w["kind"] != "edit" and not 0 <= w["entry"] < unit["unit_bytes"]:
+                problems.append(f"{label}: the write at {w['rva']:#x} enters outside the unit")
+        for a in unit["anchors"]:
+            problems += filter(None, [expected(image, a["rva"], bytes.fromhex(a["bytes"]), f"{label} anchor")])
+        edits = {w["rva"]: bytes.fromhex(w["after"]) for w in unit["writes"] if w["kind"] == "edit"}
+        for f in unit["fixups"]:
+            if f["kind"] in ("abs64", "rel32", "edit") and not 0 <= f["target"] < size:
+                problems.append(f"{label}: fixup target {f['target']:#x} is outside the image")
+            if f["kind"] == "edit":
+                after = edits.get(f["rva"], b"")
+                reached = (f["rva"] + f["offset"] + 4 + struct.unpack_from("<i", after, f["offset"])[0]
+                           if f["offset"] + 4 <= len(after) else None)
+                if reached != f["target"]:
+                    problems.append(f"{label}: the edit at {f['rva']:#x} does not reach {f['target']:#x}")
+    for module in ("logic.dll", "game.dll"):
+        for a, b in overlaps([(rva, n) for m, rva, n in spans if m == module]):
+            problems.append(f"{module}: unit writes at {a:#x} and {b:#x} overlap")
     return problems
 
 
@@ -164,7 +139,7 @@ def guards():
 
 def assembled_afresh(name):
     """Assemble the profile's payloads from the current patch/ into out/."""
-    for tool in ("tools/payload.py", "tools/icon.py"):
+    for tool in ("tools/payload.py", "tools/icon.py", "tools/units.py"):
         run = subprocess.run([sys.executable, tool, "--layout", name], capture_output=True, text=True)
         if run.returncode:
             return f"{tool} --layout {name} failed:\n{run.stdout}{run.stderr}"
@@ -172,11 +147,17 @@ def assembled_afresh(name):
 
 
 guards()
+reference = builds.reference()
+if reference.present:
+    print("== reference units")
+    for problem in check_units(pathlib.Path("tools/variants/reference/units"),
+                               Image(str(reference.logic)), Image(str(reference.game))):
+        check(f"reference: {problem}", False)
 for profile_path in sorted(pathlib.Path("tools/layouts").glob("*.json")):
     profile = json.loads(profile_path.read_text(encoding="utf-8"))
     name = profile["name"]
     staged = pathlib.Path("tools/variants") / name
-    if not (staged / "logic.json").exists():
+    if not (staged / "units").is_dir():
         print(f"skip {name}: no tracked variant")
         continue
     logic_dll, game_dll = by_sha(profile["logic_sha256"]), by_sha(profile["game_sha256"])
@@ -184,20 +165,12 @@ for profile_path in sorted(pathlib.Path("tools/layouts").glob("*.json")):
         print(f"skip {name}: its DLLs are not under bin/")
         continue
     print(f"== {name}  ({logic_dll}, {game_dll})")
-    logic = json.loads((staged / "logic.json").read_text(encoding="utf-8"))
-    game = json.loads((staged / "game.json").read_text(encoding="utf-8"))
-    check(f"{name}: logic descriptor names {logic_dll.name}", logic["source_sha256"] == profile["logic_sha256"])
-    check(f"{name}: game descriptor names {game_dll.name}", game["source_sha256"] == profile["game_sha256"])
-    # The loader ties a native entry to its patch by `site.start == hook.rva`,
-    # so those four sites must have moved with their detours.
-    for native in ("firing_set", "firing_ui", "setter", "is_selected"):
-        site = next((s for s in logic["sites"] if s["site_name"] == native), None)
-        hook = None if site is None else next((h for h in logic["detours"] if h["hook_rva"] == site["site_start"]), None)
-        check(f"{name}: {native} site matches its detour", site is not None and hook is not None)
-    for problem in check_logic(logic, Image(str(logic_dll))):
+    for problem in check_units(staged / "units", Image(str(logic_dll)), Image(str(game_dll))):
         check(f"{name}: {problem}", False)
-    for problem in check_game(game, Image(str(game_dll))):
-        check(f"{name}: {problem}", False)
+    units = {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in (staged / "units").glob("*.json")}
+    for module, sha in (("logic.dll", profile["logic_sha256"]), ("game.dll", profile["game_sha256"])):
+        check(f"{name}: every {module} unit names it",
+              all(u["source_sha256"] == sha for u in units.values() if u["module"] == module))
     if not builds.reference().present:
         print(f"skip {name} sync: the reference DLLs are not under bin/")
         continue
@@ -217,14 +190,17 @@ for profile_path in sorted(pathlib.Path("tools/layouts").glob("*.json")):
         print(problem)
         continue
     try:
-        fresh = variant.resolve_profile(profile, str(logic_dll), str(game_dll))
+        units = variant.resolve_units(profile, str(logic_dll), str(game_dll))
     except SystemExit as error:
-        check(f"{name}: resolves afresh ({error})", False)
+        check(f"{name}: units resolve afresh ({error})", False)
         continue
-    for which, payload, descriptor in fresh:
-        tracked = json.loads((staged / f"{which}.json").read_text(encoding="utf-8"))
-        check(f"{name}: tracked {which}.bin is the current source's", (staged / f"{which}.bin").read_bytes() == payload)
-        check(f"{name}: tracked {which}.json is the current source's", tracked == descriptor)
+    tracked = sorted(p.stem for p in (staged / "units").glob("*.json"))
+    check(f"{name}: the tracked units are the current source's", tracked == [u for u, _, _ in units])
+    for unit, blob, descriptor in units:
+        path = staged / "units" / f"{unit}.json"
+        check(f"{name}: tracked unit {unit} is the current source's",
+              path.with_suffix(".bin").is_file() and path.with_suffix(".bin").read_bytes() == blob
+              and path.is_file() and json.loads(path.read_text(encoding="utf-8")) == descriptor)
     if failures == failed_before:
         stamp.record(f"variant-{name}", sync_key)
 

@@ -26,11 +26,12 @@ pub mod config;
 pub mod crash;
 mod hooks;
 mod host;
-mod json;
+use defiance_core::json;
 mod lifecycle;
 mod log;
 mod manifest;
 mod multiplayer;
+mod original;
 mod plan;
 mod plugin;
 mod proxy;
@@ -47,7 +48,9 @@ mod win;
 /// In-process regression harness; not enabled in the shipped proxy build.
 #[cfg(feature = "test-host")]
 pub mod test_host {
-    pub use crate::hooks::{begin_plugin, end_plugin, remove_owned, remove_owned_report};
+    pub use crate::hooks::{
+        begin_plugin, end_plugin, installed, remove_owned, remove_owned_report,
+    };
     pub use crate::resolve::build_api;
     pub use crate::services::{
         begin as begin_services, finish as finish_services, remove as remove_services,
@@ -59,6 +62,16 @@ pub mod test_host {
     /// waiting for game modules. Used by the game-independent author examples.
     pub fn run_plugins(exe_dir: &std::path::Path) -> Vec<(String, String)> {
         crate::host::test_plugins(exe_dir)
+    }
+    /// Break initialization-order ties by descending plugin ID instead of
+    /// ascending, for runs after this call.
+    pub fn reverse_ties(on: bool) {
+        crate::plan::REVERSE_TIES.store(on, std::sync::atomic::Ordering::Relaxed);
+    }
+    /// The IDs the last `load_plugins` planned to initialize, in order,
+    /// including any whose `init` then failed.
+    pub fn planned_order() -> Vec<String> {
+        crate::host::TEST_ORDER.lock().unwrap().clone()
     }
     /// As `run_plugins`, leaving the plugins loaded.
     pub fn load_plugins(exe_dir: &std::path::Path) -> Vec<(String, String)> {
@@ -80,6 +93,11 @@ pub mod test_host {
     /// `enabled` changed.
     pub fn toggle_plugin(id: &str, on: bool) -> Result<(), String> {
         crate::host::test_toggle(id, on)
+    }
+    /// Load a plugin again with its settings as its config file says now, as
+    /// the watcher does after they changed.
+    pub fn resettle_plugin(id: &str) -> Result<(), String> {
+        crate::host::test_resettle(id)
     }
     /// The IDs of the old copies a reload kept mapped.
     pub fn retained_plugins() -> Vec<String> {

@@ -19,7 +19,7 @@ start, and your usual launcher or shortcut keeps working.
   repeated pickups rotate between eligible soldiers.
 - **Squad previews** show the first matching weapon, and **TAB** from a building
   selects its occupants.
-- **Unit inspection:** click an allied, neutral or enemy squad to see its full
+- **Unit inspection:** click an allied, neutral or enemy unit to see its full
   details, weapons and ammunition included; the ammo cards' reload bars show
   its relation by colour.
 - **Performance:** faster shadows, object sorting and matrix work on the main

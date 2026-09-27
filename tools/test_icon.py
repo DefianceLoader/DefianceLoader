@@ -80,7 +80,7 @@ import json
 BUILT = json.loads(pathlib.Path("out/payload-game.json").read_text())
 TRACE = BUILT["trace_offset"]
 code, labels = b.assemble(
-    pathlib.Path("patch/icon-squad.asm").read_text().splitlines(), 0, TRACE,
+    b.source("patch/icon-squad.asm", "patch/ammo-panel.asm"), 0, TRACE, BUILT["ammo_step_offset"],
     symbols=b.GAME_SYMBOLS)
 block = scratch(BUILT["block_bytes"])
 ctypes.memmove(block, code, len(code))

@@ -150,6 +150,11 @@ MOVE_POSTURE_PUSHES = ["rax", "rcx", "rdx", "r8", "r9", "r10", "r11"]
 # squad_stand_gate, which skips a soldier pinned prone.
 SQUAD_STAND_READ = bytes.fromhex("48837b2800")
 SQUAD_STAND_SITES = [0x43d639]
+# The same loop then resets every member's gait, xor edx, edx and mov rcx, rbx
+# before its call to fn_2b5210; that setup becomes a call to squad_stand_mode,
+# which keeps a soldier pinned prone crawling.
+SQUAD_MODE_READ = bytes.fromhex("33d2488bcb")
+SQUAD_MODE_SITES = [0x43d84f]
 # "Is it prone?" (AiUtilsImpl vt+0x2c0, fn_110bb0), which the squad panel asks
 # to choose between lie down and stand up, answered for the picked soldiers.
 PRONE_OFFSET = 0xd00                  # inside the block, after the pose split
@@ -434,6 +439,28 @@ def load_layout(profile):
     SOURCES.clear()
     refresh_selection_edits()
     return LAYOUT, GAME_LAYOUT
+
+
+def source(*paths):
+    """The lines of `paths`, one after another, with each `%include "name"`
+    line replaced by patch/<name>'s lines. A file included twice is included
+    once, at its first place, so a routine that already holds a helper can
+    be assembled beside another that includes it."""
+    out, seen = [], set()
+
+    def add(path):
+        for line in pathlib.Path(path).read_text().splitlines():
+            m = re.fullmatch(r'\s*%include\s+"([^"]+)"\s*', line.split(";")[0])
+            if not m:
+                out.append(line)
+            elif m.group(1) not in seen:
+                seen.add(m.group(1))
+                add(pathlib.Path("patch") / m.group(1))
+    for path in paths:
+        if pathlib.Path(path).name not in seen:
+            seen.add(pathlib.Path(path).name)
+            add(path)
+    return out
 
 
 def assemble(lines, base, cursor_rva, scratch_rva=None, census_rva=None, layout=None, symbols=None):
@@ -730,6 +757,12 @@ def main():
             raise SystemExit(f"{site:#x} is not the expected compare in the squad's stand-up")
         data[off:off + len(SQUAD_STAND_READ)] = b"\xe8" + struct.pack(
             "<i", posture_labels["squad_stand_gate"] - (site + 5))
+    for site in SQUAD_MODE_SITES:
+        off = img.rva_to_file(site)
+        if bytes(data[off:off + len(SQUAD_MODE_READ)]) != SQUAD_MODE_READ:
+            raise SystemExit(f"{site:#x} is not the expected gait reset in the squad's stand-up")
+        data[off:off + len(SQUAD_MODE_READ)] = b"\xe8" + struct.pack(
+            "<i", posture_labels["squad_stand_mode"] - (site + 5))
 
     # firing mode: jmps over the getters and setter, a call over the direct read
     jmp, call, nop = bytes.fromhex("e9"), bytes.fromhex("e8"), bytes.fromhex("90")
@@ -806,6 +839,9 @@ def main():
                 (posture_labels["squad_stand_gate"],
                  posture_labels["squad_stand_end"] - posture_labels["squad_stand_gate"],
                  unwind_info(MOVE_POSTURE_PUSHES, 0x20)),
+                (posture_labels["squad_stand_mode"],
+                 posture_labels["squad_mode_end"] - posture_labels["squad_stand_mode"],
+                 unwind_info([], 0x28)),
                 # the query's body, and its callable copy of the stock prologue
                 (prone_rva, prone_labels["stock_prone"] - prone_rva,
                  unwind_info(POSE_PUSHES, POSE_FRAME)),

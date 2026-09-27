@@ -5,7 +5,8 @@ The package is a zip with
     bin/<proxy>.dll              the proxy DLL, to go beside trm.exe
     DefianceLoader/plugins/      the plugin DLLs and their manifests — the
                                  built-ins, plus the standalone regroup,
-                                 expanded-ammo-menu and squad-management-scroll
+                                 expanded-ammo-menu, squad-management-scroll,
+                                 unit-inspection and ability-groups
     mods/defiance_squad_scroll/  the scrolling companion UI mod, and
     mods/defiance_unit_inspection/  the unit-inspection reload bar mod, when
                                  the game directory is available to derive them
@@ -51,6 +52,7 @@ REGROUP_DLL = "defiance_plugin_regroup.dll"
 EXPANDED_AMMO_DLL = "defiance_plugin_expanded_ammo_menu.dll"
 SQUAD_SCROLL_DLL = "defiance_plugin_squad_management_scroll.dll"
 UNIT_INSPECTION_DLL = "defiance_plugin_unit_inspection.dll"
+ABILITY_GROUPS_DLL = "defiance_plugin_ability_groups.dll"
 EXCLUDED = {"defiance_plugin_pickup.dll", "defiance_plugin_example.dll", REGROUP_DLL}
 
 
@@ -89,6 +91,8 @@ def main(argv):
                         default=ROOT / "plugins/squad-management-scroll/target/release" / SQUAD_SCROLL_DLL)
     parser.add_argument("--unit-inspection-dll", type=pathlib.Path,
                         default=ROOT / "plugins/unit-inspection/target/release" / UNIT_INSPECTION_DLL)
+    parser.add_argument("--ability-groups-dll", type=pathlib.Path,
+                        default=ROOT / "plugins/ability-groups/target/release" / ABILITY_GROUPS_DLL)
     parser.add_argument("--game", default=os.environ.get("DEFIANCE_GAME_DIR"),
                         help="game directory (or its bin) for the companion UI mods")
     parser.add_argument("--companion-only", action="store_true",
@@ -134,6 +138,8 @@ def main(argv):
          ROOT / "plugins/squad-management-scroll/defiance_plugin_squad_management_scroll.plugin.json", None),
         (pathlib.Path(args.unit_inspection_dll),
          ROOT / "plugins/unit-inspection/defiance_plugin_unit_inspection.plugin.json", "true"),
+        (pathlib.Path(args.ability_groups_dll),
+         ROOT / "plugins/ability-groups/defiance_plugin_ability_groups.plugin.json", "true"),
     ]
     pairs = [(plugin, plugin.with_suffix(".plugin.json")) for plugin in plugins]
     for dll, manifest, expected in standalone:

@@ -165,7 +165,45 @@ def table(source, target, anchors):
     result['training_key'] = training_key(img, result)
     chosen, found['drag_start'] = choosers(source, target, anchors['drag_start'])
     result.update(chosen)
+    result['squad_fit_name'] = fit_matches(img, result)
     return result, found
+
+
+# The upgrade record's lists of the vehicle types it fits (nine vectors of
+# pointers to entries named at +0x28) and of the squads it fits (one vector at
+# SQUAD_FITS); native.rs reads them as constants (`FITS`, `SQUAD_FITS`).
+VEHICLE_FITS = [0x190 + 0x18 * i for i in range(9)]
+SQUAD_FITS = 0x268
+
+
+def fit_matches(img, result):
+    """The offset of a squad-list entry's squad name, per build, from the
+    squad chooser's match: the callee that walks [record+SQUAD_FITS] and takes
+    an entry whose name (a std::string) is empty or equals the squad's. The
+    vehicle chooser's match walks the nine VEHICLE_FITS lists and compares each
+    entry's name at +0x28; both are checked here."""
+    def match(chooser, needle):
+        code = None
+        for callee in {i.operands[0].imm for i in img.disasm(*img.function_of(chooser))
+                       if i.mnemonic == 'call' and i.op_str.startswith('0x')}:
+            if img.function_of(callee) is None:
+                continue
+            lines = [f'{i.mnemonic} {i.op_str}' for i in img.disasm(*img.function_of(callee))]
+            if any(needle in line for line in lines):
+                assert code is None, hex(callee)
+                code = lines
+        assert code is not None, needle
+        return code
+    vehicle = match(result['vehicle_chooser'], f'+ {VEHICLE_FITS[0]:#x}]')
+    for offset in VEHICLE_FITS:
+        assert any(line.endswith(f'+ {offset:#x}]') for line in vehicle), hex(offset)
+    assert vehicle.count('lea rcx, [r15 + 0x28]') == len(VEHICLE_FITS), 'entries named at +0x28'
+    squad = match(result['squad_chooser'], f'+ {SQUAD_FITS:#x}]')
+    i = next(i for i, line in enumerate(squad) if line.startswith('cmp qword ptr [rsi + '))
+    size = int(squad[i].split('+ ')[1].split(']')[0], 16)
+    assert squad[i].endswith('], 0') and squad[i + 1].startswith('je '), squad[i:i + 2]
+    assert squad[i + 2] == f'lea rcx, [rsi + {size - 0x10:#x}]', squad[i + 2]
+    return size - 0x10
 
 
 def training_key(img, result):
@@ -231,7 +269,8 @@ def generate():
         out.append('    Build {')
         out.append(f'        sha: "{hashlib.sha256(path.read_bytes()).hexdigest()}",')
         for name, rva in entries.items():
-            if name.endswith('vtable') or name in ('context_service', 'perk_limit', 'upgrade_key'):
+            if name.endswith('vtable') or name in ('context_service', 'perk_limit', 'upgrade_key',
+                                                   'squad_fit_name'):
                 out.append(f'        {name}: 0x{rva:x},')
             else:
                 # Complete instructions, including the 21-byte refresh prologue.

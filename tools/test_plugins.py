@@ -42,7 +42,7 @@ def main():
         for name, logic, game in targets:
             scenarios = ("all", "core-only", "without-ammo", "fail-ammo", "without-attack", "without-garrison", "fail-attack", "fail-garrison", "disabled-ammo-corrupt", "enabled-ammo-corrupt", "shared-helper-corrupt", "without-selection", "without-posture", "without-movement", "without-firing", "without-pickup", "without-diagnostics", "without-preview-weapon", "diagnostics-only", "without-posture-and-ammo", "without-movement-and-ammo", "without-core", "unknown-build")
             if not args.assembly_pickup:
-                scenarios += ("rust-fail-pickup", "rust-changed-pickup", "rust-disabled-pickup")
+                scenarios += ("rust-fail-pickup", "rust-changed-pickup")
             scenarios += ("fail-firing", "fail-selection")
             for scenario in scenarios:
                 # unknown-build deliberately changes the on-disk module hash.

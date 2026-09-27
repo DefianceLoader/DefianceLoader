@@ -553,5 +553,310 @@ for owner in [unit, first[0], 0]:
     node = peek(reservation_list([owner]))
     check(bool(promotes(node, unit)) == (owner == unit), "promote only entrant even with shared squad")
 
+# Vehicle entry: run the real TransportHelper places check (fn_463ca0), which
+# counts the distinct owners of admitted orders (+a8) other than the given
+# units against the script's capacity (+70c). Only its vector growth and frees
+# are fixtures.
+ctypes.memmove(native + 0x463ca0, image.read(0x463ca0, 0x200), 0x200)
+for at, target in [(0x463dd3, ctypes.cast(append_reservation, ctypes.c_void_p).value),
+                   (0x463e26, blob(asm("ret"))), (0x463e93, blob(asm("ret")))]:
+    relay = blob(b"\xff\x25\x00\x00\x00\x00" + struct.pack("<Q", target))
+    ctypes.memmove(native + at, near_call(native + at, relay), 5)
+vehicle_places = ctypes.CFUNCTYPE(ctypes.c_uint8, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t)(native + 0x463ca0)
+
+def transport(capacity, owners):
+    script = scratch(0x710)
+    poke(script, 0x70c, capacity, 4)
+    helper_vt = [0]*32
+    helper_vt[0xe8//8] = native + 0x463ca0
+    helper = scratch(0x108)
+    poke(helper, 0, words(helper_vt))
+    poke(helper, 0x28, script)
+    poke(helper, 0x64, 1, 4)       # passenger seats exist, so +8a2 is not consulted
+    poke(helper, 0xa8, reservation_list(owners))
+    poke(helper, 0xb0, len(owners))
+    return helper
+
+squad = [capacity_unit() for _ in range(5)]
+check(not vehicle_places(transport(3, []), words(squad), 5), "stock whole-squad check rejects 5 with 3 seats")
+check(vehicle_places(transport(6, [first[0]]), words(squad), 5), "stock check admits a squad that fits")
+entry = install_order_site(0xfe823)
+trampoline = blob(asm(f"""
+    push r14
+    push r15
+    push rbx
+    sub rsp, 0x20
+    mov r14, r8
+    mov rbx, r9
+    mov r15, qword ptr [rbx]
+    mov r8, r15
+    mov rax, qword ptr [rcx]
+    mov r10, {entry}
+    call r10
+    mov qword ptr [rbx], r15
+    add rsp, 0x20
+    pop rbx
+    pop r15
+    pop r14
+    ret
+"""))
+vehicle_check = ctypes.CFUNCTYPE(ctypes.c_uint8, ctypes.c_void_p, ctypes.c_void_p,
+                                 ctypes.c_void_p, ctypes.c_void_p)(trampoline)
+
+def transport_state(unit):
+    ai_vt = [0]*11
+    ai_vt[0x50//8] = get_field
+    ai = scratch(0x118)
+    poke(ai, 0, words(ai_vt))
+    poke(ai, 0x110, unit)
+    return words([0, 0, words([0, 10, ai])])
+
+admitted = []
+for index, unit in enumerate(squad):
+    copied = words(squad)
+    count = words([5])
+    allowed = bool(vehicle_check(transport(3, admitted), copied, transport_state(unit), count))
+    check(allowed == (index < 3), f"vehicle seat for soldier {index}")
+    check(peek(count) == 1 and peek(copied) == unit, "vehicle check and fallback cover the owner only")
+    check([peek(copied, j*8) for j in range(1, 5)] == squad[1:], "vehicle copy tail untouched")
+    if allowed:
+        admitted.append(unit)
+check(bool(vehicle_check(transport(3, admitted), words(squad), transport_state(admitted[0]), words([5]))),
+      "a passenger's own admission is not counted against it")
+copied, count = words(squad), words([5])
+check(not vehicle_check(transport(3, []), copied, words([0, 0, 0]), count), "vehicle state without an owner stays native")
+check(peek(count) == 5 and peek(copied) == squad[0], "no owner leaves the native squad and count")
+copied, count = words(squad), words([0])
+check(vehicle_check(transport(3, admitted), copied, transport_state(squad[4]), count), "count zero stays native")
+check(peek(count) == 0 and peek(copied) == squad[0], "count zero leaves the copy alone")
+
+# Boarding phase (fn_fee10): the same check when each soldier reaches the
+# vehicle, with the state in rbp and no fallback to adjust.
+arrive = install_order_site(0xfef63)
+arrive_trampoline = blob(asm(f"""
+    push rbp
+    sub rsp, 0x20
+    mov rbp, r8
+    mov r8, r9
+    mov rax, qword ptr [rcx]
+    mov r10, {arrive}
+    call r10
+    add rsp, 0x20
+    pop rbp
+    ret
+"""))
+arrive_check = ctypes.CFUNCTYPE(ctypes.c_uint8, ctypes.c_void_p, ctypes.c_void_p,
+                                ctypes.c_void_p, ctypes.c_size_t)(arrive_trampoline)
+admitted = []
+for index, unit in enumerate(squad):
+    allowed = bool(arrive_check(transport(3, admitted), words(squad), transport_state(unit), 5))
+    check(allowed == (index < 3), f"vehicle arrival seat for soldier {index}")
+    if allowed:
+        admitted.append(unit)
+check(not arrive_check(transport(3, []), words(squad), words([0, 0, 0]), 5),
+      "vehicle arrival without an owner stays native")
+
+# Cursor (fn_c6440): one soldier of the squad is asked about, so the order is
+# offered while a seat is free.
+cursor = install_order_site(0xc653a)
+cursor_trampoline = blob(asm(f"""
+    sub rsp, 0x28
+    mov rax, qword ptr [rcx]
+    mov r10, {cursor}
+    call r10
+    add rsp, 0x28
+    ret
+"""))
+cursor_check = ctypes.CFUNCTYPE(ctypes.c_uint8, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t)(cursor_trampoline)
+strangers = [capacity_unit() for _ in range(3)]
+check(cursor_check(transport(3, []), words(squad), 5), "vehicle cursor offers 5 into 3 seats")
+check(cursor_check(transport(3, strangers[:2]), words(squad[:2]), 2), "vehicle cursor offers 2 into 1 free seat")
+check(not cursor_check(transport(3, strangers), words(squad), 5), "vehicle cursor refuses a full vehicle")
+check(cursor_check(transport(3, strangers), words(squad), 0), "vehicle cursor keeps an empty squad native")
+
+# Order (fn_47740): the places check, then the transport's seats left (esi)
+# less the squad's size (edi); a skip jumps to +47cfc.
+command = install_order_site(0x47c93)
+command_epilogue = """
+    mov dword ptr [rbx], esi
+    add rsp, 0x20
+    pop rbx
+    pop rdi
+    pop rsi
+    ret
+"""
+ctypes.memmove(native + 0x47cfc, asm("xor eax, eax" + command_epilogue), len(asm("xor eax, eax" + command_epilogue)))
+command_trampoline = blob(asm(f"""
+    push rsi
+    push rdi
+    push rbx
+    sub rsp, 0x20
+    mov rbx, r9
+    mov esi, dword ptr [rbx]
+    mov edi, r8d
+    mov rax, qword ptr [rcx]
+    mov r10, {command}
+    call r10
+    mov eax, 1
+""" + command_epilogue))
+command_check = ctypes.CFUNCTYPE(ctypes.c_uint8, ctypes.c_void_p, ctypes.c_void_p,
+                                 ctypes.c_size_t, ctypes.c_void_p)(command_trampoline)
+command_cases = [
+    # squad, capacity, passengers, seats left, taken, seats after, label
+    (squad, 3, [], 3, True, 0, "a squad larger than the seats takes them all"),
+    (squad[:2], 3, strangers[:2], 1, True, 0, "a squad larger than the seats left takes them"),
+    (squad[:2], 3, [], 3, True, 1, "a squad that fits takes its size"),
+    (squad, 3, strangers, 0, False, 0, "a full vehicle skips"),
+    (squad[:2], 3, [], 0, False, 0, "no seats left in this order skips"),
+    (squad, 3, [], 0, True, 0, "an empty squad stays native"),
+]
+for members, capacity, passengers, seats, taken, after, label in command_cases:
+    size = 0 if label.startswith("an empty") else len(members)
+    cell = words([seats])
+    answer = bool(command_check(transport(capacity, passengers), words(members), size, cell))
+    check(answer == taken, "vehicle order: " + label)
+    if taken:
+        check(peek(cell, 0, 4) == after, "vehicle order seats after: " + label)
+
+# Leaving (fn_ff080): the exit slot (vt+c0, here a recorder answering from the
+# helper's first byte) places passengers; a refusal jumps to phase 5 (+ff2cb)
+# without the placement.
+exit_seat = install_order_site(0xff289)
+seat_epilogue = """
+    add rsp, 0x20
+    pop rbx
+    pop rbp
+    pop rsi
+    ret
+"""
+ctypes.memmove(native + 0xff2cb, asm("mov eax, 2" + seat_epilogue), len(asm("mov eax, 2" + seat_epilogue)))
+seat_record = scratch(0x20)
+seat_slot = blob(asm(f"""
+    mov r10, {seat_record}
+    mov qword ptr [r10], rcx
+    mov qword ptr [r10 + 8], rdx
+    movzx eax, byte ptr [rsp + 0x28]
+    mov qword ptr [r10 + 0x10], rax
+    movzx eax, byte ptr [rcx]
+    ret
+"""))
+seat_trampoline = blob(asm(f"""
+    push rsi
+    push rbp
+    push rbx
+    sub rsp, 0x20
+    mov rsi, rcx
+    mov rbp, {seat_slot}
+    mov rbx, 0x5eed
+    mov r10, {exit_seat}
+    call r10
+    mov eax, 1
+""" + seat_epilogue))
+seat_exit = ctypes.CFUNCTYPE(ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p)(seat_trampoline)
+for passenger, expected, label in ((1, 1, "a passenger is placed"), (0, 2, "a refused soldier ends in place")):
+    helper = blob(bytes([passenger]), 0x10)
+    owner = entity()
+    check(seat_exit(helper, owner) == expected, "vehicle exit: " + label)
+    check([peek(seat_record, i*8) for i in range(3)] == [helper, owner, 1],
+          "vehicle exit asks the helper about the owner with the stock fifth argument: " + label)
+
+# Unload to a point (fn_107600): a vehicle's passengers join the building
+# branch's formation (+1079a5) in the member vector at [rbp-51]; the vector
+# grows through +5a070 (here with one spare slot, so both paths run).
+exit_point = install_order_site(0x1077b7)
+
+@ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
+def grow_members(vector, end, value):
+    begin = peek(vector)
+    old = [peek(begin, n) for n in range(0, end - begin, 8)] if begin else []
+    array = words(old + [peek(value), 0])
+    for offset, address in [(0, array), (8, array + 8*(len(old)+1)), (16, array + 8*(len(old)+2))]:
+        poke(vector, offset, address)
+
+grow_jump = b"\xff\x25\x00\x00\x00\x00" + struct.pack("<Q", ctypes.cast(grow_members, ctypes.c_void_p).value)
+ctypes.memmove(native + 0x5a070, grow_jump, len(grow_jump))
+point_epilogue = """
+    add rsp, 0x28
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rdi
+    pop rsi
+    pop rbp
+    pop rbx
+    ret
+"""
+formation = asm("""
+    mov qword ptr [rbp + 0x100], rbx
+    mov qword ptr [rbp + 0x108], rsi
+    mov eax, 2
+""" + point_epilogue)
+ctypes.memmove(native + 0x1079a5, formation, len(formation))
+unload_order = blob(asm("mov eax, 0x1234; ret"))
+point_trampoline = blob(asm(f"""
+    push rbx
+    push rbp
+    push rsi
+    push rdi
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 0x28
+    mov rdi, rcx
+    mov r12, rdx
+    mov rbp, r8
+    xor esi, esi
+    mov rax, qword ptr [rdi]
+    mov rcx, rdi
+    mov r10, {exit_point}
+    call r10
+    cmp eax, 0x1234
+    jne unexpected
+    mov eax, 1
+unexpected:
+""" + point_epilogue))
+unload_point = ctypes.CFUNCTYPE(ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)(point_trampoline)
+
+def passenger(alive=True, down=False):
+    """A soldier whose facets +20 carry the building loop's liveness fields."""
+    member = entity()
+    state = scratch(0x180)
+    poke(state, 0x178, int(down), 4)
+    poke(state, 0x150, int(alive), 1)
+    facets = scratch(0x60)
+    poke(facets, 0x20, state)
+    poke(member, 0x110, facets)
+    return member
+
+vehicle = scratch(0x10)
+poke(vehicle, 0, words([0]*16 + [unload_order]))
+riders = [passenger(), passenger(down=True), passenger(alive=False, down=True), passenger()]
+for label, seated, helper_ref, expected, members in [
+    ("passengers each get their own move", riders + [0], True, 2, [riders[0], riders[1], riders[3]]),
+    ("one passenger", riders[:1], True, 2, riders[:1]),
+    ("an empty vehicle stays native", [], True, 1, None),
+    ("an AI without a transport stays native", riders, False, 1, None),
+]:
+    array = words(seated)
+    helper = scratch(0x120)
+    poke(helper, 0x110, array)
+    poke(helper, 0x118, array + 8*len(seated))
+    ai = scratch(0x198)
+    poke(ai, 0x190, words([0, 0, helper]) if helper_ref else 0)
+    frame = scratch(0x200)
+    rbp = frame + 0x80
+    for offset in (-0x51, -0x49, -0x41, -0x39, -0x31, -0x29):
+        poke(rbp, offset, 0xdead)
+    answer = unload_point(vehicle, ai, rbp)
+    check(answer == expected, "vehicle unload: " + label)
+    if members is not None:
+        begin, end = peek(rbp, -0x51), peek(rbp, -0x49)
+        check([peek(begin, n) for n in range(0, end - begin, 8)] == members, "vehicle unload members: " + label)
+        check(peek(rbp, 0x100) == end and peek(rbp, 0x108) == 0, "vehicle unload joins with rbx = end, rsi = 0: " + label)
+        check([peek(rbp, o) for o in (-0x39, -0x31, -0x29)] == [0, 0, 0], "vehicle unload empties the positions: " + label)
+        check([peek(array, i*8) for i in range(len(seated))] == seated, "vehicle unload leaves the passengers: " + label)
+
 print(f"Order hook regressions: {failures} failures")
 sys.exit(bool(failures))

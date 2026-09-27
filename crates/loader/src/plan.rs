@@ -52,22 +52,6 @@ pub struct Plan {
     pub order: Vec<usize>,
 }
 
-impl Plan {
-    /// The legacy numeric feature IDs this plan will install, as a bit mask.
-    /// Passed to the core plugin so it validates only those features' sites.
-    pub fn feature_mask(&self) -> u64 {
-        let mut mask = 0u64;
-        for &index in &self.order {
-            if let Some(builtin) = self.nodes[index].builtin {
-                if builtin.feature != 0 && builtin.feature < 64 {
-                    mask |= 1 << builtin.feature;
-                }
-            }
-        }
-        mask
-    }
-}
-
 /// A fresh scan of `dir`, for tests that plan without a configuration;
 /// startup plans from the snapshot's [`crate::config::Snapshot::catalog`].
 #[cfg(test)]
@@ -420,7 +404,8 @@ fn order_active(planned: &[Planned], by_id: &BTreeMap<String, Vec<usize>>) -> Ve
     let mut order = Vec::new();
     while !remaining.is_empty() {
         // Ready nodes have no unmet dependencies. Sort managed before legacy,
-        // then by ID, then by index for full determinism.
+        // then by ID, then by index for full determinism ([`REVERSE_TIES`]
+        // reverses the last two in the test host).
         let ready: Vec<usize> = remaining
             .iter()
             .filter(|(_, needs)| needs.is_empty())
@@ -432,7 +417,15 @@ fn order_active(planned: &[Planned], by_id: &BTreeMap<String, Vec<usize>>) -> Ve
         }
         let mut chosen: Vec<usize> = ready;
         chosen.sort_by(|&a, &b| {
-            (planned[a].legacy, &planned[a].id, a).cmp(&(planned[b].legacy, &planned[b].id, b))
+            let ties = (&planned[a].id, a).cmp(&(&planned[b].id, b));
+            planned[a]
+                .legacy
+                .cmp(&planned[b].legacy)
+                .then(if reversed_ties() {
+                    ties.reverse()
+                } else {
+                    ties
+                })
         });
         let pick = chosen[0];
         remaining.remove(&pick);
@@ -442,6 +435,20 @@ fn order_active(planned: &[Planned], by_id: &BTreeMap<String, Vec<usize>>) -> Ve
         order.push(pick);
     }
     order
+}
+
+/// Test host only: break initialization-order ties by descending ID, so
+/// `tools/patch_inventory.py` can show which plugins install differently when
+/// the order between independent plugins changes.
+#[cfg(feature = "test-host")]
+pub(crate) static REVERSE_TIES: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn reversed_ties() -> bool {
+    #[cfg(feature = "test-host")]
+    return REVERSE_TIES.load(std::sync::atomic::Ordering::Relaxed);
+    #[cfg(not(feature = "test-host"))]
+    false
 }
 
 #[cfg(test)]

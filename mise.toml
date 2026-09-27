@@ -1,6 +1,9 @@
 # Tools and one-command runs for the patch, from the repository root.
 #
 #   mise run setup    once: the Python libraries the tools use, into .venv
+#   mise run worktree-init   in a new git worktree: copy the untracked game
+#                     DLLs and local settings from the main checkout, build its
+#                     graft graph when graft is installed, then setup
 #   mise run inject   assemble every patch, build the injector, then wait for
 #                     the game and patch it
 #   mise run test     assemble, build, run every native test and the injector's
@@ -18,8 +21,9 @@
 #   mise run comment-audit   comments to review for staleness (report only;
 #                     the tests run its --check)
 #
-# Core and the injector embed the reference payloads in tools/variants/reference,
-# which are tracked, so a checkout builds without the game's DLLs. `build` still
+# The built-in plugins embed every build's units, and the injector the reference
+# payloads, from tools/variants, which is tracked, so a checkout builds without
+# the game's DLLs. `build` still
 # runs `assemble` first: with the reference DLLs in bin/ it reassembles when its
 # inputs changed (tools/stamp.py) and refreshes those files, so nothing builds
 # around a stale payload; without them it uses the committed payloads.
@@ -52,7 +56,12 @@ _.python.venv = { path = ".venv", create = true }
 
 [tasks.setup]
 description = "Install the Python libraries the tools use into .venv"
-run = "python -m pip install -r tools/requirements.txt"
+# tools/install_libs.py runs pip with .venv's own interpreter.
+run = "python tools/install_libs.py"
+
+[tasks.worktree-init]
+description = "In a new git worktree: copy the untracked files the main checkout has, build the graft graph, then install the Python libraries"
+run = ["python tools/worktree_init.py", "python tools/install_libs.py"]
 
 [tasks.assemble]
 description = "Assemble every patch: the file patch and both injector payloads (skipped when its inputs are unchanged)"
@@ -76,6 +85,7 @@ run = [
   "cargo fmt --all --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
   "cargo fmt --all --manifest-path plugins/squad-management-scroll/Cargo.toml",
   "cargo fmt --all --manifest-path plugins/unit-inspection/Cargo.toml",
+  "cargo fmt --all --manifest-path plugins/ability-groups/Cargo.toml",
   "cargo fmt --all --manifest-path examples/services/Cargo.toml",
   "cargo fmt --all --manifest-path tools/crash-plugin/Cargo.toml",
 ]
@@ -88,6 +98,7 @@ run = [
   "cargo fmt --all --check --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
   "cargo fmt --all --check --manifest-path plugins/squad-management-scroll/Cargo.toml",
   "cargo fmt --all --check --manifest-path plugins/unit-inspection/Cargo.toml",
+  "cargo fmt --all --check --manifest-path plugins/ability-groups/Cargo.toml",
   "cargo fmt --all --check --manifest-path examples/services/Cargo.toml",
   "cargo fmt --all --check --manifest-path tools/crash-plugin/Cargo.toml",
 ]
@@ -118,6 +129,7 @@ run = [
   "cargo test --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
   "cargo test --manifest-path plugins/squad-management-scroll/Cargo.toml",
   "cargo test --manifest-path plugins/unit-inspection/Cargo.toml",
+  "cargo test --manifest-path plugins/ability-groups/Cargo.toml",
 ]
 
 [tasks.test-quick]
@@ -130,6 +142,8 @@ run = [
   "python tools/test_versions.py",
   "python tools/test_layout.py",
   "python tools/test_variant.py",
+  "python tools/module_writes.py check",
+  "python tools/test_patch_inventory.py",
   "python tools/stamp.py test tools/test_chainlayout.py",
 ]
 
@@ -156,7 +170,7 @@ raw = true
 
 [tasks.test]
 description = "Build everything, then run every native test and the self test (native tests skip when they passed on the same inputs; DEFIANCE_NO_STAMP=1 runs them all)"
-depends = ["fmt-check", "build", "crash-test"]
+depends = ["fmt-check", "loader", "crash-test"]
 run = [
   "python tools/comment_audit.py --check",
   "python tools/test_builds.py",
@@ -164,6 +178,8 @@ run = [
   "python tools/test_versions.py",
   "python tools/test_layout.py",
   "python tools/test_variant.py",
+  "python tools/module_writes.py check",
+  "python tools/test_patch_inventory.py",
   "python tools/stamp.py test tools/test_chainlayout.py",
   "python tools/stamp.py test tools/test_bindings.py",
   "python tools/stamp.py test tools/test_unit_inspection.py",
@@ -190,6 +206,8 @@ run = [
   "python tools/test_config.py",
   "python tools/test_package.py",
   "python tools/stamp.py test tools/test_plugins.py",
+  # every plugin's writes, per build: no overlaps, the same in either start order
+  "python tools/patch_inventory.py check",
   "cargo test --workspace",
   "python tools/sigs.py",
   'target\release\defiance-pickup-inject.exe --self-test',
@@ -205,11 +223,11 @@ run = 'target\release\defiance-pickup-inject.exe --select-probe'
 raw = true
 
 # The loader branch: a proxy DLL that hosts plugins inside trm.exe. This is the
-# native answer to BepInEx. It embeds the reference payloads the injector does
-# (tools/variants/reference). Player builds always assemble first; everything
-# builds without the game's DLLs from the committed payloads. See crates/loader/src/lib.rs for the design.
+# native answer to BepInEx. Its built-in plugins embed their units from
+# tools/variants. Player builds always assemble first; everything builds
+# without the game's DLLs from the committed units. See crates/loader/src/lib.rs for the design.
 [tasks.loader]
-description = "Build the loader, built-in plugins and the standalone regroup, expanded-ammo-menu, squad-management-scroll and unit-inspection plugins"
+description = "Build the loader, built-in plugins and the standalone regroup, expanded-ammo-menu, squad-management-scroll, unit-inspection and ability-groups plugins"
 depends = ["assemble"]
 run = [
   "cargo build --release",
@@ -217,9 +235,15 @@ run = [
   "cargo build --release --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
   "cargo build --release --manifest-path plugins/squad-management-scroll/Cargo.toml",
   "cargo build --release --manifest-path plugins/unit-inspection/Cargo.toml",
+  "cargo build --release --manifest-path plugins/ability-groups/Cargo.toml",
   # the sidecar manifests come from the loader's authoritative built-in table
   'target\release\manifest-gen.exe --out target\release',
 ]
+
+[tasks.patch-inventory]
+description = "Start every plugin against each build's stock DLLs: their writes must not overlap and must not depend on start order (record: python tools/patch_inventory.py record)"
+depends = ["loader"]
+run = "python tools/patch_inventory.py check"
 
 [tasks.loader-test]
 description = "Run the loader workspace's tests with fresh payloads"
@@ -244,11 +268,13 @@ run = [
   "python tools/test_versions.py",
   "python tools/test_layout.py",
   "python tools/test_variant.py",
+  "python tools/module_writes.py check",
   "python tools/test_proxy.py",
   "cargo test --manifest-path plugins/regroup/Cargo.toml",
   "cargo test --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
   "cargo test --manifest-path plugins/squad-management-scroll/Cargo.toml",
   "cargo test --manifest-path plugins/unit-inspection/Cargo.toml",
+  "cargo test --manifest-path plugins/ability-groups/Cargo.toml",
   "python tools/test_package_squad_scroll.py",
   "python tools/test_build_resources.py",
   "python tools/test_package_unit_inspection.py",

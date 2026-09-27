@@ -16,10 +16,10 @@ original game's Microsoft x64 signature, not merely the loader callback type.
 
 | Api function | Result and contract |
 |---|---|
-| `log(level, message)` | Log UTF-8 text. INFO=0, WARN=1, ERROR=2. The message must live through the call. |
+| `log(level, message)` | Log UTF-8 text. INFO=0, WARN=1, ERROR=2, DEBUG=3 (written only with `[logging] level = debug`; loaders before 0.4.0 write it as info). The message must live through the call. |
 | `module_base(name)` | Loaded module base, or null. Does not load modules. |
 | `module_size(base)` | Mapped size, or zero. Use a loaded module base. |
-| `find_pattern(base, size, pattern)` | Unique match or null; hex bytes with `??` wildcards. Caller supplies a valid readable range. |
+| `find_pattern(base, size, pattern)` | Unique match or null; hex bytes with `??` wildcards, matched against the code as it was before any plugin hooked it (the original service). Caller supplies a valid readable range. |
 | `find_pattern_at(base, size, pattern, offset)` | Unique match plus an offset inside the matched window; otherwise null. A signature match alone is not a supported-build guarantee. |
 | `hook(target, detour, original_out)` | Installs an entry detour, decoding whole instructions. On success, `original_out` gets a callable trampoline. |
 | `hook_exact(target, detour, displaced, original_out)` | Same, with an exact span. Rejects incomplete instructions; never expands the requested span. |
@@ -87,6 +87,7 @@ threading obligations; wrappers do not validate game objects.
 | `services::crash_ranges()` | Resolve the loader's crash-ranges-v1 table; no dependency needed. |
 | `services::trace()` | Resolve the loader's trace-v1 table; no dependency needed. |
 | `services::multiplayer()` | Resolve the loader's multiplayer-v1 table; no dependency needed. |
+| `services::original()` | Resolve the loader's original-v1 table; no dependency needed. |
 | `services::selection()` | Resolve the selection-v1 table from `defiance.selection`. |
 | `services::game_access()` | Resolve Core's game-access-v1 table; declare a direct `defiance.core` dependency. |
 | `services::members(game, entity)` | Copy the roster pointer array using Core's size/capacity protocol. Returns None on unavailability, malformed/changing data, or allocation failure; entities remain borrowed. |
@@ -182,6 +183,26 @@ patches own. There are four, shared with `[trace] sites`.
 Both may be called from any thread once the table is resolved. Tracing slows
 every hit; keep it out of builds meant for play.
 
+## Loader service: original v1
+
+Provider: `defiance.loader`. Name: `original`. Exact service version: `1`.
+Table: Rust `OriginalV1`, C `DefianceOriginalV1`. No manifest dependency is
+needed.
+
+Memory as it was before any plugin hooked or patched it through the loader.
+Check code you only call or read here, so your plugin works whether or not
+another plugin starting before it has hooked that code. Check the live bytes
+where you write: ownership refuses a write over another plugin's anyway.
+`find_pattern` and `find_pattern_at` search the same view.
+
+- `read(address, out, length) -> i32` copies `length` bytes at `address` into
+  `out`, with the loader-owned writes they overlap undone. The range must lie
+  in one readable region (one section of a module). Returns 0; 1 for a null
+  argument or zero length; 2 when the range is not readable.
+
+Callable from any thread. Writes a plugin makes without the loader are not
+undone.
+
 ## Game service: selection v1
 
 Provider: `defiance.selection`. Name: `selection`. Exact service version: `1`.
@@ -232,13 +253,42 @@ so virtual getters must remain read-only and stable for the duration of a call.
 Public mutations must be coordinated by consumers; the registry does not resolve
 conflicting gameplay policies.
 
+## Core services: patch v1 and build v1
+
+Provider `defiance.core`; names `patch` and `build`; version `1`; tables
+`PatchV1` / `DefiancePatchV1` and `BuildV1` / `DefianceBuildV1`. Declare a
+dependency on Core and query both during init. They install *patch units*:
+assembly assembled with `tools/units.py`, one unit per module a plugin patches,
+resolved per game build by `tools/variant.py` into
+`tools/variants/<build>/units/<plugin>-<module>.{bin,json}`.
+
+- `build.name()` names the build whose units apply: `reference` (the build the
+  units are written for, or one Core finds them in by signature) or a layout
+  variant. Pick the units resolved for that build.
+- `patch.prepare(api, units, count)` checks the units against this build
+  (finding their sites by signature where the build calls for it) and links
+  each near its module. It writes nothing to the game and returns a handle for
+  the process's life, or null (the reason is logged). A unit already linked
+  from the same content is reused, so a reloaded plugin gets the same copy.
+- `patch.cell(prepared, name)` is the address of a unit's named cell, for the
+  plugin to fill before its hooks read it; 0 when no unit has one.
+- `patch.install(api, prepared, replacements, count, call_detour)` checks every
+  site, then writes them all under the calling plugin's ownership: 0, or
+  nonzero with nothing of the plugin's left written (the host rolls back).
+  `replacements` replace functions the units list as `natives` outright in
+  Rust; a non-null `call_detour` takes the units' one call write.
+
+Call all three during your own init: the host charges the writes to the plugin
+initializing. The host restores them when the plugin fails or is unloaded; the
+linked code is never freed, since game code may still be returning through it.
+In Rust, `defiance_feature_sdk::units::install` does all of this for units
+embedded with `defiance_build_support::embed_units`.
+
 ## Internal interfaces
 
-`defiance_feature_sdk::install`, `install_native`, and `install_pickup_rust`, Core's
-`defiance_install_feature_v1`, `defiance_install_pickup_rust_v1`,
-`defiance_install_native_v1`, and `defiance_configure_enabled_v1` are built-in implementation interfaces, not
-general author APIs. Shared assembly block addresses and private Core state
-are not public contracts. Loader `test_host` helpers are test infrastructure,
+`defiance_feature_sdk` is the built-in plugins' helper crate, not a stable
+author API. Patch unit addresses and private Core state are not public
+contracts. Loader `test_host` helpers are test infrastructure,
 not exports on which a game plugin should depend.
 
 There is currently no public global-variable store, game-thread scheduler,

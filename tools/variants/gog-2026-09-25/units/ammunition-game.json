@@ -1,0 +1,321 @@
+{
+ "unit_schema": 1,
+ "name": "ammunition-game",
+ "plugin": "ammunition",
+ "module": "game.dll",
+ "source_sha256": "8ec30a0b59aebf2240f00229d54a0f58e2e338f9ab3511046c9ff36970dd1489",
+ "unit_bytes": 3359,
+ "code_offset": 48,
+ "cells": [
+  {
+   "name": "step",
+   "offset": 0,
+   "bytes": 48
+  }
+ ],
+ "writes": [
+  {
+   "kind": "jmp",
+   "rva": 258571,
+   "before": "4c8bc6488bd5488bcfe857010000",
+   "tail": "909090909090909090",
+   "entry": 48,
+   "label": "ammo_panel"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2362017,
+   "before": "498b4500498bcd",
+   "tail": "9090",
+   "entry": 596,
+   "label": "attack_button"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2903693,
+   "before": "488b0148ffa088000000",
+   "tail": "9090909090",
+   "entry": 1019,
+   "label": "ammo_step_right"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2903723,
+   "before": "488b0148ff6078",
+   "tail": "9090",
+   "entry": 1011,
+   "label": "ammo_step_left"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2903737,
+   "before": "488b0148ffa0d8000000",
+   "tail": "9090909090",
+   "entry": 753,
+   "label": "ammo_step_wheel"
+  },
+  {
+   "kind": "jmp",
+   "rva": 3008077,
+   "before": "41807a18007469",
+   "tail": "9090",
+   "entry": 945,
+   "label": "ammo_wheel_axis"
+  },
+  {
+   "kind": "jmp",
+   "rva": 3315379,
+   "before": "488b01ff9080030000",
+   "tail": "90909090",
+   "entry": 484,
+   "label": "attack_recipient"
+  }
+ ],
+ "fixups": [
+  {
+   "kind": "abs64",
+   "target": 258585,
+   "offset": 473
+  },
+  {
+   "kind": "abs64",
+   "target": 258928,
+   "offset": 184
+  },
+  {
+   "kind": "abs64",
+   "target": 260512,
+   "offset": 453
+  },
+  {
+   "kind": "abs64",
+   "target": 2939072,
+   "offset": 432
+  },
+  {
+   "kind": "abs64",
+   "target": 2905088,
+   "offset": 261
+  },
+  {
+   "kind": "abs64",
+   "target": 3315388,
+   "offset": 585
+  },
+  {
+   "kind": "abs64",
+   "target": 2362111,
+   "offset": 742
+  },
+  {
+   "kind": "abs64",
+   "target": 261216,
+   "offset": 758
+  },
+  {
+   "kind": "abs64",
+   "target": 261216,
+   "offset": 1030
+  },
+  {
+   "kind": "abs64",
+   "target": 265248,
+   "offset": 1379
+  },
+  {
+   "kind": "export",
+   "dll": "user32.dll",
+   "name": "GetAsyncKeyState",
+   "offset": 1214
+  }
+ ],
+ "natives": [],
+ "anchors": [],
+ "sites": [
+  {
+   "site_name": "ammo_panel",
+   "site_start": 258571,
+   "site_group": 257766,
+   "site_pattern": "4c8bc6488bd5488bcfe8????????eb0b488bd5488bcfe8????????",
+   "site_offset": 0
+  },
+  {
+   "site_name": "attack_recipient",
+   "site_start": 3315379,
+   "site_group": 3315289,
+   "site_pattern": "488b01ff906803000084c00f84????????80be5401000000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "attack_button",
+   "site_start": 2362017,
+   "site_group": 2359152,
+   "site_pattern": "498b4500498bcdff90b80100004885c07449498b4500498bcdff90b8010000488b10488bc8ff5248488b4808483908742a498b45004533c0baffe7ffff498bcdff909003000084c07411498b4500498bcdff907003000084c0750383e7fd",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_step_right",
+   "site_start": 2903693,
+   "site_group": 2903693,
+   "site_pattern": "488b0148ffa088000000488b0148ffa080000000488b0148ffa098000000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_step_left",
+   "site_start": 2903723,
+   "site_group": 2903723,
+   "site_pattern": "488b0148ff6078488b0148ff6070488b0148ffa0d8000000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_step_wheel",
+   "site_start": 2903737,
+   "site_group": 2903737,
+   "site_pattern": "488b0148ffa0d80000000587fbffff83f808776f4c8d1d????????",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_wheel_axis",
+   "site_start": 3008077,
+   "site_group": 3008077,
+   "site_pattern": "41807a1800746949c1e910b889888888410fbfc9f7e903d1",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_fill_slot",
+   "site_start": 258928,
+   "site_group": 258928,
+   "site_pattern": "48895c241048897424185557415441564157488dac2460ffffff4881eca0010000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_hide_slot",
+   "site_start": 260512,
+   "site_group": 260512,
+   "site_pattern": "48895c24084889742410574883ec204869f2b80000004803f1488bbe08020000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_label_text",
+   "site_start": 2939072,
+   "site_group": 2939072,
+   "site_pattern": "48895c240848896c24104889742418574883ec2048837a1810488db9a8010000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_progress_refresh",
+   "site_start": 2905088,
+   "site_group": 2905088,
+   "site_pattern": "48895c2418488974242055574156488d6c24b94881ec90000000488bf94883b9a001000000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_menu_hover",
+   "site_start": 261216,
+   "site_group": 261216,
+   "site_pattern": "48895c2408574883ec20488b8158010000488bda488bf9483b50380f84????????",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_menu_entity",
+   "site_start": 265248,
+   "site_group": 265248,
+   "site_pattern": "48895c2408574883ec20488b8148010000488bf9488b084885c97460488b4910",
+   "site_offset": 0
+  }
+ ],
+ "verified_sha": "",
+ "labels": {
+  "ammo_panel": 48,
+  "ammo_panel_reload_shown": 272,
+  "ammo_panel_slot": 301,
+  "ammo_panel_count": 340,
+  "ammo_panel_total": 384,
+  "ammo_panel_hide": 445,
+  "ammo_panel_done": 464,
+  "attack_recipient": 484,
+  "attack_recipient_yes": 577,
+  "attack_recipient_done": 579,
+  "attack_button": 596,
+  "attack_button_next": 611,
+  "attack_button_none": 728,
+  "attack_button_done": 733,
+  "ammo_step_wheel": 753,
+  "ammo_step_wheel_same": 836,
+  "ammo_step_wheel_step": 868,
+  "ammo_step_wheel_done": 879,
+  "ammo_step_wheel_native": 887,
+  "ammo_step_unzoom": 893,
+  "ammo_step_unzoom_clear": 936,
+  "ammo_step_unzoom_done": 944,
+  "ammo_wheel_axis": 945,
+  "ammo_wheel_axis_done": 1010,
+  "ammo_step_left": 1011,
+  "ammo_step_right": 1019,
+  "ammo_step_click": 1025,
+  "ammo_step_click_held": 1076,
+  "ammo_step_click_done": 1141,
+  "ammo_step_click_release": 1149,
+  "ammo_step_click_native": 1178,
+  "ammo_step_click_native_right": 1186,
+  "ammo_step_modifier": 1192,
+  "ammo_step_modifier_done": 1232,
+  "ammo_step": 1237,
+  "step_card": 1309,
+  "step_card_found": 1359,
+  "step_count": 1606,
+  "step_counted": 1640,
+  "step_subset": 1646,
+  "step_user": 1667,
+  "step_user_guns": 1699,
+  "step_user_state": 1753,
+  "step_user_down": 1776,
+  "step_apply": 1792,
+  "step_pin": 1820,
+  "step_pin_store": 1851,
+  "step_refresh": 1876,
+  "step_done": 1894,
+  "step_exit": 1896,
+  "ammo_step_alone": 1913,
+  "alone_next": 2006,
+  "alone_other": 2129,
+  "alone_done": 2167,
+  "ammo_step_release": 2177,
+  "release_gunner": 2211,
+  "release_gun": 2259,
+  "release_done": 2316,
+  "ammo_ui_number": 2331,
+  "ui_number_digit": 2345,
+  "ui_number_copy": 2362,
+  "ammo_ui_usable": 2389,
+  "ammo_ui_state": 2394,
+  "ui_query": 2400,
+  "ui_query_weapon": 2480,
+  "ui_count_members": 2574,
+  "ui_counted_members": 2608,
+  "ui_have_subset": 2614,
+  "ui_find_user": 2617,
+  "ui_check_guns": 2653,
+  "ui_member_state": 2725,
+  "ui_member_off": 2769,
+  "ui_merge_state": 2774,
+  "ui_single_unit": 2783,
+  "ui_usable_yes": 2825,
+  "ui_usable_native": 2833,
+  "ui_shared_off": 2862,
+  "ui_usable_no": 2869,
+  "ui_share_done": 2898,
+  "ui_usable_done": 2902,
+  "ammo_ui_next": 2935,
+  "ui_next_done": 2999,
+  "ammo_ui_has_weapon": 3004,
+  "ui_next_gunner": 3038,
+  "ui_next_gun": 3086,
+  "ui_has_no": 3140,
+  "ui_has_done": 3142,
+  "ammo_ui_ready": 3157,
+  "ui_ready_gunner": 3199,
+  "ui_ready_gun": 3251,
+  "ui_ready_done": 3338
+ }
+}

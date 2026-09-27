@@ -90,7 +90,7 @@ class KeyboardStateTests(unittest.TestCase):
         # Actual native bitset-to-modifier-byte code. Preserve RBX around this
         # extracted straight-line fragment; it has no calls or relative data.
         fragment = reference.read(0x2da319, 0x2da34f - 0x2da319)
-        for name in ("gog-2025-12-23", "steam-2025-12-23", "gog-2026-09-14", "steam-2026-09-22"):
+        for name in ("gog-2025-12-23", "steam-2025-12-23", "gog-2026-09-14", "steam-2026-09-22", "gog-2026-09-25", "steam-2026-09-25"):
             with self.subTest(build=name):
                 image = Image(str(builds.build(name).game))
                 self.assertEqual(image.data.count(fragment), 1)
@@ -120,7 +120,9 @@ class PerkRosterCopyTests(unittest.TestCase):
         for name, start in [("gog-2025-12-23", 0x33151d),
                             ("steam-2025-12-23", 0x3315ad),
                             ("gog-2026-09-14", 0x3401bd),
-                            ("steam-2026-09-22", 0x34024d)]:
+                            ("steam-2026-09-22", 0x34024d),
+                            ("gog-2026-09-25", 0x3401bd),
+                            ("steam-2026-09-25", 0x34024d)]:
             with self.subTest(build=name):
                 im = Image(str(builds.build(name).logic))
                 length = im.read(start, 14)
@@ -164,6 +166,8 @@ class UiRosterExportTests(unittest.TestCase):
             ("steam-2025-12-23", 0x1102d0, 0xcf530),
             ("gog-2026-09-14", 0x118360, 0xd7540),
             ("steam-2026-09-22", 0x1183f0, 0xd75d0),
+            ("gog-2026-09-25", 0x118360, 0xd7540),
+            ("steam-2026-09-25", 0x1183f0, 0xd75d0),
         ]:
             with self.subTest(build=name):
                 im = Image(str(builds.build(name).logic))

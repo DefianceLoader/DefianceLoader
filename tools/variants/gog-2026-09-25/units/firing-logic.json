@@ -1,0 +1,144 @@
+{
+ "unit_schema": 1,
+ "name": "firing-logic",
+ "plugin": "firing",
+ "module": "logic.dll",
+ "source_sha256": "1216d627c7288c7db6940168363be582232ed4d3cb860b8b8c8d7489652eca74",
+ "unit_bytes": 730,
+ "code_offset": 0,
+ "cells": [],
+ "writes": [
+  {
+   "kind": "jmp",
+   "rva": 2870560,
+   "before": "48895c2408",
+   "tail": "",
+   "entry": 530,
+   "label": "firing_soldier"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2870748,
+   "before": "48ffa098030000",
+   "tail": "9090",
+   "entry": 619,
+   "label": "squad_flag"
+  },
+  {
+   "kind": "call",
+   "rva": 2987659,
+   "before": "ff9098030000",
+   "tail": "90",
+   "stock": 0,
+   "entry": 627,
+   "label": "firing_call"
+  },
+  {
+   "kind": "jmp",
+   "rva": 4497424,
+   "before": "0fb68128020000c3",
+   "tail": "909090",
+   "entry": 208,
+   "label": "firing_ui"
+  },
+  {
+   "kind": "jmp",
+   "rva": 4497440,
+   "before": "889128020000c3",
+   "tail": "9090",
+   "entry": 0,
+   "label": "firing_set"
+  }
+ ],
+ "fixups": [
+  {
+   "kind": "rel32",
+   "offset": 615,
+   "target": 2870565
+  }
+ ],
+ "natives": [
+  {
+   "name": "firing_set",
+   "rva": 4497440
+  },
+  {
+   "name": "firing_ui",
+   "rva": 4497424
+  }
+ ],
+ "anchors": [],
+ "sites": [
+  {
+   "site_name": "firing_set",
+   "site_start": 4497440,
+   "site_group": 4497440,
+   "site_pattern": "889128020000c3cccccccccccccccccc40534883ec20488bca",
+   "site_offset": 0
+  },
+  {
+   "site_name": "firing_ui",
+   "site_start": 4497424,
+   "site_group": 4497424,
+   "site_pattern": "0fb68128020000c3cccccccccccccccc889128020000c3cc",
+   "site_offset": 0
+  },
+  {
+   "site_name": "firing_soldier",
+   "site_start": 2870560,
+   "site_group": 2870560,
+   "site_pattern": "48895c2408574883ec20488b5910488bf94885db7455488b5b10",
+   "site_offset": 0
+  },
+  {
+   "site_name": "squad_flag",
+   "site_start": 2870748,
+   "site_group": 2870560,
+   "site_pattern": "48ffa080030000cccccccccccccccccccccccccc488b89f0010000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "firing_call",
+   "site_start": 2987659,
+   "site_group": 2987440,
+   "site_pattern": "ff908003000084c07527488b4f20488b01ff90b0000000488b4838",
+   "site_offset": 0
+  }
+ ],
+ "verified_sha": "",
+ "labels": {
+  "firing_set": 0,
+  "set_count": 45,
+  "set_counted": 79,
+  "pin_next": 90,
+  "pin_marked": 138,
+  "unpin_all": 147,
+  "unpin_next": 150,
+  "set_squad": 179,
+  "set_done": 191,
+  "firing_ui": 208,
+  "ui_next": 255,
+  "ui_judged": 294,
+  "ui_counted": 328,
+  "ui_answer": 352,
+  "list_members": 372,
+  "listed": 463,
+  "list_end": 468,
+  "next_soldier": 468,
+  "next_done": 525,
+  "firing_soldier": 530,
+  "next_end": 530,
+  "soldier_pinned": 589,
+  "soldier_done": 595,
+  "soldier_stock": 601,
+  "soldier_resume": 609,
+  "squad_flag": 619,
+  "firing_call": 627,
+  "call_squad": 651,
+  "call_done": 658,
+  "call_end": 664,
+  "fire_pin": 664,
+  "fire_none": 725,
+  "fire_end": 730
+ }
+}

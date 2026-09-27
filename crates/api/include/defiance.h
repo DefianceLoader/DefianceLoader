@@ -22,6 +22,7 @@ enum {
     DEFIANCE_LOG_INFO = 0,
     DEFIANCE_LOG_WARN = 1,
     DEFIANCE_LOG_ERROR = 2,
+    DEFIANCE_LOG_DEBUG = 3, /* only with [logging] level = debug */
 };
 
 typedef struct DefianceApi {
@@ -143,6 +144,18 @@ typedef struct DefianceSessionV1 {
     void (*before_mission)(void);
 } DefianceSessionV1;
 
+/* Provider defiance.loader, name original, service version 1. Memory as it was
+ * before any plugin hooked or patched it through the loader, so checking bytes
+ * a plugin only reads or calls does not depend on start order; check the live
+ * bytes where you write. Any thread. read: copies length bytes at address into
+ * out with the loader-owned writes they overlap undone; the range must lie in
+ * one readable region. 0 success, 1 null argument or zero length, 2 not
+ * readable.
+ */
+typedef struct DefianceOriginalV1 {
+    int32_t (*read)(uintptr_t address, uint8_t *out, size_t length);
+} DefianceOriginalV1;
+
 /* Provider defiance.selection, name selection, service version 1.
  * Game thread only. NULL -> 0; otherwise argument must be a live selectable
  * facet in the supported game build. Returns 0 or 1. Does not retain pointers.
@@ -184,5 +197,34 @@ typedef struct DefianceAmmoMenuV1 {
     uint32_t (*capacity)(void);
     int32_t (*publish)(uint32_t slots);
 } DefianceAmmoMenuV1;
+
+/* A function a patch unit names in its natives, replaced by detour. */
+typedef struct DefianceNativeReplacementV1 {
+    const char *name;
+    void *detour;
+} DefianceNativeReplacementV1;
+
+/* One patch unit: its JSON descriptor and its blob; not retained. */
+typedef struct DefiancePatchUnitV1 {
+    const uint8_t *descriptor;
+    size_t descriptor_len;
+    const uint8_t *code;
+    size_t code_len;
+} DefiancePatchUnitV1;
+
+/* Core service "patch" v1: prepare, fill cells, install; during init only.
+ * See docs/plugin-api.md. */
+typedef struct DefiancePatchV1 {
+    void *(*prepare)(const DefianceApi *api, const DefiancePatchUnitV1 *units, size_t count);
+    size_t (*cell)(void *prepared, const char *name);
+    int32_t (*install)(const DefianceApi *api, void *prepared,
+                       const DefianceNativeReplacementV1 *replacements, size_t count,
+                       void *call_detour);
+} DefiancePatchV1;
+
+/* Core service "build" v1: the recognised build's name, process lifetime. */
+typedef struct DefianceBuildV1 {
+    const char *(*name)(void);
+} DefianceBuildV1;
 
 #endif /* DEFIANCE_H */

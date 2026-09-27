@@ -486,9 +486,9 @@ static LATER: std::sync::Mutex<Option<&'static Snapshot>> = std::sync::Mutex::ne
 
 /// Read the configuration again, as startup does (missing sections and keys
 /// written with their defaults, so an added plugin's settings appear in its
-/// group file), and keep it for [`get`]. Only a setting the startup snapshot
-/// does not have is answered from it: a plugin present at startup keeps its
-/// startup values, as settings are startup-only.
+/// group file), and keep it for [`get`]. It answers a setting the startup
+/// snapshot does not have, and every setting of a plugin put [`go_live`]; any
+/// other plugin keeps its startup values.
 pub fn refresh_later() -> &'static Snapshot {
     let Discovered {
         paths,
@@ -512,12 +512,36 @@ fn later() -> Option<&'static Snapshot> {
     *LATER.lock().unwrap_or_else(|p| p.into_inner())
 }
 
+/// The sections (lowercase plugin IDs) [`get`] answers from the later read
+/// first: plugins loaded again for changed settings (`live_toggle`), whose
+/// startup values are stale.
+static LIVE: std::sync::Mutex<BTreeSet<String>> = std::sync::Mutex::new(BTreeSet::new());
+
+/// Answer `plugin_id`'s settings from the latest [`refresh_later`] read from
+/// now on, before the plugin is loaded again to pick them up.
+pub fn go_live(plugin_id: &str) {
+    LIVE.lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(plugin_id.to_ascii_lowercase());
+}
+
+fn is_live(section: &str) -> bool {
+    LIVE.lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .contains(&section.to_ascii_lowercase())
+}
+
 /// The compatibility adapter: a value from the configuration by `(section,
 /// key)`, both case-insensitive. Declared settings return their validated
 /// canonical string; a section that is not declared falls back to the legacy
 /// bootstrap file's own sections, keeping ABI 5 third-party plugins working.
 pub fn get(section: &str, key: &str) -> Option<String> {
     let snapshot = SNAPSHOT.get()?;
+    if is_live(section) {
+        if let Some(resolved) = later().and_then(|later| later.get(section, key)) {
+            return Some(resolved.canonical());
+        }
+    }
     // The old loader keys were unsectioned; accept both spellings.
     if section.is_empty() {
         if let Some(value) = snapshot.text(builtin::LOADER_SECTION, key) {

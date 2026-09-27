@@ -372,9 +372,20 @@ fn block_record_path() -> Option<PathBuf> {
         .map(|dir| dir.join("defiance-pickup-inject.block"))
 }
 
-/// The block the last injection allocated, and the trace hook that reaches it,
-/// if the record is present and still matches this process.
-fn recorded_block(target: &Target, process: &Process) -> Option<(usize, *mut u8)> {
+/// Where the diagnostics live in the process a record describes. The
+/// injector writes one block, whose fixed offsets hold the rest; the loader's
+/// Core links each feature on its own and names the trace ring, the census and
+/// the ammunition scratch (zero until that unit is linked).
+struct Recorded {
+    block: *mut u8,
+    ring: Option<usize>,
+    census: Option<usize>,
+    scratch: Option<usize>,
+}
+
+/// The block the last injection (or Core) recorded, if the record is present,
+/// matches this process and its trace hook still reaches the block.
+fn recorded_block(target: &Target, process: &Process) -> Option<Recorded> {
     let text = block_record_path()
         .and_then(|p| std::fs::read_to_string(p).ok())
         .or_else(|| {
@@ -405,7 +416,13 @@ fn recorded_block(target: &Target, process: &Process) -> Option<(usize, *mut u8)
     if unsafe { at(trace + 5).offset(rel) as usize } != block + entry {
         return None;
     }
-    Some((trace, block as *mut u8))
+    let named = |key: &str| field(key).filter(|&address| address != 0);
+    Some(Recorded {
+        block: block as *mut u8,
+        ring: named("ring"),
+        census: named("census"),
+        scratch: named("scratch"),
+    })
 }
 
 fn select_probe(patch: &Patch, target: &Target) -> Result<(), String> {
@@ -419,8 +436,9 @@ fn select_probe(patch: &Patch, target: &Target) -> Result<(), String> {
     // In a build whose sites moved, the patched hook does not hold the
     // signature, so the block is taken from the record the injector wrote.
     // Failing that, the build the patch was written for still has its hook.
-    let block = match recorded_block(target, &process) {
-        Some((_, block)) => block,
+    let recorded = recorded_block(target, &process);
+    let block = match &recorded {
+        Some(recorded) => recorded.block,
         None => {
             let hook = patch
                 .detours
@@ -439,10 +457,13 @@ fn select_probe(patch: &Patch, target: &Target) -> Result<(), String> {
         }
     };
 
-    let ring = process.read(
-        unsafe { block.add(patch.trace_offset) },
-        0x10 + ENTRIES * 16,
-    )?;
+    let cell = |named: fn(&Recorded) -> Option<usize>, offset: usize| {
+        recorded.as_ref().and_then(named).map_or_else(
+            || unsafe { block.add(offset) },
+            |address| address as *mut u8,
+        )
+    };
+    let ring = process.read(cell(|r| r.ring, patch.trace_offset), 0x10 + ENTRIES * 16)?;
     let qword = |o: usize| u64::from_le_bytes(ring[o..o + 8].try_into().unwrap());
     let calls = qword(0);
     if calls == 0 {
@@ -652,7 +673,7 @@ fn select_probe(patch: &Patch, target: &Target) -> Result<(), String> {
 
     // Counts pin-disabled queries, including loaded-round readiness. This is
     // diagnostic only; the patch never retrieves game pointers from this cell.
-    if let Ok(cell) = process.read(unsafe { block.add(patch.ammo_scratch) }, 0x58) {
+    if let Ok(cell) = process.read(cell(|r| r.scratch, patch.ammo_scratch), 0x58) {
         let at = |o: usize| u64::from_le_bytes(cell[o..o + 8].try_into().unwrap());
         println!(
             "\nammo pin: {} query(s) answered disabled; last facet {} slot {}",
@@ -664,7 +685,7 @@ fn select_probe(patch: &Patch, target: &Target) -> Result<(), String> {
 
     // who read a squad's behaviour, from the census the getter's replacement
     // keeps: 32 entries of return address and count
-    let census = process.read(unsafe { block.add(patch.census_offset) }, 32 * 16)?;
+    let census = process.read(cell(|r| r.census, patch.census_offset), 32 * 16)?;
     let entry = |i: usize, half: usize| {
         u64::from_le_bytes(
             census[i * 16 + half * 8..i * 16 + half * 8 + 8]

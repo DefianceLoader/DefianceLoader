@@ -59,6 +59,10 @@ fn loader_table(name: &str, version: u32) -> Option<(usize, usize)> {
             &crate::multiplayer::API as *const _ as usize,
             core::mem::size_of::<defiance_api::MultiplayerV1>(),
         )),
+        ("original", 1) => Some((
+            &crate::original::API as *const _ as usize,
+            core::mem::size_of::<defiance_api::OriginalV1>(),
+        )),
         _ => None,
     }
 }

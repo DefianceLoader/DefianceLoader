@@ -1,6 +1,6 @@
 //! Opt-in, startup-only squad-management viewport. Never hot unload.
 use core::ffi::c_void;
-use defiance_api::{Api, Plugin, ABI_VERSION, LOG_ERROR, LOG_INFO, LOG_WARN};
+use defiance_api::{Api, Plugin, ABI_VERSION, LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_WARN};
 use std::sync::{
     atomic::{AtomicBool, AtomicPtr, Ordering},
     OnceLock,
@@ -48,6 +48,10 @@ struct Build {
     /// presets window calls as an item drag starts: (panel, &out, item).
     squad_chooser: Site,
     vehicle_chooser: Site,
+    /// Where an entry of an upgrade record's squad list names its squad (a
+    /// std::string; empty fits every squad), as the squad chooser's match
+    /// reads it (0x850; 0x860 in the 2026-09 builds).
+    squad_fit_name: usize,
 }
 impl Build {
     fn functions(&self) -> [&Site; 16] {
@@ -184,12 +188,14 @@ unsafe fn install(api: &Api) -> Result<(), String> {
         native::UPGRADE_SLOTS_MIN..=native::UPGRADE_SLOTS_MAX,
     )?;
     // The upgrade columns and the vehicle panel; each can be turned off,
-    // leaving the stock row and hiding its scrollbar.
+    // leaving the stock row and hiding its scrollbar. `fit_upgrades` sizes the
+    // upgrade column to what the unit's type can hold.
     let flag = |key: &str| {
         defiance_feature_sdk::boolean(api, "defiance.squad-management-scroll", key)
             .map_err(|e| format!("{key}: {e}"))
     };
     let upgrades = flag("upgrades")?;
+    let fit_upgrades = flag("fit_upgrades")?;
     let vehicles = flag("vehicles")?;
     ENGINE
         .set(native::Engine::new(
@@ -199,6 +205,7 @@ unsafe fn install(api: &Api) -> Result<(), String> {
             perk_slots,
             upgrade_slots,
             upgrades,
+            fit_upgrades,
             vehicles,
         ))
         .map_err(|_| "already initialized")?;
@@ -276,7 +283,7 @@ unsafe fn install(api: &Api) -> Result<(), String> {
         LOG_INFO,
         &format!(
             "squad scrolling installed: perk_slots={perk_slots}, upgrade_slots={upgrade_slots}, \
-             upgrades={upgrades}, vehicles={vehicles}; companion UI mod required; \
+             upgrades={upgrades}, fit_upgrades={fit_upgrades}, vehicles={vehicles}; companion UI mod required; \
              startup-only, no hot unload"
         ),
     );

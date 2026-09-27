@@ -31,7 +31,12 @@ to install more than five; the game still rejects or replaces a conflicting
 upgrade. As an upgrade drag starts, the column scrolls to the card the drop will
 land on: the installed upgrade it conflicts with (a shared `slot_type`), which
 the drop replaces, or the one it duplicates, which the game refuses; otherwise
-the first empty card. Five reproduces stock. `upgrades` and `vehicles` (bool,
+the first empty card. Five reproduces stock. `fit_upgrades` (bool, default
+true) shortens each column to the most upgrades the unit's type can hold at
+once: the most of the upgrades that fit it that share no conflict group (a
+second armor or mounted gun replaces the first), capped at `upgrade_slots` and never shorter than what the
+unit already has. Until the game has drawn an upgrade card, and with
+`fit_upgrades` false, the column is `upgrade_slots` long. `upgrades` and `vehicles` (bool,
 default true) switch the upgrade columns and the vehicle panel on/off; turning
 one off leaves the stock row and hides its scrollbar. All settings live under
 `[defiance.squad-management-scroll]` in `DefianceLoader/config/weapons.ini`.

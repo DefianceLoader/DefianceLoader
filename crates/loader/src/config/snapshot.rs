@@ -14,7 +14,7 @@ use super::builtin::{self, LOADER_SECTION, LOGGING_SECTION};
 use super::parse::{self, Document, Entry};
 use super::paths::Paths;
 use super::schema::{validate, SettingDecl, Value};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 
 /// Where a resolved value came from.
@@ -454,6 +454,17 @@ impl Snapshot {
     pub fn integer(&self, plugin_id: &str, key: &str) -> Option<i64> {
         self.get(plugin_id, key)
             .and_then(|resolved| resolved.value.as_integer())
+    }
+
+    /// A plugin's declared settings other than `enabled`, as canonical values
+    /// by lowercase key: what a live settings change compares.
+    pub fn settings(&self, plugin_id: &str) -> BTreeMap<String, String> {
+        let id = plugin_id.to_ascii_lowercase();
+        self.resolved
+            .iter()
+            .filter(|((owner, key), _)| *owner == id && key != "enabled")
+            .map(|((_, key), resolved)| (key.clone(), resolved.canonical()))
+            .collect()
     }
 
     /// A textual loader setting, by `[loader]`/`[logging]` key.

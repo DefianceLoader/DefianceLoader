@@ -19,7 +19,8 @@ Settings, under `[defiance.unit-inspection]` in `DefianceLoader/config/infantry.
   or `#RRGGBB`.
 
 With a squad's details shown, the relation label (ENEMY, NEUTRAL, ALLIED) is
-hidden, since the commander's name takes its place.
+hidden, since the commander's name takes its place; vehicles and platforms
+keep it.
 
 The ammo cards' reload bars take the shown squad's colour: yours teal as
 before, allied yellow, neutral grey-blue, enemy red. This needs the companion
@@ -28,7 +29,8 @@ installed with the loader package) enabled in the game's MODS menu: it makes
 the bars greyscale so they can take a colour. Without it the bars keep the
 game's teal; with the mod but not the plugin they stay grey.
 
-Limits: squads only; vehicles and buildings keep the game's panel. Supported on
+Vehicles and platforms work the same way: the ammo menu lists their weapons,
+and allies' toggles follow `ally_weapon_toggles`. Supported on
 the 2026 game updates (GOG and Steam); on older builds the plugin logs that it
 does not apply and changes nothing. It blocks online multiplayer while active,
 like the other gameplay plugins.

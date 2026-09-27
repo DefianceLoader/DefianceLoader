@@ -11,8 +11,8 @@
 pub mod apply;
 pub mod decode;
 pub mod descriptor;
-pub mod features;
 pub mod install;
+pub mod json;
 pub mod pattern;
 pub mod pe;
 pub mod relocate;
@@ -20,6 +20,7 @@ pub mod report;
 pub mod rtti;
 pub mod scan;
 pub mod sha256;
+pub mod unit;
 
 pub use apply::{apply, apply_game, module_image, Target};
 pub use descriptor::{GamePatch, Patch};

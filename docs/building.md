@@ -2,9 +2,9 @@
 
 The release package — the loader (`bin/dxgi.dll`), its crash helper, the
 built-in and standalone plugins, and the player guide — builds from this
-repository alone. No copy of the game is needed: the patch payloads Core embeds
-are committed under `tools/variants/`, and the per-build signatures are
-committed in the sources.
+repository alone. No copy of the game is needed: the patch units the built-in
+plugins embed are committed under `tools/variants/`, with their per-build
+signatures.
 
 Official releases are built this way by the `release` workflow
 (`.github/workflows/release.yml`) on GitHub's Windows runners, and every file it
@@ -39,6 +39,7 @@ cargo build --release --manifest-path plugins/regroup/Cargo.toml
 cargo build --release --manifest-path plugins/expanded-ammo-menu/Cargo.toml
 cargo build --release --manifest-path plugins/squad-management-scroll/Cargo.toml
 cargo build --release --manifest-path plugins/unit-inspection/Cargo.toml
+cargo build --release --manifest-path plugins/ability-groups/Cargo.toml
 target\release\manifest-gen.exe --out target\release
 python tools/package.py --out out/defiance-loader.zip
 python tools/checksums.py out/defiance-loader.zip --out out/SHA256SUMS.txt

@@ -8,6 +8,7 @@ fn main() {
         Some("add") => return add(dir),
         Some("remove") => return remove(dir),
         Some("toggle") => return toggle(dir),
+        Some("settings") => return settings(dir),
         _ => {}
     }
     for (id, state) in defiance_loader::test_host::run_plugins(dir) {
@@ -164,6 +165,11 @@ fn remove(dir: &std::path::Path) {
 
 /// Set `enabled` for `id` in the examples group file.
 fn set_enabled(dir: &std::path::Path, id: &str, on: bool) {
+    set_value(dir, id, "enabled", &on.to_string());
+}
+
+/// Set `key` for `id` in the examples group file.
+fn set_value(dir: &std::path::Path, id: &str, key: &str, value: &str) {
     let path = dir.join("../DefianceLoader/config/examples.ini");
     let text = std::fs::read_to_string(&path).unwrap();
     let mut out = String::new();
@@ -172,8 +178,8 @@ fn set_enabled(dir: &std::path::Path, id: &str, on: bool) {
         if line.trim_start().starts_with('[') {
             inside = line.trim() == format!("[{id}]");
         }
-        if inside && line.trim_start().starts_with("enabled") {
-            out.push_str(&format!("enabled = {on}\n"));
+        if inside && line.split('=').next().map(str::trim) == Some(key) {
+            out.push_str(&format!("{key} = {value}\n"));
         } else {
             out.push_str(line);
             out.push('\n');
@@ -200,6 +206,24 @@ fn toggle(dir: &std::path::Path) {
     if let Some(total) = query::<TotalV1>(c"example.counter-user", c"total", 1) {
         println!("total: {}", unsafe { (total.total)() });
     }
+}
+
+/// The counter and counter-user at startup; the counter's `fail_init` is
+/// set in its config file and it is loaded again with the new value (its init
+/// fails, so both stay unloaded), then set back and the counter switched on
+/// again (both come back with the value read then).
+fn settings(dir: &std::path::Path) {
+    for (id, state) in defiance_loader::test_host::load_plugins(dir) {
+        println!("{id}: {state}");
+    }
+    set_value(dir, "example.counter", "fail_init", "true");
+    let result = defiance_loader::test_host::resettle_plugin("example.counter");
+    println!("resettle: {result:?}");
+    print_loaded();
+    set_value(dir, "example.counter", "fail_init", "false");
+    let result = defiance_loader::test_host::toggle_plugin("example.counter", true);
+    println!("on: {result:?}");
+    print_loaded();
 }
 
 /// Load, replace the provider's DLL on disk (possible only because the loader

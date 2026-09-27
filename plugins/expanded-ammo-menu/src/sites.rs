@@ -1769,4 +1769,888 @@ pub static BUILDS: &[Build] = &[
             ai_set: 0x3f8,
         },
     },
+    Build {
+        sha: "8ec30a0b59aebf2240f00229d54a0f58e2e338f9ab3511046c9ff36970dd1489",
+        sites: &[
+            Site {
+                rva: 0x3e05c,
+                before: &[0x45, 0x8d, 0x44, 0x24, 0x09],
+                field: 4,
+                width: 1,
+                kind: Kind::Count,
+            }, // lea r8d, [r12 + 9]
+            Site {
+                rva: 0x3e067,
+                before: &[0x48, 0x8d, 0x9e, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea rbx, [rsi + 0x7f8]
+            Site {
+                rva: 0x3e097,
+                before: &[0x4c, 0x89, 0xa6, 0x08, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov qword ptr [rsi + 0x808], r12
+            Site {
+                rva: 0x3e09e,
+                before: &[0x4c, 0x89, 0xa6, 0x10, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov qword ptr [rsi + 0x810], r12
+            Site {
+                rva: 0x3e0a5,
+                before: &[0x4c, 0x89, 0xa6, 0x18, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov qword ptr [rsi + 0x818], r12
+            Site {
+                rva: 0x3e0ac,
+                before: &[0x4c, 0x89, 0xa6, 0x20, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov qword ptr [rsi + 0x820], r12
+            Site {
+                rva: 0x3e0b3,
+                before: &[0x4c, 0x89, 0xa6, 0x28, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov qword ptr [rsi + 0x828], r12
+            Site {
+                rva: 0x3e0ba,
+                before: &[0x4c, 0x89, 0xa6, 0x30, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov qword ptr [rsi + 0x830], r12
+            Site {
+                rva: 0x3e255,
+                before: &[0x41, 0xbd, 0x02, 0x00, 0x00, 0x00],
+                field: 2,
+                width: 4,
+                kind: Kind::Zero,
+            }, // mov r13d, 2
+            Site {
+                rva: 0x3e2d5,
+                before: &[0x41, 0xbd, 0x03, 0x00, 0x00, 0x00],
+                field: 2,
+                width: 4,
+                kind: Kind::Zero,
+            }, // mov r13d, 3
+            Site {
+                rva: 0x3e34f,
+                before: &[0x41, 0xbd, 0x01, 0x00, 0x00, 0x00],
+                field: 2,
+                width: 4,
+                kind: Kind::Zero,
+            }, // mov r13d, 1
+            Site {
+                rva: 0x3e586,
+                before: &[0x48, 0x81, 0xff, 0x78, 0x06, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Extent,
+            }, // cmp rdi, 0x678
+            Site {
+                rva: 0x3e59b,
+                before: &[0x4d, 0x8d, 0xbc, 0x24, 0x78, 0x06, 0x00, 0x00],
+                field: 4,
+                width: 4,
+                kind: Kind::Extent,
+            }, // lea r15, [r12 + 0x678]
+            Site {
+                rva: 0x3e649,
+                before: &[0xba, 0x38, 0x08, 0x00, 0x00],
+                field: 1,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov edx, 0x838
+            Site {
+                rva: 0x3e680,
+                before: &[0x41, 0xb8, 0x09, 0x00, 0x00, 0x00],
+                field: 2,
+                width: 4,
+                kind: Kind::Count,
+            }, // mov r8d, 9
+            Site {
+                rva: 0x3e6f7,
+                before: &[0x48, 0x8b, 0xb9, 0x28, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rdi, qword ptr [rcx + 0x828]
+            Site {
+                rva: 0x3e6fe,
+                before: &[0x48, 0x8b, 0x99, 0x20, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbx, qword ptr [rcx + 0x820]
+            Site {
+                rva: 0x3e72c,
+                before: &[0x48, 0x8b, 0xbe, 0x10, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rdi, qword ptr [rsi + 0x810]
+            Site {
+                rva: 0x3e733,
+                before: &[0x48, 0x8b, 0x9e, 0x08, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbx, qword ptr [rsi + 0x808]
+            Site {
+                rva: 0x3e763,
+                before: &[0x4c, 0x8d, 0x93, 0x78, 0x06, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Extent,
+            }, // lea r10, [rbx + 0x678]
+            Site {
+                rva: 0x3e7e7,
+                before: &[0x48, 0x8d, 0x8e, 0x20, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea rcx, [rsi + 0x820]
+            Site {
+                rva: 0x3e7f3,
+                before: &[0x48, 0x8d, 0x8e, 0x08, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea rcx, [rsi + 0x808]
+            Site {
+                rva: 0x3e7ff,
+                before: &[0x48, 0x8d, 0x8e, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea rcx, [rsi + 0x7f8]
+            Site {
+                rva: 0x3e818,
+                before: &[0x41, 0xb8, 0x09, 0x00, 0x00, 0x00],
+                field: 2,
+                width: 4,
+                kind: Kind::Count,
+            }, // mov r8d, 9
+            Site {
+                rva: 0x3e8b2,
+                before: &[0x48, 0x8b, 0xb7, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rsi, qword ptr [rdi + 0x7f8]
+            Site {
+                rva: 0x3e8d4,
+                before: &[0x48, 0x8d, 0x97, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea rdx, [rdi + 0x7f8]
+            Site {
+                rva: 0x3e8db,
+                before: &[0x48, 0x8d, 0x8f, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea rcx, [rdi + 0x7f8]
+            Site {
+                rva: 0x3e916,
+                before: &[0x48, 0x8d, 0xb3, 0x78, 0x06, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Extent,
+            }, // lea rsi, [rbx + 0x678]
+            Site {
+                rva: 0x3e91d,
+                before: &[0x48, 0x89, 0x87, 0x00, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov qword ptr [rdi + 0x800], rax
+            Site {
+                rva: 0x3e9d0,
+                before: &[0x48, 0x8d, 0x81, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea rax, [rcx + 0x7f8]
+            Site {
+                rva: 0x3ee2c,
+                before: &[0x48, 0x81, 0xc1, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // add rcx, 0x7f8
+            Site {
+                rva: 0x3f13c,
+                before: &[0x4c, 0x8b, 0x87, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov r8, qword ptr [rdi + 0x7f8]
+            Site {
+                rva: 0x3f192,
+                before: &[0x48, 0x8d, 0x8f, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea rcx, [rdi + 0x7f8]
+            Site {
+                rva: 0x3f25a,
+                before: &[0x83, 0xfb, 0x09],
+                field: 2,
+                width: 1,
+                kind: Kind::Count,
+            }, // cmp ebx, 9
+            Site {
+                rva: 0x3f2eb,
+                before: &[0xbd, 0x09, 0x00, 0x00, 0x00],
+                field: 1,
+                width: 4,
+                kind: Kind::Count,
+            }, // mov ebp, 9
+            Site {
+                rva: 0x3fa65,
+                before: &[0x48, 0x8d, 0x85, 0x78, 0x06, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Extent,
+            }, // lea rax, [rbp + 0x678]
+            Site {
+                rva: 0x3fc10,
+                before: &[0x48, 0x8d, 0x81, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea rax, [rcx + 0x7f8]
+            Site {
+                rva: 0x3ff1e,
+                before: &[0x48, 0x8b, 0xaf, 0x28, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbp, qword ptr [rdi + 0x828]
+            Site {
+                rva: 0x3ff25,
+                before: &[0x48, 0x8b, 0x9f, 0x20, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbx, qword ptr [rdi + 0x820]
+            Site {
+                rva: 0x3ff4b,
+                before: &[0x48, 0x8b, 0xaf, 0x10, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbp, qword ptr [rdi + 0x810]
+            Site {
+                rva: 0x3ff52,
+                before: &[0x48, 0x8b, 0x9f, 0x08, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbx, qword ptr [rdi + 0x808]
+            Site {
+                rva: 0x4022d,
+                before: &[0x4c, 0x8b, 0xb6, 0x28, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov r14, qword ptr [rsi + 0x828]
+            Site {
+                rva: 0x40234,
+                before: &[0x48, 0x8b, 0x9e, 0x20, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbx, qword ptr [rsi + 0x820]
+            Site {
+                rva: 0x402b9,
+                before: &[0x4c, 0x8b, 0xb6, 0x10, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov r14, qword ptr [rsi + 0x810]
+            Site {
+                rva: 0x402c0,
+                before: &[0x48, 0x8b, 0x9e, 0x08, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbx, qword ptr [rsi + 0x808]
+            Site {
+                rva: 0x40873,
+                before: &[0x4c, 0x8d, 0xb1, 0x20, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea r14, [rcx + 0x820]
+            Site {
+                rva: 0x408a5,
+                before: &[0x48, 0x3b, 0x9e, 0x28, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // cmp rbx, qword ptr [rsi + 0x828]
+            Site {
+                rva: 0x409a1,
+                before: &[0x48, 0x8b, 0x9e, 0x28, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbx, qword ptr [rsi + 0x828]
+            Site {
+                rva: 0x40a63,
+                before: &[0x4c, 0x8d, 0xb1, 0x08, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea r14, [rcx + 0x808]
+            Site {
+                rva: 0x40a95,
+                before: &[0x48, 0x3b, 0x9e, 0x10, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // cmp rbx, qword ptr [rsi + 0x810]
+            Site {
+                rva: 0x40b91,
+                before: &[0x48, 0x8b, 0x9e, 0x10, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbx, qword ptr [rsi + 0x810]
+            Site {
+                rva: 0x34f4a6,
+                before: &[0xb9, 0x38, 0x08, 0x00, 0x00],
+                field: 1,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov ecx, 0x838
+            Site {
+                rva: 0x4b8ef9,
+                before: &[0xba, 0x38, 0x08, 0x00, 0x00],
+                field: 1,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov edx, 0x838
+        ],
+        redraw: 0x3eeb0,
+        redraw_before: &[
+            72, 137, 84, 36, 16, 72, 137, 76, 36, 8, 87, 65, 84, 72, 129, 236, 232, 0, 0, 0,
+        ],
+        layout: 0x2d3ab0,
+        layout_before: &[
+            72, 137, 116, 36, 16, 87, 72, 131, 236, 64, 131, 58, 0, 72, 139, 242,
+        ],
+        combined: &[
+            (
+                0x3fa40,
+                &[
+                    72, 137, 92, 36, 16, 72, 137, 108, 36, 24, 72, 137, 116, 36, 32,
+                ],
+            ),
+            (
+                0x3f370,
+                &[
+                    72, 137, 92, 36, 16, 72, 137, 116, 36, 24, 85, 87, 65, 84, 65, 86,
+                ],
+            ),
+            (
+                0x3f9a0,
+                &[
+                    72, 137, 92, 36, 8, 72, 137, 116, 36, 16, 87, 72, 131, 236, 32,
+                ],
+            ),
+            (
+                0x3b6e0,
+                &[
+                    72, 137, 92, 36, 8, 87, 72, 131, 236, 32, 72, 139, 185, 136, 0,
+                ],
+            ),
+            (
+                0x3bb90,
+                &[
+                    72, 137, 92, 36, 16, 72, 137, 108, 36, 24, 72, 137, 116, 36, 32,
+                ],
+            ),
+            (
+                0x3bd40,
+                &[
+                    72, 137, 92, 36, 16, 72, 137, 116, 36, 24, 72, 137, 124, 36, 32,
+                ],
+            ),
+            (
+                0x2cd8c0,
+                &[
+                    72, 137, 92, 36, 8, 72, 137, 108, 36, 16, 72, 137, 116, 36, 24, 87,
+                ],
+            ),
+            (
+                0x2c5400,
+                &[
+                    72, 137, 92, 36, 24, 72, 137, 116, 36, 32, 85, 87, 65, 86, 72, 141,
+                ],
+            ),
+        ],
+        offsets: Offsets {
+            roster: 0x3d0,
+            gunner_count: 0x140,
+            gunner_get: 0x130,
+            pool_get: 0x1c8,
+            world_player: 0x708,
+            ai_set: 0x3f8,
+        },
+    },
+    Build {
+        sha: "c336b5ed4a367628a9c370457d82b1d4e75cab9007cffe5354e27688e836f98e",
+        sites: &[
+            Site {
+                rva: 0x3e05c,
+                before: &[0x45, 0x8d, 0x44, 0x24, 0x09],
+                field: 4,
+                width: 1,
+                kind: Kind::Count,
+            }, // lea r8d, [r12 + 9]
+            Site {
+                rva: 0x3e067,
+                before: &[0x48, 0x8d, 0x9e, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea rbx, [rsi + 0x7f8]
+            Site {
+                rva: 0x3e097,
+                before: &[0x4c, 0x89, 0xa6, 0x08, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov qword ptr [rsi + 0x808], r12
+            Site {
+                rva: 0x3e09e,
+                before: &[0x4c, 0x89, 0xa6, 0x10, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov qword ptr [rsi + 0x810], r12
+            Site {
+                rva: 0x3e0a5,
+                before: &[0x4c, 0x89, 0xa6, 0x18, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov qword ptr [rsi + 0x818], r12
+            Site {
+                rva: 0x3e0ac,
+                before: &[0x4c, 0x89, 0xa6, 0x20, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov qword ptr [rsi + 0x820], r12
+            Site {
+                rva: 0x3e0b3,
+                before: &[0x4c, 0x89, 0xa6, 0x28, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov qword ptr [rsi + 0x828], r12
+            Site {
+                rva: 0x3e0ba,
+                before: &[0x4c, 0x89, 0xa6, 0x30, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov qword ptr [rsi + 0x830], r12
+            Site {
+                rva: 0x3e255,
+                before: &[0x41, 0xbd, 0x02, 0x00, 0x00, 0x00],
+                field: 2,
+                width: 4,
+                kind: Kind::Zero,
+            }, // mov r13d, 2
+            Site {
+                rva: 0x3e2d5,
+                before: &[0x41, 0xbd, 0x03, 0x00, 0x00, 0x00],
+                field: 2,
+                width: 4,
+                kind: Kind::Zero,
+            }, // mov r13d, 3
+            Site {
+                rva: 0x3e34f,
+                before: &[0x41, 0xbd, 0x01, 0x00, 0x00, 0x00],
+                field: 2,
+                width: 4,
+                kind: Kind::Zero,
+            }, // mov r13d, 1
+            Site {
+                rva: 0x3e586,
+                before: &[0x48, 0x81, 0xff, 0x78, 0x06, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Extent,
+            }, // cmp rdi, 0x678
+            Site {
+                rva: 0x3e59b,
+                before: &[0x4d, 0x8d, 0xbc, 0x24, 0x78, 0x06, 0x00, 0x00],
+                field: 4,
+                width: 4,
+                kind: Kind::Extent,
+            }, // lea r15, [r12 + 0x678]
+            Site {
+                rva: 0x3e649,
+                before: &[0xba, 0x38, 0x08, 0x00, 0x00],
+                field: 1,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov edx, 0x838
+            Site {
+                rva: 0x3e680,
+                before: &[0x41, 0xb8, 0x09, 0x00, 0x00, 0x00],
+                field: 2,
+                width: 4,
+                kind: Kind::Count,
+            }, // mov r8d, 9
+            Site {
+                rva: 0x3e6f7,
+                before: &[0x48, 0x8b, 0xb9, 0x28, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rdi, qword ptr [rcx + 0x828]
+            Site {
+                rva: 0x3e6fe,
+                before: &[0x48, 0x8b, 0x99, 0x20, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbx, qword ptr [rcx + 0x820]
+            Site {
+                rva: 0x3e72c,
+                before: &[0x48, 0x8b, 0xbe, 0x10, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rdi, qword ptr [rsi + 0x810]
+            Site {
+                rva: 0x3e733,
+                before: &[0x48, 0x8b, 0x9e, 0x08, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbx, qword ptr [rsi + 0x808]
+            Site {
+                rva: 0x3e763,
+                before: &[0x4c, 0x8d, 0x93, 0x78, 0x06, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Extent,
+            }, // lea r10, [rbx + 0x678]
+            Site {
+                rva: 0x3e7e7,
+                before: &[0x48, 0x8d, 0x8e, 0x20, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea rcx, [rsi + 0x820]
+            Site {
+                rva: 0x3e7f3,
+                before: &[0x48, 0x8d, 0x8e, 0x08, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea rcx, [rsi + 0x808]
+            Site {
+                rva: 0x3e7ff,
+                before: &[0x48, 0x8d, 0x8e, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea rcx, [rsi + 0x7f8]
+            Site {
+                rva: 0x3e818,
+                before: &[0x41, 0xb8, 0x09, 0x00, 0x00, 0x00],
+                field: 2,
+                width: 4,
+                kind: Kind::Count,
+            }, // mov r8d, 9
+            Site {
+                rva: 0x3e8b2,
+                before: &[0x48, 0x8b, 0xb7, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rsi, qword ptr [rdi + 0x7f8]
+            Site {
+                rva: 0x3e8d4,
+                before: &[0x48, 0x8d, 0x97, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea rdx, [rdi + 0x7f8]
+            Site {
+                rva: 0x3e8db,
+                before: &[0x48, 0x8d, 0x8f, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea rcx, [rdi + 0x7f8]
+            Site {
+                rva: 0x3e916,
+                before: &[0x48, 0x8d, 0xb3, 0x78, 0x06, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Extent,
+            }, // lea rsi, [rbx + 0x678]
+            Site {
+                rva: 0x3e91d,
+                before: &[0x48, 0x89, 0x87, 0x00, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov qword ptr [rdi + 0x800], rax
+            Site {
+                rva: 0x3e9d0,
+                before: &[0x48, 0x8d, 0x81, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea rax, [rcx + 0x7f8]
+            Site {
+                rva: 0x3ee2c,
+                before: &[0x48, 0x81, 0xc1, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // add rcx, 0x7f8
+            Site {
+                rva: 0x3f13c,
+                before: &[0x4c, 0x8b, 0x87, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov r8, qword ptr [rdi + 0x7f8]
+            Site {
+                rva: 0x3f192,
+                before: &[0x48, 0x8d, 0x8f, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea rcx, [rdi + 0x7f8]
+            Site {
+                rva: 0x3f25a,
+                before: &[0x83, 0xfb, 0x09],
+                field: 2,
+                width: 1,
+                kind: Kind::Count,
+            }, // cmp ebx, 9
+            Site {
+                rva: 0x3f2eb,
+                before: &[0xbd, 0x09, 0x00, 0x00, 0x00],
+                field: 1,
+                width: 4,
+                kind: Kind::Count,
+            }, // mov ebp, 9
+            Site {
+                rva: 0x3fa65,
+                before: &[0x48, 0x8d, 0x85, 0x78, 0x06, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Extent,
+            }, // lea rax, [rbp + 0x678]
+            Site {
+                rva: 0x3fc10,
+                before: &[0x48, 0x8d, 0x81, 0xf8, 0x07, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea rax, [rcx + 0x7f8]
+            Site {
+                rva: 0x3ff1e,
+                before: &[0x48, 0x8b, 0xaf, 0x28, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbp, qword ptr [rdi + 0x828]
+            Site {
+                rva: 0x3ff25,
+                before: &[0x48, 0x8b, 0x9f, 0x20, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbx, qword ptr [rdi + 0x820]
+            Site {
+                rva: 0x3ff4b,
+                before: &[0x48, 0x8b, 0xaf, 0x10, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbp, qword ptr [rdi + 0x810]
+            Site {
+                rva: 0x3ff52,
+                before: &[0x48, 0x8b, 0x9f, 0x08, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbx, qword ptr [rdi + 0x808]
+            Site {
+                rva: 0x4022d,
+                before: &[0x4c, 0x8b, 0xb6, 0x28, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov r14, qword ptr [rsi + 0x828]
+            Site {
+                rva: 0x40234,
+                before: &[0x48, 0x8b, 0x9e, 0x20, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbx, qword ptr [rsi + 0x820]
+            Site {
+                rva: 0x402b9,
+                before: &[0x4c, 0x8b, 0xb6, 0x10, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov r14, qword ptr [rsi + 0x810]
+            Site {
+                rva: 0x402c0,
+                before: &[0x48, 0x8b, 0x9e, 0x08, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbx, qword ptr [rsi + 0x808]
+            Site {
+                rva: 0x40873,
+                before: &[0x4c, 0x8d, 0xb1, 0x20, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea r14, [rcx + 0x820]
+            Site {
+                rva: 0x408a5,
+                before: &[0x48, 0x3b, 0x9e, 0x28, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // cmp rbx, qword ptr [rsi + 0x828]
+            Site {
+                rva: 0x409a1,
+                before: &[0x48, 0x8b, 0x9e, 0x28, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbx, qword ptr [rsi + 0x828]
+            Site {
+                rva: 0x40a63,
+                before: &[0x4c, 0x8d, 0xb1, 0x08, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // lea r14, [rcx + 0x808]
+            Site {
+                rva: 0x40a95,
+                before: &[0x48, 0x3b, 0x9e, 0x10, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // cmp rbx, qword ptr [rsi + 0x810]
+            Site {
+                rva: 0x40b91,
+                before: &[0x48, 0x8b, 0x9e, 0x10, 0x08, 0x00, 0x00],
+                field: 3,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov rbx, qword ptr [rsi + 0x810]
+            Site {
+                rva: 0x355986,
+                before: &[0xb9, 0x38, 0x08, 0x00, 0x00],
+                field: 1,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov ecx, 0x838
+            Site {
+                rva: 0x4bf899,
+                before: &[0xba, 0x38, 0x08, 0x00, 0x00],
+                field: 1,
+                width: 4,
+                kind: Kind::Shift,
+            }, // mov edx, 0x838
+        ],
+        redraw: 0x3eeb0,
+        redraw_before: &[
+            72, 137, 84, 36, 16, 72, 137, 76, 36, 8, 87, 65, 84, 72, 129, 236, 232, 0, 0, 0,
+        ],
+        layout: 0x2d8e70,
+        layout_before: &[
+            72, 137, 116, 36, 16, 87, 72, 131, 236, 64, 131, 58, 0, 72, 139, 242,
+        ],
+        combined: &[
+            (
+                0x3fa40,
+                &[
+                    72, 137, 92, 36, 16, 72, 137, 108, 36, 24, 72, 137, 116, 36, 32,
+                ],
+            ),
+            (
+                0x3f370,
+                &[
+                    72, 137, 92, 36, 16, 72, 137, 116, 36, 24, 85, 87, 65, 84, 65, 86,
+                ],
+            ),
+            (
+                0x3f9a0,
+                &[
+                    72, 137, 92, 36, 8, 72, 137, 116, 36, 16, 87, 72, 131, 236, 32,
+                ],
+            ),
+            (
+                0x3b6e0,
+                &[
+                    72, 137, 92, 36, 8, 87, 72, 131, 236, 32, 72, 139, 185, 136, 0,
+                ],
+            ),
+            (
+                0x3bb90,
+                &[
+                    72, 137, 92, 36, 16, 72, 137, 108, 36, 24, 72, 137, 116, 36, 32,
+                ],
+            ),
+            (
+                0x3bd40,
+                &[
+                    72, 137, 92, 36, 16, 72, 137, 116, 36, 24, 72, 137, 124, 36, 32,
+                ],
+            ),
+            (
+                0x2d2c80,
+                &[
+                    72, 137, 92, 36, 8, 72, 137, 108, 36, 16, 72, 137, 116, 36, 24, 87,
+                ],
+            ),
+            (
+                0x2ca7c0,
+                &[
+                    72, 137, 92, 36, 24, 72, 137, 116, 36, 32, 85, 87, 65, 86, 72, 141,
+                ],
+            ),
+        ],
+        offsets: Offsets {
+            roster: 0x3d0,
+            gunner_count: 0x140,
+            gunner_get: 0x130,
+            pool_get: 0x1c8,
+            world_player: 0x708,
+            ai_set: 0x3f8,
+        },
+    },
 ];

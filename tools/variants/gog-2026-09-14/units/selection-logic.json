@@ -1,0 +1,413 @@
+{
+ "unit_schema": 1,
+ "name": "selection-logic",
+ "plugin": "selection",
+ "module": "logic.dll",
+ "source_sha256": "eb8674f1d16595a3e9cf6a9ec0062735b1184976495d8d6ade36f7e2574e8aab",
+ "unit_bytes": 1054,
+ "code_offset": 32,
+ "cells": [
+  {
+   "name": "marquee",
+   "offset": 0,
+   "bytes": 16
+  },
+  {
+   "name": "preview_dim",
+   "offset": 16,
+   "bytes": 16
+  }
+ ],
+ "writes": [
+  {
+   "kind": "jmp",
+   "rva": 1990432,
+   "before": "885130c3cc",
+   "tail": "",
+   "entry": 876,
+   "label": "building_select"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2167753,
+   "before": "450fb6742420",
+   "tail": "90",
+   "entry": 880,
+   "label": "dim_pose"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2168608,
+   "before": "488b4588807820000f8499000000",
+   "tail": "909090909090909090",
+   "entry": 900,
+   "label": "dim_mode"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2168672,
+   "before": "488b0e488b01498d5720",
+   "tail": "9090909090",
+   "entry": 982,
+   "label": "dim_part"
+  },
+  {
+   "kind": "jmp",
+   "rva": 4365752,
+   "before": "498b06498bce",
+   "tail": "90",
+   "entry": 814,
+   "label": "region_icon_gate"
+  },
+  {
+   "kind": "edit",
+   "rva": 4368746,
+   "before": "488b03ba10000000488bcbff909800000084c00f84b4000000488b03488bcbff90b0000000488b48284885c90f849b000000488b01ff90d00300004885c00f8489000000488b10488bc8ff5268488b104c8b40084c2bc249c1f8034d85c0746d4e8d04c500000000488d4c2420e83ebc2600488b4c2420488b01eb3a",
+   "after": "488b034889d9ff90b0000000488b48284885c90f84b4000000488b01ff90d00300004885c00f84a2000000488b104889c1ff5268488b18488b40084889442420483b5c24200f8382000000488b0b4883c3084885c974e9488b01ff90b0000000488b48504885c974d7488b01b201ff5050ebcd909090909090909090"
+  },
+  {
+   "kind": "call",
+   "rva": 4369071,
+   "before": "e8dcf1ffff",
+   "tail": "",
+   "stock": 0,
+   "entry": 448,
+   "label": "region_individual"
+  },
+  {
+   "kind": "call",
+   "rva": 4369184,
+   "before": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff5050",
+   "tail": "909090909090909090909090909090909090909090909090",
+   "stock": 0,
+   "entry": 726,
+   "label": "marquee_select"
+  },
+  {
+   "kind": "call",
+   "rva": 4369703,
+   "before": "e864efffff",
+   "tail": "",
+   "stock": 0,
+   "entry": 448,
+   "label": "region_individual"
+  },
+  {
+   "kind": "call",
+   "rva": 4369856,
+   "before": "e8cbeeffff",
+   "tail": "",
+   "stock": 0,
+   "entry": 448,
+   "label": "region_individual"
+  },
+  {
+   "kind": "edit",
+   "rva": 4370329,
+   "before": "488b06b201488bceff5050",
+   "after": "4c89f24c89e9e89cf9ffff"
+  },
+  {
+   "kind": "call",
+   "rva": 4370560,
+   "before": "e80becffff",
+   "tail": "",
+   "stock": 0,
+   "entry": 448,
+   "label": "region_individual"
+  },
+  {
+   "kind": "edit",
+   "rva": 4372787,
+   "before": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff5050",
+   "after": "488b1331c9e803f0ffff90909090909090909090909090909090909090"
+  },
+  {
+   "kind": "jmp",
+   "rva": 4571136,
+   "before": "488bc1488b49284885c97407488b0148ff6050885030c3cccccccc",
+   "tail": "90909090909090909090909090909090909090909090",
+   "entry": 32,
+   "label": "set_selected"
+  },
+  {
+   "kind": "jmp",
+   "rva": 4571168,
+   "before": "40534883ec20",
+   "tail": "90",
+   "entry": 360,
+   "label": "is_selected"
+  },
+  {
+   "kind": "edit",
+   "rva": 4571184,
+   "before": "7410488b01ff505884c0741a807b1800eb0a",
+   "after": "7410488b01ff505884c0741a807b1800eb00"
+  }
+ ],
+ "fixups": [
+  {
+   "kind": "rel32",
+   "offset": 757,
+   "target": 4368704
+  },
+  {
+   "kind": "rel32",
+   "offset": 802,
+   "target": 4365456
+  },
+  {
+   "kind": "rel32",
+   "offset": 867,
+   "target": 4365758
+  },
+  {
+   "kind": "rel32",
+   "offset": 872,
+   "target": 4365923
+  },
+  {
+   "kind": "rel32",
+   "offset": 896,
+   "target": 2167759
+  },
+  {
+   "kind": "rel32",
+   "offset": 973,
+   "target": 2168622
+  },
+  {
+   "kind": "rel32",
+   "offset": 978,
+   "target": 2168775
+  },
+  {
+   "kind": "rel32",
+   "offset": 1030,
+   "target": 2168682
+  },
+  {
+   "kind": "rel32",
+   "offset": 1045,
+   "target": 2168682
+  },
+  {
+   "kind": "rel32",
+   "offset": 1050,
+   "target": 2168685
+  },
+  {
+   "kind": "edit",
+   "rva": 4368746,
+   "offset": 21,
+   "target": 4368951
+  },
+  {
+   "kind": "edit",
+   "rva": 4368746,
+   "offset": 39,
+   "target": 4368951
+  },
+  {
+   "kind": "edit",
+   "rva": 4368746,
+   "offset": 71,
+   "target": 4368951
+  },
+  {
+   "kind": "edit",
+   "rva": 4372787,
+   "offset": 6,
+   "target": 4368704
+  },
+  {
+   "kind": "edit",
+   "rva": 4370329,
+   "offset": 7,
+   "target": 4368704
+  }
+ ],
+ "natives": [
+  {
+   "name": "setter",
+   "rva": 4571136
+  },
+  {
+   "name": "is_selected",
+   "rva": 4571168
+  }
+ ],
+ "anchors": [],
+ "sites": [
+  {
+   "site_name": "setter",
+   "site_start": 4571136,
+   "site_group": 4571136,
+   "site_pattern": "488bc1488b49284885c97407488b0148ff6050885030c3cccccccc",
+   "site_offset": 0
+  },
+  {
+   "site_name": "is_selected",
+   "site_start": 4571168,
+   "site_group": 4571168,
+   "site_pattern": "40534883ec20488bd9488b49284885c97410488b01ff5058",
+   "site_offset": 0
+  },
+  {
+   "site_name": "select_trace",
+   "site_start": 4368704,
+   "site_group": 4368704,
+   "site_pattern": "40534881ecc0000000488bda4885d20f84????????488b02",
+   "site_offset": 0
+  },
+  {
+   "site_name": "select_is",
+   "site_start": 4571184,
+   "site_group": 4571168,
+   "site_pattern": "7410488b01ff505884c0741a807b1800eb0a807b1800740e807b30007408b0014883c4205bc3",
+   "site_offset": 0
+  },
+  {
+   "site_name": "select_squad",
+   "site_start": 4368746,
+   "site_group": 4368704,
+   "site_pattern": "488b03ba10000000488bcbff909800000084c00f84????????488b03488bcbff90b0000000488b48284885c90f84????????488b01ff90b80300004885c00f84????????488b10488bc8ff5268488b104c8b40084c2bc249c1f8034d85c0746d4e8d04c500000000488d4c2420e8????????488b4c2420488b01eb3a488bcbe8????????4885c07427488b80b00200004885c0741b488b48104885c97412488b01ff90b0000000488b48504885c97515488b03488bcbff90b0000000488b48504885c97408488b01b201ff5050",
+   "site_offset": 0
+  },
+  {
+   "site_name": "select_toggle",
+   "site_start": 4372787,
+   "site_group": 4372720,
+   "site_pattern": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff50504883c308483b5c2428",
+   "site_offset": 0
+  },
+  {
+   "site_name": "select_type",
+   "site_start": 4370329,
+   "site_group": 4370163,
+   "site_pattern": "488b06b201488bceff50504883c308483bdf0f85????????",
+   "site_offset": 0
+  },
+  {
+   "site_name": "region_individual_0",
+   "site_start": 4369071,
+   "site_group": 4368960,
+   "site_pattern": "e8????????84c07421488b55df483b55e7740a48893a488345df08",
+   "site_offset": 0
+  },
+  {
+   "site_name": "region_individual_1",
+   "site_start": 4369703,
+   "site_group": 4369584,
+   "site_pattern": "e8????????84c07425498b06498bceff90b0000000488b4820",
+   "site_offset": 0
+  },
+  {
+   "site_name": "region_individual_2",
+   "site_start": 4369856,
+   "site_group": 4369584,
+   "site_pattern": "e8????????84c07426488b542428483b542430740b48893a",
+   "site_offset": 0
+  },
+  {
+   "site_name": "region_individual_3",
+   "site_start": 4370560,
+   "site_group": 4370448,
+   "site_pattern": "e8????????84c0742f483bfe740e4c89374883c70848897c2428",
+   "site_offset": 0
+  },
+  {
+   "site_name": "marquee_select",
+   "site_start": 4369184,
+   "site_group": 4368960,
+   "site_pattern": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff50504883c308483b5dff",
+   "site_offset": 0
+  },
+  {
+   "site_name": "dim_pose",
+   "site_start": 2167753,
+   "site_group": 2164976,
+   "site_pattern": "450fb67424204488b5280c0000448be3488b4570488b08488b4008",
+   "site_offset": 0
+  },
+  {
+   "site_name": "dim_mode",
+   "site_start": 2168608,
+   "site_group": 2164976,
+   "site_pattern": "488b4588807820000f84????????488b4c2440488b01488d5550ff90c8020000904c8b7558488b7550493bf674304c8bbd100c00006666660f1f840000000000488b0e488b01498d5720ff50584883c610493bf675ea4c8b7558488b75504885f67444498bd6488bcee8????????488b5560488b4d50482bd14883e2f0488bc14881fa0010000072194883c227488b49f8482bc14883c0f84883f81f0f87????????e8????????",
+   "site_offset": 0
+  },
+  {
+   "site_name": "dim_part",
+   "site_start": 2168672,
+   "site_group": 2164976,
+   "site_pattern": "488b0e488b01498d5720ff50584883c610493bf675ea4c8b7558",
+   "site_offset": 0
+  },
+  {
+   "site_name": "region_native_eligible",
+   "site_start": 4365456,
+   "site_group": 4365456,
+   "site_pattern": "488bc44889581048896818565741564881eca00000000f2970d8440f2940c8440f2948b8",
+   "site_offset": 0
+  },
+  {
+   "site_name": "region_icon_gate",
+   "site_start": 4365752,
+   "site_group": 4365456,
+   "site_pattern": "498b06498bceff5040488bc8e8????????488bd84885c00f84????????488b08488bb1a0000000488d9424d8000000488bcfff15????????488b0848898c24c00000004885c974148b51088d420189410885d27507488b01ff500890488b8c24d80000004885c9740d834108ff7507488b01ff5010904c8bc5488d9424c0000000488bcbffd60fb6d8488b8c24c00000004885c9740d834108ff7507488b11ff52109084db0f85????????",
+   "site_offset": 0
+  },
+  {
+   "site_name": "building_select",
+   "site_start": 1990432,
+   "site_group": 1990432,
+   "site_pattern": "885130c3cccccccccccccccccccccccc488bc44889580848896818",
+   "site_offset": 0
+  }
+ ],
+ "verified_sha": "",
+ "labels": {
+  "set_selected": 32,
+  "squad_selected": 120,
+  "walk": 128,
+  "next": 216,
+  "check": 278,
+  "walked": 296,
+  "mark": 313,
+  "forward": 319,
+  "own_only": 342,
+  "done": 346,
+  "is_selected": 360,
+  "own": 412,
+  "is_false": 428,
+  "is_done": 430,
+  "is_end": 436,
+  "region_individual": 448,
+  "marquee_squads": 510,
+  "marquee_member": 638,
+  "marquee_soldiers": 677,
+  "marquee_native": 698,
+  "marquee_reject": 714,
+  "marquee_done": 716,
+  "marquee_select": 726,
+  "marquee_select_stock": 763,
+  "marquee_select_done": 792,
+  "native_eligible": 797,
+  "region_native_return": 806,
+  "region_reject": 811,
+  "region_icon_gate": 814,
+  "region_icon_stock": 860,
+  "region_position_only": 871,
+  "building_select": 876,
+  "dim_pose": 880,
+  "dim_pose_done": 895,
+  "dim_mode": 900,
+  "dim_mode_scan": 950,
+  "dim_mode_parts": 972,
+  "dim_mode_skip": 977,
+  "dim_part": 982,
+  "dim_part_stock": 1034,
+  "dim_part_next": 1049
+ }
+}

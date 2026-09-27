@@ -1,0 +1,58 @@
+{
+ "unit_schema": 1,
+ "name": "pickup-logic",
+ "plugin": "pickup",
+ "module": "logic.dll",
+ "source_sha256": "1216d627c7288c7db6940168363be582232ed4d3cb860b8b8c8d7489652eca74",
+ "unit_bytes": 428,
+ "code_offset": 16,
+ "cells": [
+  {
+   "name": "cursor",
+   "offset": 0,
+   "bytes": 16
+  }
+ ],
+ "writes": [
+  {
+   "kind": "call",
+   "rva": 4518164,
+   "before": "e847290000",
+   "tail": "",
+   "stock": 4528736,
+   "entry": 16,
+   "label": "chooser"
+  }
+ ],
+ "fixups": [],
+ "natives": [],
+ "anchors": [],
+ "sites": [
+  {
+   "site_name": "chooser_call",
+   "site_start": 4518164,
+   "site_group": 4516032,
+   "site_pattern": "e8????????488bf84885c00f84????????488b10488bc8ff92b0000000",
+   "site_offset": 0
+  }
+ ],
+ "verified_sha": "",
+ "labels": {
+  "chooser": 16,
+  "p0_loop": 105,
+  "p0_swap": 155,
+  "p0_candidate": 165,
+  "p0_unmarked": 228,
+  "p0_next": 233,
+  "p0_decide": 241,
+  "p0_done": 261,
+  "p1_loop": 281,
+  "swap": 312,
+  "p2_loop": 333,
+  "p2_index": 350,
+  "p2_hit": 382,
+  "take": 395,
+  "none": 409,
+  "done": 411
+ }
+}

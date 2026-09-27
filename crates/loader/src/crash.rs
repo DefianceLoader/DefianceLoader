@@ -45,6 +45,12 @@ extern "system" {
 }
 static FILE: AtomicUsize = AtomicUsize::new(0);
 static SESSION: AtomicUsize = AtomicUsize::new(0);
+/// Bytes written to the session file so far.
+static SESSION_WRITTEN: AtomicUsize = AtomicUsize::new(0);
+/// The session file's size limit. Its value is the start of a run (settings,
+/// hashes, ownership), and the log keeps the rest, so later notes past the
+/// limit are dropped.
+const SESSION_LIMIT: usize = 8 << 20;
 static PIPE: AtomicUsize = AtomicUsize::new(0);
 static DONE: AtomicUsize = AtomicUsize::new(0);
 static PREVIOUS: AtomicUsize = AtomicUsize::new(0);
@@ -235,16 +241,80 @@ pub fn note(text: &str) {
     if !available() {
         return;
     }
-    write(SESSION.load(Ordering::Acquire), text.as_bytes());
+    let before = SESSION_WRITTEN.fetch_add(text.len(), Ordering::Relaxed);
+    if before + text.len() <= SESSION_LIMIT {
+        write(SESSION.load(Ordering::Acquire), text.as_bytes());
+    } else if before <= SESSION_LIMIT {
+        write(
+            SESSION.load(Ordering::Acquire),
+            b"session file limit reached; later lines are only in the log\n",
+        );
+    }
 }
 pub fn available() -> bool {
     FILE.load(Ordering::Acquire) != 0
+}
+
+/// Earlier runs kept in the report directory: the newest runs that crashed, and
+/// the newest that did not. Older reports are deleted at startup.
+const KEEP_CRASHES: usize = 10;
+const KEEP_RUNS: usize = 20;
+
+/// Delete all but the newest `runs` clean runs and `crashes` crashed runs.
+/// A run is its `defiance-PID-TIMESTAMP` prefix; it crashed if its
+/// `.crash.txt` has content or it has any file besides that and its
+/// `.session.txt`. Files without that prefix are left alone.
+fn prune(directory: &Path, runs: usize, crashes: usize) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    let mut found: std::collections::BTreeMap<u128, (bool, Vec<std::path::PathBuf>)> =
+        Default::default();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some((stem, kind)) = name.split_once('.') else {
+            continue;
+        };
+        let mut parts = stem.splitn(3, '-');
+        let (Some("defiance"), Some(_pid), Some(Ok(time))) = (
+            parts.next(),
+            parts.next(),
+            parts.next().map(str::parse::<u128>),
+        ) else {
+            continue;
+        };
+        let crashed = match kind {
+            "session.txt" => false,
+            "crash.txt" => entry.metadata().is_ok_and(|m| m.len() > 0),
+            _ => true,
+        };
+        let run = found.entry(time).or_default();
+        run.0 |= crashed;
+        run.1.push(entry.path());
+    }
+    let (mut runs_left, mut crashes_left) = (runs, crashes);
+    for (crashed, files) in found.into_values().rev() {
+        let left = if crashed {
+            &mut crashes_left
+        } else {
+            &mut runs_left
+        };
+        if *left > 0 {
+            *left -= 1;
+            continue;
+        }
+        for file in files {
+            let _ = std::fs::remove_file(file);
+        }
+    }
 }
 
 /// Called on the host thread, never under DllMain. Handles intentionally live
 /// until process exit. A missing helper leaves the text capture operational.
 pub fn initialize(directory: &Path, helper: &Path) -> std::io::Result<std::path::PathBuf> {
     std::fs::create_dir_all(directory)?;
+    prune(directory, KEEP_RUNS, KEEP_CRASHES);
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -445,6 +515,49 @@ unsafe fn capture(pointers: *mut Pointers) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_newest_runs_and_crashes_are_kept() {
+        let dir = std::env::temp_dir().join(format!("defiance-crash-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let run = |time: u32, crash: &[u8], dump: bool| {
+            let stem = dir.join(format!("defiance-42-{time}"));
+            std::fs::write(stem.with_extension("session.txt"), b"s").unwrap();
+            std::fs::write(stem.with_extension("crash.txt"), crash).unwrap();
+            if dump {
+                std::fs::write(stem.with_extension("dmp"), b"d").unwrap();
+            }
+        };
+        run(1, b"", false);
+        run(2, b"access violation", false);
+        run(3, b"", true);
+        run(4, b"", false);
+        run(5, b"", true);
+        run(6, b"", false);
+        std::fs::write(dir.join("notes.txt"), b"mine").unwrap();
+
+        prune(&dir, 2, 1);
+        let mut left: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                "defiance-42-4.crash.txt",
+                "defiance-42-4.session.txt",
+                "defiance-42-5.crash.txt",
+                "defiance-42-5.dmp",
+                "defiance-42-5.session.txt",
+                "defiance-42-6.crash.txt",
+                "defiance-42-6.session.txt",
+                "notes.txt",
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn service_labels_keep_to_the_contract() {

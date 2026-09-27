@@ -1,28 +1,27 @@
-"""Resolve a per-build payload descriptor against that build's DLLs.
+"""Resolve a build's patch units against that build's DLLs.
 
-`payload.py` and `icon.py`, run with `DEFIANCE_LAYOUT=<profile>`, assemble the
-shared patch source with the build's own class offsets. The addresses in the
-descriptor they write are still the reference build's, because the payload code
-is position independent and every address is re-aimed at load time. This tool
-finishes the job offline: it finds every site in the target build, rewrites
-every address the descriptor names, and re-reads the bytes the descriptor
-expects from the target.
+`tools/units.py --layout <profile>` assembles the shared patch source with the
+build's own class offsets. The addresses in the units it writes are still the
+reference build's, because unit code is position independent and every
+address is re-aimed where it lands. This tool finishes the job offline: it
+finds every site in the target build, rewrites every address each unit names,
+and re-reads the bytes each write expects from the target.
 
 A site is found, in order: by the profile's `logic_sites`/`game_sites`
 override; through the build's base (tools/builds.py), whose resolved variant
 says where the site is there, by that window's bytes (distance fields
 wildcarded) or, when a field inside it moved, operand-agnostically; and by the
 reference's own signature, likewise. Neighbouring builds differ least, so the
-base usually finds a site the reference's signature no longer does. The result is a descriptor that applies directly to that build, selected
-by its hash, with no runtime relocation.
+base usually finds a site the reference's signature no longer does. The result
+is a set of units that apply directly to that build, selected by its hashes,
+with no runtime relocation.
 
     python tools/variant.py tools/layouts/gog-2026-09-14.json \
         bin/gog/2026-09-14/logic.dll bin/gog/2026-09-14/game.dll
 
-It reads the assembled out/payload[-game]-<name>.{bin,json}, leaves them as
-they are (so it can be rerun), and writes the resolved payloads to
-tools/variants/<name>/. It refuses, so a build it cannot resolve is never
-shipped, if:
+It reads the assembled out/units-<name>/, leaves it as it is (so it can be
+rerun), and writes the resolved units to tools/variants/<name>/units/. It
+refuses, so a build it cannot resolve is never shipped, if:
 
 - a site is missing or ambiguous;
 - sites of one reference function now lie in different target functions (a
@@ -248,133 +247,87 @@ class Sites:
         raise SystemExit(f"no site covers {rva:#x} ({what})")
 
 
-def resolve_logic(descriptor, ref, target, overrides=None, via=None):
-    sites = Sites(descriptor, ref, target, overrides, via)
-    print("  sites: " + ", ".join(f"{n} {how}" for how, n in sites.how.items()))
-    new = dict(descriptor)
+def resolve_unit(unit, ref, target, overrides=None, via=None):
+    """A unit (tools/units.py) for the target build: every address it names
+    moved with its site, every byte it replaces re-read from the target."""
+    sites = Sites(unit, ref, target, overrides, via)
+    new = dict(unit)
     new["source_sha256"] = target.sha256
-    new["module_bytes"] = target.file_bytes
-    new["image_bytes"] = target.image_bytes
-    new["stock_chooser"] = sites.at(descriptor["stock_chooser"], "stock chooser")
-    new["call_site"] = sites.at(descriptor["call_site"], "chooser call")
-    call_before = b"\xe8" + rel32(new["call_site"] + 5, new["stock_chooser"])
-    if target.read(new["call_site"], 5, "chooser call") != call_before:
-        raise SystemExit(f"the chooser call at {new['call_site']:#x} does not reach {new['stock_chooser']:#x}")
-    new["call_before"] = call_before.hex()
-    new["move_call_site"] = sites.at(descriptor["move_call_site"], "move call")
-    new["move_displaced"] = check_shape(ref, descriptor["move_call_site"], unhex(descriptor["move_displaced"]),
-                                        target, new["move_call_site"], "move site").hex()
-    new["anchor_rva"] = sites.at(descriptor["anchor_rva"], "anchor")
-    new["anchor"] = target.read(new["anchor_rva"], len(unhex(descriptor["anchor"])), "anchor").hex()
-
-    edits = ("select_is", "select_squad", "select_toggle", "select_type")
-    edit_rva = {}
-    after = {}
-    for name in edits:
-        edit_rva[name] = sites.at(descriptor[f"{name}_rva"], name)
-        new[f"{name}_rva"] = edit_rva[name]
-        new[f"{name}_before"] = check_shape(ref, descriptor[f"{name}_rva"], unhex(descriptor[f"{name}_before"]),
-                                            target, edit_rva[name], name).hex()
-        after[name] = bytearray(unhex(descriptor[f"{name}_after"]))
-    if len(set(edit_rva.values())) != len(edits):
-        raise SystemExit(f"the selection edits do not have distinct sites: {edit_rva}")
-    edit_fixups = []
-    for fix in descriptor["edit_fixups"]:
-        moved = sites.at(fix["edit_rva"], "an edit")
-        matches = [n for n in edits if edit_rva[n] == moved]
-        if len(matches) != 1:
-            raise SystemExit(f"the fixup at {fix['edit_rva']:#x} names {len(matches)} known edits")
-        name = matches[0]
-        field = fix["edit_offset"]
-        reach = sites.at(fix["edit_target"], "an edit target")
-        after[name][field:field + 4] = rel32(edit_rva[name] + field + 4, reach)
-        edit_fixups.append({"edit_rva": edit_rva[name], "edit_offset": field, "edit_target": reach})
-    for name in edits:
-        new[f"{name}_after"] = bytes(after[name]).hex()
-    new["edit_fixups"] = edit_fixups
-
-    new["detours"] = [{"hook_rva": rva, "hook_entry": hook["hook_entry"], "hook_feature": hook["hook_feature"],
-                       "hook_displaced": check_shape(ref, hook["hook_rva"], unhex(hook["hook_displaced"]),
-                                                     target, rva, "a detour").hex()}
-                      for hook, rva in ((h, sites.at(h["hook_rva"], "a detour")) for h in descriptor["detours"])]
-    new["trace_fixups"] = [{"trace_fix_offset": f["trace_fix_offset"],
-                            "trace_fix_rva": sites.at(f["trace_fix_rva"], "a trace resume")} for f in descriptor["trace_fixups"]]
-    new["rel_fixups"] = [{"rel_offset": f["rel_offset"], "rel_feature": f["rel_feature"],
-                          "rel_target": sites.at(f["rel_target"], "a branch target")} for f in descriptor["rel_fixups"]]
-
-    new["pose_calls"], stocks = [], {}
-    for call in descriptor["pose_calls"]:
-        rva = sites.at(call["pose_site"], "a retargeted call")
-        before = check_shape(ref, call["pose_site"], unhex(call["pose_before"]), target, rva, "a retargeted call")
-        stock = call["pose_stock"]
-        if stock:
+    writes, stocks = [], {}
+    for write in unit["writes"]:
+        rva = sites.at(write["rva"], f"{unit['name']} write")
+        before = check_shape(ref, write["rva"], unhex(write["before"]), target, rva, f"{unit['name']} write")
+        moved = {**write, "rva": rva, "before": before.hex()}
+        if write.get("stock"):
             reached = rva + 5 + struct.unpack_from("<i", before, 1)[0]
-            if stocks.setdefault(stock, reached) != reached:
-                raise SystemExit(f"sites that reached {stock:#x} now reach {reached:#x} and {stocks[stock]:#x}")
-            stock = reached
-        new["pose_calls"].append({"pose_site": rva, "pose_entry": call["pose_entry"], "pose_tail": call["pose_tail"],
-                                  "pose_stock": stock, "pose_feature": call["pose_feature"], "pose_before": before.hex()})
-    new["delta_fixups"] = []
-    for f in descriptor["delta_fixups"]:
-        if f["delta_to"] not in stocks:
-            raise SystemExit(f"a pose return point reaches {f['delta_to']:#x}, which no retargeted call resolved")
-        new["delta_fixups"].append({"delta_offset": f["delta_offset"],
-                                    "delta_from": sites.at(f["delta_from"], "a pose return point"),
-                                    "delta_to": stocks[f["delta_to"]]})
+            if stocks.setdefault(write["stock"], reached) != reached:
+                raise SystemExit(f"sites that reached {write['stock']:#x} now reach {reached:#x} "
+                                 f"and {stocks[write['stock']]:#x}")
+            moved["stock"] = reached
+        writes.append(moved)
+    by_rva = {w["rva"]: w for w in writes}
+    fixups = []
+    for fix in unit["fixups"]:
+        kind = fix["kind"]
+        if kind in ("abs64", "rel32"):
+            fix = {**fix, "target": sites.at(fix["target"], f"a {kind} target")}
+        elif kind == "delta":
+            if fix["to"] not in stocks:
+                raise SystemExit(f"a return point reaches {fix['to']:#x}, which no retargeted call resolved")
+            fix = {**fix, "from": sites.at(fix["from"], "a return point"), "to": stocks[fix["to"]]}
+        elif kind == "edit":
+            rva, reach = sites.at(fix["rva"], "an edit"), sites.at(fix["target"], "an edit target")
+            edit = by_rva.get(rva)
+            if edit is None or edit["kind"] != "edit":
+                raise SystemExit(f"the edit fixup at {fix['rva']:#x} names no edit")
+            after = bytearray(unhex(edit["after"]))
+            after[fix["offset"]:fix["offset"] + 4] = rel32(rva + fix["offset"] + 4, reach)
+            edit["after"] = bytes(after).hex()
+            fix = {**fix, "rva": rva, "target": reach}
+        fixups.append(fix)
+    new["writes"] = sorted(writes, key=lambda w: w["rva"])
+    new["fixups"] = fixups
+    new["natives"] = [{**n, "rva": sites.at(n["rva"], "a native entry")} for n in unit["natives"]]
+    new["anchors"] = [{"rva": rva, "bytes": target.read(rva, len(unhex(a["bytes"])), "anchor").hex()}
+                      for a, rva in ((a, sites.at(a["rva"], "anchor")) for a in unit["anchors"])]
     new["sites"] = sites.relocated()
     new["verified_sha"] = ""
-    return new
+    return new, sites.how
 
 
-def resolve_game(descriptor, ref, target, overrides=None, via=None):
-    sites = Sites(descriptor, ref, target, overrides, via)
-    print("  sites: " + ", ".join(f"{n} {how}" for how, n in sites.how.items()))
-    new = dict(descriptor)
-    new["source_sha256"] = target.sha256
-    new["module_bytes"] = target.file_bytes
-    new["image_bytes"] = target.image_bytes
-    new["anchor_rva"] = sites.at(descriptor["anchor_rva"], "anchor")
-    new["anchor"] = target.read(new["anchor_rva"], len(unhex(descriptor["anchor"])), "anchor").hex()
-    new["hooks"] = [{"rva": rva, "entry": hook["entry"], "hook_feature": hook["hook_feature"],
-                     "displaced": check_shape(ref, hook["rva"], unhex(hook["displaced"]), target, rva, "a hook").hex()}
-                    for hook, rva in ((h, sites.at(h["rva"], "a hook")) for h in descriptor["hooks"])]
-    new["fixups"] = [{"offset": f["offset"], "what": f.get("what", ""), "fixup_feature": f["fixup_feature"],
-                      "target_rva": sites.at(f["target_rva"], "a fixup target")} for f in descriptor["fixups"]]
-    new["sites"] = sites.relocated()
-    new["verified_sha"] = ""
-    return new
-
-
-def resolve_profile(profile, logic_dll, game_dll):
-    """[(which, payload bytes, resolved descriptor), ...] for a profile whose
-    payloads `payload.py`/`icon.py` assembled into out/."""
+def resolve_units(profile, logic_dll, game_dll):
+    """[(unit name, blob, resolved descriptor), ...] for the units
+    `tools/units.py --layout` assembled into out/units-<name>/."""
     name = profile["name"]
-    out = []
-    for which, dll, ref_path, stem, resolver in (
-        ("logic", logic_dll, str(builds.reference().logic), f"payload-{name}", resolve_logic),
-        ("game", game_dll, str(builds.reference().game), f"payload-game-{name}", resolve_game),
-    ):
-        payload_path, descriptor_path = pathlib.Path("out") / f"{stem}.bin", pathlib.Path("out") / f"{stem}.json"
-        if not descriptor_path.exists():
-            raise SystemExit(f"{descriptor_path} is missing; assemble with DEFIANCE_LAYOUT={name} first")
-        descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
-        overrides = {site: int(address) for site, address in profile.get(f"{which}_sites", {}).items()}
-        out.append((which, payload_path.read_bytes(),
-                    resolver(descriptor, Image(ref_path), Target(dll), overrides, base_sites(name, which))))
-    return out
-
-
-def base_sites(name, which):
-    """The base build's (sigs.Module, resolved descriptor) for `which`, or None
-    when the base is the reference (its sites are the descriptor's own)."""
+    folder = pathlib.Path("out") / f"units-{name}"
+    if not folder.is_dir():
+        raise SystemExit(f"{folder} is missing; run tools/units.py --layout {name} first")
     base = builds.build(name).base
-    if base is None or base == builds.reference():
-        return None
-    resolved = pathlib.Path("tools") / "variants" / base.name / f"{which}.json"
-    if not resolved.exists():
-        raise SystemExit(f"{name}'s base {base.name} has no resolved {which} variant; resolve it first")
-    dll = base.require().logic if which == "logic" else base.require().game
-    return sigs.Module(str(dll)), json.loads(resolved.read_text(encoding="utf-8"))
+    via_folder = (None if base is None or base == builds.reference()
+                  else pathlib.Path("tools") / "variants" / base.name / "units")
+    targets = {"logic.dll": (Target(logic_dll), Image(str(builds.reference().logic))),
+               "game.dll": (Target(game_dll), Image(str(builds.reference().game)))}
+    modules = {}
+    out = []
+    for path in sorted(folder.glob("*.json")):
+        unit = json.loads(path.read_text(encoding="utf-8"))
+        target, ref = targets[unit["module"]]
+        which = unit["module"].removesuffix(".dll")
+        overrides = {site: int(address) for site, address in profile.get(f"{which}_sites", {}).items()}
+        via = None
+        if via_folder is not None:
+            resolved = via_folder / path.name
+            if not resolved.exists():
+                raise SystemExit(f"{name}'s base {base.name} has no resolved {path.stem}; resolve it first")
+            dll = base.require().logic if which == "logic" else base.require().game
+            via = modules.setdefault(which, sigs.Module(str(dll))), json.loads(resolved.read_text(encoding="utf-8"))
+        try:
+            resolved_unit, how = resolve_unit(unit, ref, target, overrides, via)
+        except SystemExit as error:
+            raise SystemExit(f"{path.stem}: {error}")
+        print(f"  {path.stem:<22} sites: " + ", ".join(f"{n} {h}" for h, n in how.items()))
+        out.append((path.stem, path.with_suffix(".bin").read_bytes(), resolved_unit))
+    return out
 
 
 def main():
@@ -385,12 +338,15 @@ def main():
     # Resolve both before writing either, so a refusal leaves the tracked pair
     # as it was. The loader embeds them, so they are tracked: the target DLLs
     # are not in the repository and a fresh checkout cannot rebuild them.
-    resolved = resolve_profile(profile, sys.argv[2], sys.argv[3])
-    staged.mkdir(parents=True, exist_ok=True)
-    for which, payload, descriptor in resolved:
-        (staged / f"{which}.bin").write_bytes(payload)
-        (staged / f"{which}.json").write_text(json.dumps(descriptor, indent=2) + "\n", encoding="utf-8", newline="\n")
-        print(f"{which:<6} resolved for {profile['name']}  sha256 {descriptor['source_sha256']}  -> {staged}")
+    units = resolve_units(profile, sys.argv[2], sys.argv[3])
+    folder = staged / "units"
+    folder.mkdir(parents=True, exist_ok=True)
+    for stale in folder.glob("*"):
+        stale.unlink()
+    for name, blob, descriptor in units:
+        (folder / f"{name}.bin").write_bytes(blob)
+        (folder / f"{name}.json").write_text(json.dumps(descriptor, indent=1) + "\n", encoding="utf-8", newline="\n")
+    print(f"units  resolved for {profile['name']}: {len(units)} -> {folder}")
 
 
 if __name__ == "__main__":

@@ -8,7 +8,8 @@ legacy unsectioned `plugins` key when present, resolved against bin exactly as
 before. Relative paths are resolved against bin, not the working directory.
 
 It also stages the standalone regroup, expanded-ammo-menu,
-squad-management-scroll and unit-inspection plugins from their own workspaces,
+squad-management-scroll, unit-inspection and ability-groups plugins from their
+own workspaces,
 and, when the game directory holds the PAKs, derives and writes the companion
 UI mods (`COMPANION_MODS`: `mods/defiance_squad_scroll`,
 `mods/defiance_unit_inspection`). Uninstall removes them, again only when they
@@ -67,6 +68,7 @@ STANDALONE = [
     ("plugins/expanded-ammo-menu", "defiance_plugin_expanded_ammo_menu"),
     ("plugins/squad-management-scroll", "defiance_plugin_squad_management_scroll"),
     ("plugins/unit-inspection", "defiance_plugin_unit_inspection"),
+    ("plugins/ability-groups", "defiance_plugin_ability_groups"),
 ]
 
 
@@ -285,7 +287,7 @@ class Staging:
         for manifest in self.manifests:
             self.copy(manifest, self.plugin_dir / manifest.name)
         self.write_mod()
-        print(f"done. Start the game; the log is {self.game / 'defiance-loader.log'}")
+        print(f"done. Start the game; the log is {loader_root(self.game) / 'logs' / 'defiance-loader.log'}")
 
     def write_mod(self):
         """Write the companion UI mods whose sources are available."""

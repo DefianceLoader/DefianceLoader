@@ -187,10 +187,27 @@ unsafe fn install(api: &Api) -> Result<(), String> {
         }
     }
     if all_selected {
-        for &(rva, before) in build.combined {
-            if rva.checked_add(before.len()).is_none_or(|end| end > size)
-                || core::slice::from_raw_parts(base.cast::<u8>().add(rva), before.len()) != before
-            {
+        // The combined view calls these functions, and hooks only the first, so
+        // they are checked as they were before any plugin hooked them: unit
+        // inspection hooks `fillSlot`, whichever starts first. The hooked one
+        // is checked live as well.
+        let original = defiance_feature_sdk::services::original();
+        for (index, &(rva, before)) in build.combined.iter().enumerate() {
+            if rva.checked_add(before.len()).is_none_or(|end| end > size) {
+                return Err("combined menu bytes differ; no writes made".into());
+            }
+            let address = base.cast::<u8>().add(rva);
+            let live = core::slice::from_raw_parts(address, before.len());
+            let mut bytes = live.to_vec();
+            let differs = match original {
+                Some(original) => {
+                    (original.read)(address as usize, bytes.as_mut_ptr(), bytes.len()) != 0
+                        || bytes != before
+                        || (index == 0 && live != before)
+                }
+                None => live != before,
+            };
+            if differs {
                 return Err("combined menu bytes differ; no writes made".into());
             }
         }

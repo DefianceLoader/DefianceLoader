@@ -8,8 +8,9 @@ another (for example movement on selection) switch off with it.
 
 To switch features without restarting, set `live_toggle = true` under
 `[loader]` in `core.ini` and restart once. From then on, saving a changed
-`enabled` takes effect at the main menu, or as the next mission starts or save
-loads. Core, the expanded ammo menu, squad scrolling and unit inspection
+`enabled`, or any other setting of a feature, takes effect at the main menu,
+or as the next mission starts or save loads: the feature is switched, or
+loaded again with its new values. Core, the expanded ammo menu, squad scrolling and unit inspection
 still need a restart, and a feature that was off at startup comes on only
 after a restart.
 
@@ -43,7 +44,10 @@ With part of a squad selected, move, posture (stand, crouch, prone), attack,
 building-entry and firing-mode (T) orders go only to the selected soldiers;
 their squadmates stay put, and squadmates lying prone stay down while the rest
 enter a building. Select the whole squad to order everyone.
-Building-panel exit orders use only that building's occupants. The first TAB
+A squad ordered into a vehicle with too few free seats fills the seats left
+and the rest stay beside it; in the base game none of them board.
+Building-panel and vehicle unload orders use only the occupants or passengers;
+their squadmates outside stay put. The first TAB
 from a building selects all its occupants; further presses cycle squad focus
 and then return to building control. Hold Ctrl with TAB (`squad_tab_modifier`
 in `infantry.ini`: `ctrl`, `shift` or `off`) to select one squad's occupants at
@@ -66,9 +70,16 @@ two thirds full with two of three enabled, and lower while one reloads. The
 companion UI mod right-aligns the counter so two-digit fractions fit. Disabling
 a loaded weapon unloads it, so the soldier falls back to an enabled one. A unit
 or soldier with every usable weapon disabled takes no part in an attack order,
-so it does not fire the round already chambered. Individual overrides
-cover the first eight ammo slots, reset
-on save/load, and are meant for single-player.
+so it does not fire the round already chambered. Hold Ctrl and turn the mouse
+wheel over a card to enable one more soldier (wheel up) or disable one (wheel
+down), in squad order, among the soldiers the card counts; the camera does not
+zoom while you do. `step_modifier` in `weapons.ini` picks `ctrl`, `shift`,
+`alt` or `none`. With `step_click = true`, Ctrl+left-click on a card enables
+one and Ctrl+right-click disables one; with `none`, a right-click alone
+disables one and a left-click keeps its usual toggle. Steps need one squad (or
+part of one) selected. Individual
+overrides cover the first eight ammo slots, reset on save/load, and are meant
+for single-player.
 
 ## Expanded ammo menu
 
@@ -84,7 +95,8 @@ management screens, the weapon, ammunition, perk and upgrade rows of infantry
 and vehicles scroll with the mouse wheel or their scrollbars, keeping the
 original card sizes. The upgrade column continues past five with empty cards
 (`upgrade_slots`, default 20): scroll one into view and drop an upgrade on it to
-install more than five. Starting an upgrade drag scrolls to the card it will
+install more than five; by default the column stops at the most upgrades the
+unit's type can hold at once (`fit_upgrades`). Starting an upgrade drag scrolls to the card it will
 land on. It needs the separate `defiance-squad-scroll-ui` download, enabled in
 the game's mod menu. Details:
 [plugins/squad-management-scroll](../plugins/squad-management-scroll/README.md).
@@ -104,13 +116,21 @@ follow later changes to the weapon a soldier holds.
 
 Plugin: `defiance.unit-inspection`. Click a squad you do not own to see its
 full details: commander, soldier count, rank and experience, and its weapons
-and ammunition in the ammo menu. Separate settings for allied, neutral and
-enemy squads; `ally_weapon_toggles` lets the ammo menu's toggles direct an
+and ammunition in the ammo menu; for vehicles and platforms, their weapons and
+ammunition. Separate settings for allied, neutral and enemy units; `ally_weapon_toggles` lets the ammo menu's toggles direct an
 ally's weapons. The ammo cards' reload bars show the squad's relation by
 colour (yours teal, allied yellow, neutral grey-blue, enemy red; each
 configurable), with its companion mod, in the `defiance-squad-scroll-ui`
-download, enabled in MODS. Squads only, on the 2026 game updates. Details:
+download, enabled in MODS. On the 2026 game updates. Details:
 [plugins/unit-inspection](../plugins/unit-inspection/README.md).
+
+## Ability groups
+
+Plugin: `defiance.ability-groups` (experimental). When the selected squads have
+two abilities of one ability button (mines and C4 on F2, for example), the game
+empties the button; with this plugin it shows one of them, and pressing it opens
+a row of all of them over the order panel, picked with the order keys or the
+mouse. Details: [plugins/ability-groups](../plugins/ability-groups/README.md).
 
 ## Regroup
 

@@ -168,6 +168,7 @@ def variants() -> int:
         b.require()
         for command in ([python, "tools/payload.py", "--layout", b.name],
                         [python, "tools/icon.py", "--layout", b.name],
+                        [python, "tools/units.py", "--layout", b.name],
                         [python, "tools/variant.py", str(b.layout), str(b.logic), str(b.game)]):
             print(f"$ {' '.join(str(c) for c in command[1:])}", flush=True)
             if subprocess.call(command, cwd=ROOT) != 0:

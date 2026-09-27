@@ -148,7 +148,7 @@ class SelectionTests(unittest.TestCase):
         # Execute the actual world hook together with the actual same-type
         # manager and squad selector, rather than testing their arguments alone.
         game_code, labels = b.assemble(
-            pathlib.Path("patch/icon-squad.asm").read_text().splitlines(), 0, icon.TRACE_OFFSET,
+            b.source("patch/icon-squad.asm", "patch/ammo-panel.asm"), 0, icon.TRACE_OFFSET, icon.AMMO_STEP_OFFSET,
             symbols=b.GAME_SYMBOLS)
         resume, _ = b.assemble(
             ["add rsp, 0x28", "pop r14", "pop rdi", "ret"], 0, 0)

@@ -45,6 +45,7 @@ jobs:
           cargo test --manifest-path plugins/expanded-ammo-menu/Cargo.toml
           cargo test --manifest-path plugins/squad-management-scroll/Cargo.toml
           cargo test --manifest-path plugins/unit-inspection/Cargo.toml
+          cargo test --manifest-path plugins/ability-groups/Cargo.toml
       - name: Test the native hook lifecycle with real thread suspension
         run: cargo test -p defiance-loader --features test-host --test hook_lifecycle --test hook_regressions
       - uses: actions/setup-python@v7

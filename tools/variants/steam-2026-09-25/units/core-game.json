@@ -1,0 +1,51 @@
+{
+ "unit_schema": 1,
+ "name": "core-game",
+ "plugin": "core",
+ "module": "game.dll",
+ "source_sha256": "c336b5ed4a367628a9c370457d82b1d4e75cab9007cffe5354e27688e836f98e",
+ "unit_bytes": 0,
+ "code_offset": 0,
+ "cells": [],
+ "writes": [],
+ "fixups": [],
+ "natives": [],
+ "anchors": [
+  {
+   "rva": 2073712,
+   "bytes": "48895c2408574883ec20488b81180100004c8b8120010000493bc074180f1f00"
+  }
+ ],
+ "sites": [
+  {
+   "site_name": "anchor",
+   "site_start": 2073712,
+   "site_group": 2073712,
+   "site_pattern": "48895c2408574883ec20488b81180100004c8b8120010000493bc074180f1f00",
+   "site_offset": 0
+  },
+  {
+   "site_name": "lobby_connect",
+   "site_start": 1806384,
+   "site_group": 1806384,
+   "site_pattern": "48895c241848895424105556574154415541564157488d6c24d94881ec00010000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "tactical_state_ctor",
+   "site_start": 3473040,
+   "site_group": 3473040,
+   "site_pattern": "48895c2410488974241848897c242048894c24085541564157488bec4881ec80000000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "tactical_state_dtor",
+   "site_start": 3474016,
+   "site_group": 3474016,
+   "site_pattern": "48895c240848896c24104889742418574883ec20488bf9488d05????????488901",
+   "site_offset": 0
+  }
+ ],
+ "verified_sha": "",
+ "labels": {}
+}

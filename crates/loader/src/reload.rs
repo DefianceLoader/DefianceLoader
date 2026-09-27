@@ -18,8 +18,8 @@
 //! functions must keep working after its `stop`. It loads them again from fresh manifests through the ordinary
 //! `plugin::load`. It refuses a
 //! plugin whose manifest forbids it (`hot_reload: false`, Core), one whose
-//! settings changed (they were resolved at startup), and one that is no longer
-//! enabled.
+//! manifest declares different settings (they were resolved at startup), and
+//! one that is no longer enabled.
 //!
 //! The watcher also compares the plugins directory with what is loaded. A
 //! plugin that appears (it was not there at startup, or was removed since) is
@@ -42,21 +42,18 @@
 //! the plugins that were unloaded because they needed it. Only a change of the
 //! value counts, so a plugin that failed at startup is not retried. A
 //! built-in plugin comes back only if it was loaded earlier in the session.
+//!
+//! The same read catches a loaded plugin's other settings changing (read the
+//! same on two polls, and different from what it loaded with): the plugin is
+//! loaded again ([`resettle`]) with its section answered from a fresh read of
+//! the configuration (`config::go_live`), as a changed DLL reloads. A plugin
+//! that can only load at startup keeps its values until a restart, and says
+//! so. A plugin switched on loads with the values as the files are then.
 use crate::lifecycle::{self, Loaded};
 use crate::plan::Decision;
 use defiance_api::Api;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
-
-/// Tell Core a feature plugin's spans are gone, so it installs them again.
-fn forget_feature(feature: u32) {
-    if let Some(core) = lifecycle::loaded()
-        .into_iter()
-        .find(|p| p.id.eq_ignore_ascii_case(crate::config::builtin::CORE_ID))
-    {
-        lifecycle::call_export(core.module, c"defiance_feature_removed_v1", feature);
-    }
-}
 
 /// The owners in `group` whose old copy must stay mapped: each whose table is
 /// held by a plugin that stays (`holders`: startup-only plugins and copies
@@ -170,7 +167,7 @@ fn reload_group(api: &'static Api, id: &str) -> Result<(), String> {
         } else {
             Vec::new()
         };
-        lifecycle::unload(plugin.owner, forget_feature, retain).map_err(|e| {
+        lifecycle::unload(plugin.owner, retain).map_err(|e| {
             format!(
                 "{} could not be unloaded ({e}); restart the game to load it again",
                 plugin.id
@@ -200,7 +197,7 @@ fn reload_group(api: &'static Api, id: &str) -> Result<(), String> {
             // Blocked before any of its code runs.
             crate::multiplayer::block(&plugin.id);
         }
-        crate::plugin::load(node, api, lifecycle::next_owner(), plan.feature_mask())
+        crate::plugin::load(node, api, lifecycle::next_owner())
             .map_err(|e| format!("{} failed to load again: {}", plugin.id, e.reason))?;
         crate::log::info(&format!("hot reload: {} loaded again", plugin.id));
     }
@@ -221,7 +218,6 @@ mod tests {
             module: 0,
             code: Vec::new(),
             stop: None,
-            feature: 0,
             reloadable: true,
             stamp: None,
             multiplayer_safe: true,
@@ -330,6 +326,41 @@ mod tests {
     }
 
     #[test]
+    fn only_a_settled_change_of_a_loaded_plugins_settings_reloads_it() {
+        let values = |pairs: &[(&str, &str)]| -> Settings {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let map = |pairs: &[(&str, Settings)]| -> HashMap<String, Settings> {
+            pairs
+                .iter()
+                .map(|(id, s)| (id.to_string(), s.clone()))
+                .collect()
+        };
+        let loaded: HashSet<String> = ["a".to_string(), "b".to_string()].into();
+        let applied = map(&[
+            ("a", values(&[("speed", "1")])),
+            ("b", values(&[("speed", "1")])),
+            ("c", values(&[("speed", "1")])),
+        ]);
+        // a and c (not loaded) changed, read once: not yet.
+        let first = map(&[
+            ("a", values(&[("speed", "2")])),
+            ("b", values(&[("speed", "1")])),
+            ("c", values(&[("speed", "2")])),
+            ("d", values(&[("speed", "2")])),
+        ]);
+        assert!(settings_changes(&first, &applied, &applied, &loaded).is_empty());
+        // Read the same again: a reloads; c is not loaded, d is new.
+        assert_eq!(settings_changes(&first, &first, &applied, &loaded), ["a"]);
+        // Once acted on, the same values are not a change again.
+        let acted = map(&[("a", values(&[("speed", "2")]))]);
+        assert!(settings_changes(&first, &first, &acted, &loaded).is_empty());
+    }
+
+    #[test]
     fn a_copy_kept_by_an_earlier_reload_still_holds_what_it_called() {
         // Old B (owner 9), kept by an earlier reload of B, still holds A's
         // table; reloading A now must keep old A for it.
@@ -354,6 +385,9 @@ enum Change {
     Enable(String),
     /// A plugin switched off in its config file.
     Disable(String),
+    /// A loaded plugin's settings other than `enabled` changed in its config
+    /// file.
+    Settings(String),
 }
 
 impl Change {
@@ -363,13 +397,16 @@ impl Change {
             | Change::Add(id, _)
             | Change::Remove(id)
             | Change::Enable(id)
-            | Change::Disable(id) => id,
+            | Change::Disable(id)
+            | Change::Settings(id) => id,
         }
     }
     fn stamp(&self) -> Stamp {
         match self {
             Change::Reload(_, stamp) | Change::Add(_, stamp) => *stamp,
-            Change::Remove(_) | Change::Enable(_) | Change::Disable(_) => None,
+            Change::Remove(_) | Change::Enable(_) | Change::Disable(_) | Change::Settings(_) => {
+                None
+            }
         }
     }
     fn describe(&self) -> &'static str {
@@ -379,6 +416,7 @@ impl Change {
             Change::Remove(_) => "removed; it unloads",
             Change::Enable(_) => "switched on; it loads",
             Change::Disable(_) => "switched off; it unloads",
+            Change::Settings(_) => "settings changed; it reloads",
         }
     }
 }
@@ -457,6 +495,7 @@ fn apply_pending(failed: &mut HashMap<String, Stamp>) {
             }),
             Change::Enable(id) if current.is_none() => enable(api, id),
             Change::Disable(id) if current.is_some() => disable(api, id),
+            Change::Settings(id) if current.is_some() => resettle(api, id),
             _ => Ok(()),
         };
         note_loaded();
@@ -516,6 +555,23 @@ fn restore_dependants(api: &'static Api, id: &str) {
     }
 }
 
+/// Load a plugin again, with the plugins holding its tables, for settings
+/// changed in its config file: from now on its section is answered from the
+/// files as they are now. Refused for invalid settings, which leave it running
+/// with the values it has.
+pub fn resettle(api: &'static Api, id: &str) -> Result<(), String> {
+    // What is loaded now may be unloaded with it and come back with it.
+    note_loaded();
+    let config = crate::config::refresh_later();
+    if config.is_blocked(id) {
+        return Err(format!(
+            "{id}'s changed settings are invalid; it keeps the values it loaded with"
+        ));
+    }
+    crate::config::go_live(id);
+    reload(api, id).map(|()| crate::log::info(&format!("hot reload: {id} uses its new settings")))
+}
+
 /// Unload a plugin switched off in its config file, with the plugins holding
 /// its tables; those load again if they still can without it.
 pub fn disable(api: &'static Api, id: &str) -> Result<(), String> {
@@ -535,8 +591,10 @@ fn add_plugin(api: &'static Api, id: &str, prepared: bool) -> Result<(), String>
     {
         return Err(format!("{id} is already loaded"));
     }
-    // The configuration as the files are now: the new plugin's settings.
+    // The configuration as the files are now: the plugin's settings, which
+    // may have changed since startup while it was off.
     let config = crate::config::refresh_later();
+    crate::config::go_live(id);
     let plan = crate::plan::plan(config.catalog.entries.clone(), config);
     let node = plan
         .nodes
@@ -578,7 +636,7 @@ fn add_plugin(api: &'static Api, id: &str, prepared: bool) -> Result<(), String>
         }
         crate::multiplayer::block(&node.id);
     }
-    crate::plugin::load(node, api, lifecycle::next_owner(), plan.feature_mask())
+    crate::plugin::load(node, api, lifecycle::next_owner())
         .map_err(|e| format!("{id} failed to load: {}", e.reason))?;
     crate::log::info(&format!("hot reload: {id} loaded"));
     Ok(())
@@ -618,7 +676,7 @@ fn remove_plugin(api: &'static Api, id: &str, why: &str) -> Result<(), String> {
     let keep = retained_closure(&group, &staying, crate::services::consumers);
     for plugin in dependants.iter().chain(std::iter::once(&target)) {
         let retain = keep.contains(&plugin.owner);
-        lifecycle::unload(plugin.owner, forget_feature, retain)
+        lifecycle::unload(plugin.owner, retain)
             .map_err(|e| format!("{} could not be unloaded ({e})", plugin.id))?;
         if retain {
             crate::log::info(&format!(
@@ -643,7 +701,7 @@ fn remove_plugin(api: &'static Api, id: &str, why: &str) -> Result<(), String> {
                 if !crate::plan::multiplayer_safe(node) {
                     crate::multiplayer::block(&node.id);
                 }
-                match crate::plugin::load(node, api, lifecycle::next_owner(), plan.feature_mask()) {
+                match crate::plugin::load(node, api, lifecycle::next_owner()) {
                     Ok(()) => crate::log::info(&format!("hot reload: {} loaded again", plugin.id)),
                     Err(e) => crate::log::warn(&format!(
                         "hot reload: {} stays unloaded: {}",
@@ -697,18 +755,53 @@ fn toggles(
     (on, off)
 }
 
-/// Every plugin's `enabled` as the configuration files say now (read-only),
-/// by lowercase ID; Core, which is always on, and legacy plugins left out.
-fn enabled_now() -> HashMap<String, bool> {
+/// A plugin's settings other than `enabled` (key -> canonical value).
+type Settings = BTreeMap<String, String>;
+
+/// The loaded plugins (lowercase IDs) whose settings read the same on this
+/// poll (`now`) and the previous one (`before`), and differ from the values
+/// last acted on (`applied`). A plugin with no value in `applied` is new and
+/// not a change.
+fn settings_changes(
+    now: &HashMap<String, Settings>,
+    before: &HashMap<String, Settings>,
+    applied: &HashMap<String, Settings>,
+    loaded: &HashSet<String>,
+) -> Vec<String> {
+    let mut out: Vec<String> = now
+        .iter()
+        .filter(|(id, values)| {
+            loaded.contains(*id)
+                && before.get(*id) == Some(values)
+                && applied.get(*id).is_some_and(|last| last != *values)
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    out.sort();
+    out
+}
+
+/// Every plugin's `enabled` and other settings as the configuration files say
+/// now (read-only), by lowercase ID; Core, which is always on, and legacy
+/// plugins left out.
+fn config_now() -> (HashMap<String, bool>, HashMap<String, Settings>) {
     let config = crate::config::inspect(&crate::config::game_dir());
-    config
+    let ids: Vec<String> = config
         .catalog
         .entries
         .iter()
         .map(|entry| entry.id())
         .filter(|id| !id.eq_ignore_ascii_case(crate::config::builtin::CORE_ID))
-        .filter_map(|id| config.enabled(&id).map(|on| (id.to_ascii_lowercase(), on)))
-        .collect()
+        .collect();
+    let enabled = ids
+        .iter()
+        .filter_map(|id| config.enabled(id).map(|on| (id.to_ascii_lowercase(), on)))
+        .collect();
+    let settings = ids
+        .iter()
+        .map(|id| (id.to_ascii_lowercase(), config.settings(id)))
+        .collect();
+    (enabled, settings)
 }
 
 /// The config files' stamps, to read the configuration only when one changed.
@@ -830,14 +923,19 @@ fn watch(develop: bool, toggle: bool) {
     // `enabled` as last acted on (the startup values), as last read, and the
     // config files' stamps when last read.
     let mut applied: HashMap<String, bool> = HashMap::new();
+    // The other settings, likewise: as loaded with, and as last read.
+    let mut applied_settings: HashMap<String, Settings> = HashMap::new();
     if let Some(config) = crate::config::current().filter(|_| toggle) {
         for entry in &config.catalog.entries {
-            if let Some(on) = config.enabled(&entry.id()) {
-                applied.insert(entry.id().to_ascii_lowercase(), on);
+            let id = entry.id();
+            if let Some(on) = config.enabled(&id) {
+                applied.insert(id.to_ascii_lowercase(), on);
             }
+            applied_settings.insert(id.to_ascii_lowercase(), config.settings(&id));
         }
     }
     let mut read: HashMap<String, bool> = applied.clone();
+    let mut read_settings: HashMap<String, Settings> = applied_settings.clone();
     let mut config_seen = config_dir.as_deref().map(config_stamps).unwrap_or_default();
     let mut settling = false;
     if let Some(config) = crate::config::current() {
@@ -905,21 +1003,49 @@ fn watch(develop: bool, toggle: bool) {
             if stamps != config_seen || settling {
                 settling = stamps != config_seen;
                 config_seen = stamps;
-                let now = enabled_now();
-                let loaded: HashSet<String> = lifecycle::loaded()
-                    .iter()
-                    .map(|p| p.id.to_ascii_lowercase())
-                    .collect();
+                let (now, settings_now) = config_now();
+                let plugins = lifecycle::loaded();
+                let loaded: HashSet<String> =
+                    plugins.iter().map(|p| p.id.to_ascii_lowercase()).collect();
                 let (on, off) = toggles(&now, &read, &applied, &loaded);
                 for id in on {
                     applied.insert(id.clone(), true);
+                    // It loads with the values as the files are now.
+                    if let Some(values) = settings_now.get(&id) {
+                        applied_settings.insert(id.clone(), values.clone());
+                    }
                     queue(Change::Enable(id));
                 }
-                for id in off {
+                for id in &off {
                     applied.insert(id.clone(), false);
-                    queue(Change::Disable(id));
+                    queue(Change::Disable(id.clone()));
+                }
+                for id in
+                    settings_changes(&settings_now, &read_settings, &applied_settings, &loaded)
+                {
+                    applied_settings.insert(id.clone(), settings_now[&id].clone());
+                    if off.contains(&id) {
+                        continue;
+                    }
+                    let reloadable = plugins
+                        .iter()
+                        .any(|p| p.reloadable && p.id.eq_ignore_ascii_case(&id));
+                    if reloadable {
+                        queue(Change::Settings(id));
+                    } else {
+                        crate::log::info(&format!(
+                            "hot reload: {id}'s settings changed; it can only load at startup, so they apply at the next restart"
+                        ));
+                    }
+                }
+                // A plugin new since startup starts from the values read now.
+                for (id, values) in &settings_now {
+                    applied_settings
+                        .entry(id.clone())
+                        .or_insert_with(|| values.clone());
                 }
                 read = now;
+                read_settings = settings_now;
             }
         }
         if !crate::session::tracking() {

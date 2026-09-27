@@ -50,12 +50,7 @@ pub fn loads_from_copy(node: &Planned) -> bool {
 /// called, and any hook it managed to install before failing is removed; the
 /// DLL itself is left loaded, since pulling it out from under anything it
 /// started is worse.
-pub fn load(
-    node: &Planned,
-    api: &'static Api,
-    owner: usize,
-    feature_mask: u64,
-) -> Result<(), LoadFailure> {
+pub fn load(node: &Planned, api: &'static Api, owner: usize) -> Result<(), LoadFailure> {
     if node
         .manifest
         .as_ref()
@@ -126,15 +121,6 @@ pub fn load(
                 manifest.version
             )));
         }
-    }
-    // The core plugin's internal handshake: tell it which features the accepted
-    // plan will install, so it validates only those sites. Optional, so a plugin
-    // that does not export it is unaffected.
-    let configure =
-        unsafe { win::GetProcAddress(module, b"defiance_configure_enabled_v1\0".as_ptr()) };
-    if !configure.is_null() {
-        let configure: unsafe extern "C" fn(u64) = unsafe { core::mem::transmute(configure) };
-        unsafe { configure(feature_mask) };
     }
     crate::log::info(&format!(
         "plugin {name} {version} from {}",
@@ -222,7 +208,6 @@ pub fn load(
         module: module as usize,
         code: crate::lifecycle::code_ranges(module as usize),
         stop: plugin.stop,
-        feature: node.builtin.map_or(0, |builtin| builtin.feature),
         stamp: crate::lifecycle::stamp(&node.path),
         multiplayer_safe: crate::plan::multiplayer_safe(node),
     });

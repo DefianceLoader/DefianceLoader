@@ -1,0 +1,88 @@
+{
+ "unit_schema": 1,
+ "name": "preview-weapon-game",
+ "plugin": "preview-weapon",
+ "module": "game.dll",
+ "source_sha256": "c336b5ed4a367628a9c370457d82b1d4e75cab9007cffe5354e27688e836f98e",
+ "unit_bytes": 105,
+ "code_offset": 0,
+ "cells": [],
+ "writes": [
+  {
+   "kind": "jmp",
+   "rva": 2214044,
+   "before": "85c075513883a9000000754d",
+   "tail": "90909090909090",
+   "entry": 21,
+   "label": "preview_primary"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2214120,
+   "before": "4c894d8f4d8be9eb04",
+   "tail": "90909090",
+   "entry": 0,
+   "label": "preview_secondary"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2760912,
+   "before": "488b82b800000048894128",
+   "tail": "909090909090",
+   "entry": 70,
+   "label": "preview_squad"
+  }
+ ],
+ "fixups": [
+  {
+   "kind": "abs64",
+   "target": 2214133,
+   "offset": 59
+  },
+  {
+   "kind": "abs64",
+   "target": 2214056,
+   "offset": 35
+  },
+  {
+   "kind": "abs64",
+   "target": 2760927,
+   "offset": 94
+  }
+ ],
+ "natives": [],
+ "anchors": [],
+ "sites": [
+  {
+   "site_name": "preview_primary",
+   "site_start": 2214044,
+   "site_group": 2213456,
+   "site_pattern": "85c075513883a9000000754d488b83100200004c8b8318020000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "preview_secondary",
+   "site_start": 2214120,
+   "site_group": 2213456,
+   "site_pattern": "4c894d8f4d8be9eb044c894d974883c608493bf60f85????????",
+   "site_offset": 0
+  },
+  {
+   "site_name": "preview_squad",
+   "site_start": 2760912,
+   "site_group": 2759664,
+   "site_pattern": "488b82b8000000488941284883c138493bc875ec4c8b7d68",
+   "site_offset": 0
+  }
+ ],
+ "verified_sha": "",
+ "labels": {
+  "preview_secondary": 0,
+  "preview_secondary_kept": 11,
+  "preview_primary": 21,
+  "preview_primary_store": 46,
+  "preview_loop": 57,
+  "preview_squad": 70,
+  "preview_squad_kept": 88
+ }
+}

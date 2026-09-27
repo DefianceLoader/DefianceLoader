@@ -43,7 +43,7 @@ STAMPS = ROOT / "out" / "stamps"
 # and what they import, including variant.py for tools/test_variant.py), the
 # patch sources, the per-build layouts and the reference DLLs. Keep the module
 # list in step with their imports; a tool outside it can change freely.
-ASSEMBLY_INPUTS = ["tools/build.py", "tools/payload.py", "tools/icon.py", "tools/pe.py",
+ASSEMBLY_INPUTS = ["tools/build.py", "tools/payload.py", "tools/icon.py", "tools/units.py", "tools/pe.py",
                    "tools/sigs.py", "tools/variant.py", "tools/stamp.py", "tools/builds.py",
                    "patch/**/*.asm", "tools/layouts/*.json",
                    builds.relative(builds.reference().logic), builds.relative(builds.reference().game)]
@@ -51,9 +51,9 @@ JOBS = {
     "assemble": {
         "inputs": ASSEMBLY_INPUTS,
         "outputs": ["out/logic.dll", "out/manifest.json", "out/payload.bin", "out/payload.json",
-                    "out/payload-game.bin", "out/payload-game.json"],
+                    "out/payload-game.bin", "out/payload-game.json", "out/units/*"],
         "commands": [["python", "tools/build.py"], ["python", "tools/payload.py"],
-                     ["python", "tools/icon.py"]],
+                     ["python", "tools/icon.py"], ["python", "tools/units.py"]],
     },
 }
 
@@ -148,12 +148,20 @@ REFERENCE_DLLS = [builds.relative(builds.reference().logic), builds.relative(bui
 
 
 def sync_reference():
-    """Copy the assembled reference payloads into tools/variants/reference,
-    rewriting only what changed, so cargo does not rebuild for identical bytes."""
+    """Copy the assembled reference payloads and units into
+    tools/variants/reference, rewriting only what changed, so cargo does not
+    rebuild for identical bytes; a unit no longer assembled is removed."""
     REFERENCE.mkdir(parents=True, exist_ok=True)
-    for source, name in REFERENCE_COPIES.items():
-        data = (ROOT / source).read_bytes()
-        target = REFERENCE / name
+    copies = {ROOT / source: REFERENCE / name for source, name in REFERENCE_COPIES.items()}
+    units = REFERENCE / "units"
+    units.mkdir(exist_ok=True)
+    assembled = sorted((ROOT / "out" / "units").glob("*"))
+    copies.update({path: units / path.name for path in assembled})
+    for stale in set(units.glob("*")) - set(copies.values()):
+        stale.unlink()
+        print(f"removed {stale.relative_to(ROOT).as_posix()}")
+    for source, target in copies.items():
+        data = source.read_bytes()
         if not target.is_file() or target.read_bytes() != data:
             target.write_bytes(data)
             print(f"updated {target.relative_to(ROOT).as_posix()}")

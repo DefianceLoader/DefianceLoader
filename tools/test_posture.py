@@ -237,6 +237,44 @@ check("every register survives, rbx included",
       [q(CAPTURE + i * 8) for i in range(7)] == MARKS and q(CAPTURE + 0x48) == posture,
       str([hex(q(CAPTURE + i * 8)) for i in range(7)]))
 
+print("\n== the squad's stand-up keeps a soldier pinned prone crawling\n")
+# Called as the loop calls it, over xor edx, edx and mov rcx, rbx before its
+# call to fn_2b5210, rbx the member's posture: rcx must be the posture and edx
+# the gait, 1 to crawl. The callee-saved registers must survive.
+mode_site = scratch(0x200)
+put(mode_site, asm("; ".join(
+    [f"push {r}" for r in REGS] + ["sub rsp, 0x28"]
+    + [f"mov {r}, {v:#x}" for r, v in zip(REGS, SENTINELS)]
+    + [f"mov rbx, {ARG}", "mov rbx, qword ptr [rbx]", "mov edx, 0x55",
+       f"mov r11, {block + labels['squad_stand_mode']}", "call r11",
+       f"mov r11, {CAPTURE}", "mov qword ptr [r11 + 0x40], rcx",
+       "mov qword ptr [r11 + 0x48], rdx"]
+    + [f"mov qword ptr [r11 + {i * 8}], {r}" for i, r in enumerate(REGS)]
+    + ["add rsp, 0x28"] + [f"pop {r}" for r in reversed(REGS)] + ["ret"])))
+MODE_SITE = ctypes.CFUNCTYPE(None)(mode_site)
+
+
+def gait(pin=None, marker=0x7a5e, links=True):
+    """The loop's call's arguments for this member: rcx and rdx."""
+    posture = soldier(pin, marker, links)
+    put(ARG, struct.pack("<Q", posture))
+    MODE_SITE()
+    return q(CAPTURE + 0x40) == posture, q(CAPTURE + 0x48)
+
+
+for label, args, want in (
+        ("unpinned: upright", (), 0),
+        ("pinned prone: crawl", (3,), 1),
+        ("pinned standing: upright", (1,), 0),
+        ("a pin without its marker: upright", (3, 0x2211), 0),
+        ("no soldier to be found: upright", (None, 0x7a5e, False), 0)):
+    posture_passed, got = gait(*args)
+    check(label, posture_passed and got == want, f"rcx the posture {posture_passed}, rdx {got:#x}")
+check("the callee-saved registers survive, rbx included",
+      [q(CAPTURE + 8 * i) for i in range(1, 8)] == SENTINELS[1:]
+      and q(CAPTURE) == q(ARG),
+      str([hex(q(CAPTURE + i * 8)) for i in range(8)]))
+
 print()
 print(f"{failures} failed" if failures else "all cases as expected")
 sys.exit(1 if failures else 0)

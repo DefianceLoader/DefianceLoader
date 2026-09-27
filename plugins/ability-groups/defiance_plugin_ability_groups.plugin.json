@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "id": "defiance.ability-groups",
+  "dll": "defiance_plugin_ability_groups.dll",
+  "version": "0.1.0",
+  "abi": 5,
+  "group": "infantry",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Keep an ability button when the selected squads have more than one ability for it. The game shows one ability per button (F1-F4) and empties the button when a selection has two of them, such as mines and C4 on F2. With this, the button shows one of them, and pressing it opens a row of all of them over the order panel; pick one with the order key above it (Q, R, F or G with the default keys) or with the mouse, or press the ability key again to close the row. The button then shows the ability last picked. Experimental. Restart required."
+    }
+  ],
+  "depends": [],
+  "conflicts": []
+}

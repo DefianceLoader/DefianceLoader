@@ -16,7 +16,7 @@ checks a plugin against, which is the built-in table
 Components: `loader` (the proxy DLL, crash helper and tools), `core`, each
 built-in feature by its short name (`selection`, `posture`, ...), and each
 standalone plugin (`regroup`, `expanded-ammo-menu`, `squad-management-scroll`,
-`unit-inspection`).
+`unit-inspection`, `ability-groups`).
 Groups: `builtins` (the built-in gameplay plugins, not core) and `all`.
 A bump is refused, before anything is written, if it would move a version
 backwards or out of a dependant's declared range.

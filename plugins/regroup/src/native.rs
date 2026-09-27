@@ -63,7 +63,8 @@ const PAIRS: &[(&str, &str, Offsets)] = &[
         "dc10419f417aed4ecff348b7c96b3c7c574a9a2541f76c5fbc35eb92dbc716d6",
         REFERENCE_OFFSETS,
     ),
-    // GOG 14 Sep 2026, and the 22 Sep 2026 (DLC3) build both stores share
+    // GOG 14 Sep 2026, the 22 Sep 2026 (DLC3) build both stores share, and
+    // 25 Sep 2026 (GOG, then Steam)
     (
         "eb8674f1d16595a3e9cf6a9ec0062735b1184976495d8d6ade36f7e2574e8aab",
         "bc2af42369f9f6fe70e206ae4846f8f0e46ac01cca9a325c8159ee04a9b5e405",
@@ -72,6 +73,16 @@ const PAIRS: &[(&str, &str, Offsets)] = &[
     (
         "30264904e1d5199b954bafbd7828cf7190930c246d35fa7b94eefa915e8f0c38",
         "d926a213731d73bac8ccc56b50e2b4292fe8613c7a9bb7c8b9fc9132c122ed25",
+        UPDATE_OFFSETS,
+    ),
+    (
+        "1216d627c7288c7db6940168363be582232ed4d3cb860b8b8c8d7489652eca74",
+        "8ec30a0b59aebf2240f00229d54a0f58e2e338f9ab3511046c9ff36970dd1489",
+        UPDATE_OFFSETS,
+    ),
+    (
+        "adb3ad95926036809b4e554b466bef33d4ac7aa5303e59a9e4a940890bc334b5",
+        "c336b5ed4a367628a9c370457d82b1d4e75cab9007cffe5354e27688e836f98e",
         UPDATE_OFFSETS,
     ),
 ];

@@ -32,8 +32,6 @@ pub struct Loaded {
     /// The module's executable sections, `[start, end)`.
     pub code: Vec<(usize, usize)>,
     pub stop: Option<unsafe extern "C" fn()>,
-    /// The built-in feature number, or 0.
-    pub feature: u32,
     /// Whether the manifest allows unloading while the game runs.
     pub reloadable: bool,
     /// `path`'s size and modification time when it was loaded.
@@ -241,16 +239,10 @@ impl core::fmt::Display for UnloadError {
     }
 }
 
-/// Take a recorded plugin out of the running game. `forget_feature` tells
-/// Core a built-in feature's spans are gone, before the module is freed.
-/// With `retain`, the module stays mapped (stopped, unhooked, its services
+/// Take a recorded plugin out of the running game. With `retain`, the module stays mapped (stopped, unhooked, its services
 /// withdrawn) instead: a plugin that can only load at startup still holds one
 /// of its service tables and keeps calling it.
-pub fn unload(
-    owner: usize,
-    forget_feature: impl FnOnce(u32),
-    retain: bool,
-) -> Result<Loaded, UnloadError> {
+pub fn unload(owner: usize, retain: bool) -> Result<Loaded, UnloadError> {
     let Some(plugin) = loaded().into_iter().find(|p| p.owner == owner) else {
         return Err(UnloadError::Unknown);
     };
@@ -276,9 +268,6 @@ pub fn unload(
         crate::services::withdraw(owner);
     } else {
         crate::services::remove(owner);
-    }
-    if plugin.feature != 0 {
-        forget_feature(plugin.feature);
     }
     // A thread paused in one of its hooks' relays or stubs has no address of
     // the module anywhere, yet jumps into it next.
@@ -339,18 +328,6 @@ pub fn dependants(
     }
     visit(id, plugins, consumers, &mut out);
     out
-}
-
-/// Call a loaded module's optional export `name` with one `u32`, if present.
-pub fn call_export(module: usize, name: &core::ffi::CStr, value: u32) -> bool {
-    let symbol = unsafe { win::GetProcAddress(module as win::Handle, name.as_ptr().cast()) };
-    if symbol.is_null() {
-        return false;
-    }
-    let function: unsafe extern "C" fn(u32) =
-        unsafe { core::mem::transmute::<*mut c_void, unsafe extern "C" fn(u32)>(symbol) };
-    unsafe { function(value) };
-    true
 }
 
 #[cfg(test)]
@@ -433,7 +410,7 @@ mod tests {
             0
         );
         // Unhooked, but not freed: the removed hook's stub stays charged to it.
-        assert_eq!(unload(owner, |_| {}, false).err(), Some(UnloadError::Busy));
+        assert_eq!(unload(owner, false).err(), Some(UnloadError::Busy));
         assert_eq!(crate::hooks::owned_code(owner), owned);
         unsafe {
             win::TerminateThread(thread, 0);
@@ -491,7 +468,6 @@ mod tests {
             module: 0,
             code: Vec::new(),
             stop: None,
-            feature: 0,
             reloadable: true,
             stamp: None,
             multiplayer_safe: true,

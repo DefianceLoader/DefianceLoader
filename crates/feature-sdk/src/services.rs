@@ -100,6 +100,22 @@ pub unsafe fn selection() -> Option<&'static defiance_api::SelectionV1> {
     unsafe { query(c"defiance.selection", c"selection", 1) }
 }
 
+/// Resolve Core's patch-v1 table, which installs patch units ([`crate::units`]).
+/// Declare a dependency on `defiance.core`.
+/// # Safety
+/// Same lifecycle requirements as query; call its functions during init.
+pub unsafe fn patch() -> Option<&'static defiance_api::PatchV1> {
+    unsafe { query(c"defiance.core", c"patch", 1) }
+}
+
+/// Resolve Core's build-v1 table: the build whose units apply. Declare a
+/// dependency on `defiance.core`.
+/// # Safety
+/// Same lifecycle requirements as query.
+pub unsafe fn build() -> Option<&'static defiance_api::BuildV1> {
+    unsafe { query(c"defiance.core", c"build", 1) }
+}
+
 /// Resolve the loader's crash-ranges-v1 table, which names mod code in crash
 /// reports. Needs no manifest dependency; None from a loader that predates it.
 /// # Safety
@@ -126,6 +142,15 @@ pub unsafe fn trace() -> Option<&'static defiance_api::TraceV1> {
 /// from any thread.
 pub unsafe fn multiplayer() -> Option<&'static defiance_api::MultiplayerV1> {
     unsafe { query(defiance_api::LOADER_PROVIDER, c"multiplayer", 1) }
+}
+
+/// Resolve the loader's original-v1 table: memory as it was before any plugin
+/// wrote to it through the loader. Needs no manifest dependency; None from a
+/// loader that predates it.
+/// # Safety
+/// Same lifecycle requirements as query; the call may be made from any thread.
+pub unsafe fn original() -> Option<&'static defiance_api::OriginalV1> {
+    unsafe { query(defiance_api::LOADER_PROVIDER, c"original", 1) }
 }
 
 /// Resolve the loader's session-v1 table, for Core's mission reports.

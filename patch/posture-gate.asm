@@ -8,7 +8,8 @@
 ; The explicit order goes through the same two (AiPoseChangeState, fn_76b8d).
 ; The squad's own stand-up, fn_43d5a0 (a subset sent into a building, among
 ; others), clears the flag and stands every member with an inlined copy of
-; fn_2b0200's body instead; squad_stand_gate covers that loop.
+; fn_2b0200's body instead; squad_stand_gate covers that loop, and
+; squad_stand_mode the gait it resets for every member afterwards.
 ;
 ; So all three are gated here. A pinned soldier refuses the change that contradicts
 ; his pin, wherever it comes from, and the pin is set only when the pose split
@@ -29,9 +30,9 @@
 ; landed. Both functions return nothing, so refusing is a bare ret.
 ;
 ; The file patch's unwind records cover each gate up to its *_resume label,
-; pin_of up to pin_end, move_posture up to move_posture_end and
-; squad_stand_gate up to squad_stand_end; the displaced prologues and the ret
-; lie outside them.
+; pin_of up to pin_end, move_posture up to move_posture_end,
+; squad_stand_gate up to squad_stand_end and squad_stand_mode up to
+; squad_mode_end; the displaced prologues and the ret lie outside them.
 ;
 ; The two movement states (fn_cfb70 at 0xcffc6, fn_d0220 at 0xd0626) decide
 ; from the squad's flag whether a walk is a crawl: movzx ebp, byte [rcx+0x29e],
@@ -182,3 +183,24 @@ stand_answer:
     pop rax
     ret
 squad_stand_end:
+
+; A soldier's gait is his posture's +0x7c, 1 crawl and 0 upright, which is what
+; his movement speed follows. The lie-down sets it to 1 and the stand-up ends
+; with fn_2b5210(posture, 0), which sets it to 0. The squad's stand-up loop
+; makes that call for every member, the ones squad_stand_gate skipped included
+; (both paths meet at 0x43d84f), so a soldier left lying there would crawl at
+; walking speed. Called over the call's 5-byte argument setup, xor edx, edx and
+; mov rcx, rbx, this passes 1 for a soldier pinned prone, keeping his crawl,
+; and 0 for anyone else, as the loop does. rbx is the member's posture, as for
+; squad_stand_gate. Only the call's own arguments and its clobbers change.
+squad_stand_mode:
+    sub rsp, 0x28
+    mov rcx, rbx
+    call pin_of
+    xor edx, edx
+    cmp al, 3
+    sete dl
+    mov rcx, rbx
+    add rsp, 0x28
+    ret
+squad_mode_end:

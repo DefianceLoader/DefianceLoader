@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.squad-management-scroll",
   "dll": "defiance_plugin_squad_management_scroll.dll",
-  "version": "1.1.1",
+  "version": "1.2.2",
   "abi": 5,
   "group": "weapons",
   "settings": [
@@ -33,6 +33,12 @@
       "min": 5,
       "max": 30,
       "description": "Length of the upgrade columns: a unit's installed upgrades, then empty cards up to this count, five at a time with a scrollbar. Drop an upgrade on an empty card to install more than five. 5-30; default 20; five reproduces stock (five slots, no scrollbar). The game still rejects duplicates and replaces a conflicting upgrade (for example a second armor). Requires upgrades enabled and the companion Defiance squad inventory scrolling mod. Restart required."
+    },
+    {
+      "key": "fit_upgrades",
+      "type": "bool",
+      "default": "true",
+      "description": "Shorten each upgrade column to the most upgrades the unit's type can hold at once: the most of the upgrades that fit it with no conflict group in common (dropping a second armor, or a second mounted gun, replaces the first). Capped at upgrade_slots and never shorter than what the unit already has; if the game has not answered yet, the column is upgrade_slots long. False makes every column upgrade_slots long. Requires upgrades enabled. Restart required."
     },
     {
       "key": "vehicles",

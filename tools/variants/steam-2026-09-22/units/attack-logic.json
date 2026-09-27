@@ -1,0 +1,53 @@
+{
+ "unit_schema": 1,
+ "name": "attack-logic",
+ "plugin": "attack",
+ "module": "logic.dll",
+ "source_sha256": "30264904e1d5199b954bafbd7828cf7190930c246d35fa7b94eefa915e8f0c38",
+ "unit_bytes": 482,
+ "code_offset": 0,
+ "cells": [],
+ "writes": [
+  {
+   "kind": "call",
+   "rva": 4517445,
+   "before": "488b442450",
+   "tail": "",
+   "stock": 0,
+   "entry": 0,
+   "label": "attack_members"
+  }
+ ],
+ "fixups": [],
+ "natives": [],
+ "anchors": [],
+ "sites": [
+  {
+   "site_name": "attack_members",
+   "site_start": 4517445,
+   "site_group": 4514576,
+   "site_pattern": "488b442450488b304885f6740e488b761048897424384885f6",
+   "site_offset": 0
+  }
+ ],
+ "verified_sha": "",
+ "labels": {
+  "attack_members": 0,
+  "capable_members": 49,
+  "capable_next": 135,
+  "capable_keep": 197,
+  "capable_packed": 206,
+  "capable_done": 209,
+  "selected_members": 223,
+  "filter_members": 226,
+  "count_members": 252,
+  "counted_members": 277,
+  "pack_members": 295,
+  "next_member": 323,
+  "left_behind_member": 328,
+  "keep_members": 412,
+  "packed_members": 415,
+  "member_selected": 432,
+  "no_selection": 475
+ }
+}

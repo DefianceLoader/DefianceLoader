@@ -32,6 +32,12 @@ OFFSETS = {
     "d926a213731d73bac8ccc56b50e2b4292fe8613c7a9bb7c8b9fc9132c122ed25":
         dict(roster=0x3d0, gunner_count=0x140, gunner_get=0x130, pool_get=0x1c8,
              world_player=0x708, ai_set=0x3f8),
+    "8ec30a0b59aebf2240f00229d54a0f58e2e338f9ab3511046c9ff36970dd1489":
+        dict(roster=0x3d0, gunner_count=0x140, gunner_get=0x130, pool_get=0x1c8,
+             world_player=0x708, ai_set=0x3f8),
+    "c336b5ed4a367628a9c370457d82b1d4e75cab9007cffe5354e27688e836f98e":
+        dict(roster=0x3d0, gunner_count=0x140, gunner_get=0x130, pool_get=0x1c8,
+             world_player=0x708, ai_set=0x3f8),
 }
 
 

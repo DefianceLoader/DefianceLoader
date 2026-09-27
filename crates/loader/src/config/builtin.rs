@@ -41,9 +41,8 @@ pub struct Builtin {
     pub summary: &'static str,
     /// Hard dependencies by stable plugin ID.
     pub depends: &'static [&'static str],
-    /// The legacy numeric feature ID used by the shared runtime, or 0 for
-    /// infrastructure.
-    pub feature: u32,
+    /// A gameplay feature (it declares `enabled`), rather than infrastructure.
+    pub gameplay: bool,
     /// Whether the plugin can stay active in multiplayer: it changes nothing
     /// another player's game would need to match (display only, or nothing at
     /// all). Anything else blocks multiplayer while it is active.
@@ -60,6 +59,7 @@ pub fn hot_reload(builtin: &Builtin) -> bool {
 /// manifests may not declare `multiplayer_safe`, so an edit cannot let them
 /// online. The built-ins take their flag from this table instead.
 pub const NOT_MULTIPLAYER_SAFE: &[&str] = &[
+    "defiance.ability-groups",
     "defiance.expanded-ammo-menu",
     "defiance.regroup",
     "defiance.squad-management-scroll",
@@ -70,124 +70,114 @@ pub const BUILTINS: &[Builtin] = &[
     Builtin {
         id: CORE_ID,
         dll: "defiance_plugin_core.dll",
-        version: "0.3.0",
+        version: "0.4.1",
         group: "core",
         summary: "Required support for the infantry and weapon features. Core has no enabled toggle; disable individual features instead.",
         depends: &[],
-        feature: 0,
+        gameplay: false,
         multiplayer_safe: true,
     },
     Builtin {
         id: "defiance.selection",
         dll: "defiance_plugin_feature_selection.dll",
-        version: "0.5.0",
+        version: "0.6.0",
         group: "infantry",
         summary: "Select individual soldiers within a squad and show which soldiers are selected. Disabling this also prevents posture, movement, attack, garrison, firing, ammunition, expanded ammo menu and regroup from loading. Pickup and squad-management scrolling can remain enabled. Restart required.",
         depends: &[CORE_ID],
-        feature: 2,
+        gameplay: true,
         multiplayer_safe: false,
     },
     Builtin {
         id: "defiance.posture",
         dll: "defiance_plugin_feature_posture.dll",
-        version: "0.3.1",
+        version: "0.4.1",
         group: "infantry",
         summary: "Give selected soldiers their own standing, crouching or prone posture instead of changing the entire squad. Requires selection. Disabling this also disables individual movement; it does not remove the game's normal squad posture controls. Restart required.",
-        depends: &["defiance.selection"],
-        feature: 4,
+        depends: &[CORE_ID, "defiance.selection"],
+        gameplay: true,
         multiplayer_safe: false,
     },
     Builtin {
         id: "defiance.movement",
         dll: "defiance_plugin_feature_movement.dll",
-        version: "0.3.0",
+        version: "0.4.0",
         group: "infantry",
         summary: "Move only the selected soldiers when part of a squad is selected, leaving unselected squadmates in place. Requires selection and posture. Disable to use the game's normal movement orders while keeping the other enabled controls. Restart required.",
-        depends: &["defiance.selection", "defiance.posture"],
-        feature: 3,
+        depends: &[CORE_ID, "defiance.selection", "defiance.posture"],
+        gameplay: true,
         multiplayer_safe: false,
     },
     Builtin {
         id: "defiance.attack",
         dll: "defiance_plugin_feature_attack.dll",
-        version: "0.4.0",
+        version: "0.5.0",
         group: "infantry",
         summary: "Direct an attack order to the selected soldiers instead of every member of their squad. Requires selection. Disabling this restores normal squad attack orders; it does not disable combat or the firing-mode setting. Restart required.",
-        depends: &["defiance.selection"],
-        feature: 8,
+        depends: &[CORE_ID, "defiance.selection"],
+        gameplay: true,
         multiplayer_safe: false,
     },
     Builtin {
         id: "defiance.garrison",
         dll: "defiance_plugin_feature_garrison.dll",
-        version: "0.3.1",
+        version: "0.4.0",
         group: "infantry",
-        summary: "Send selected soldiers into buildings without sending their unselected squadmates; support exit orders for soldiers occupying the building. Requires selection. Disable to keep the game's normal building-entry and exit behavior. Restart required.",
-        depends: &["defiance.selection"],
-        feature: 9,
+        summary: "Send selected soldiers into buildings without sending their unselected squadmates; support exit orders for soldiers occupying the building; let a squad fill a vehicle's free seats when it does not fit whole, and unload only a vehicle's passengers. Requires selection. Disable to keep the game's normal building, vehicle-entry and exit behavior. Restart required.",
+        depends: &[CORE_ID, "defiance.selection"],
+        gameplay: true,
         multiplayer_safe: false,
     },
     Builtin {
         id: "defiance.firing",
         dll: "defiance_plugin_feature_firing.dll",
-        version: "0.3.0",
+        version: "0.4.0",
         group: "weapons",
         summary: "Change firing mode for selected soldiers without changing their unselected squadmates. Select the whole squad to change everyone. Requires selection. Disabling this restores normal squad firing-mode controls; ammunition toggles are a separate setting. Restart required.",
         depends: &[CORE_ID, "defiance.selection"],
-        feature: 5,
+        gameplay: true,
         multiplayer_safe: false,
     },
     Builtin {
         id: "defiance.ammunition",
         dll: "defiance_plugin_feature_ammunition.dll",
-        version: "0.4.0",
+        version: "0.6.0",
         group: "weapons",
-        summary: "Use the in-mission ammo panel to enable or disable weapons/ammo for selected soldiers. Show relevant weapons and selected-user counts, including mixed on/off states. Select the whole squad to apply a toggle to everyone. Individual overrides support only the first eight ammo slots; later slots need whole-squad selection. Requires selection. Expanded ammo menu also requires this feature; out-of-mission squad scrolling does not. Restart required.",
-        depends: &["defiance.selection"],
-        feature: 6,
+        summary: "Use the in-mission ammo panel to enable or disable weapons/ammo for selected soldiers. Show relevant weapons and selected-user counts, including mixed on/off states. Select the whole squad to apply a toggle to everyone. Ctrl+mouse wheel over a card enables or disables one soldier at a time (step_modifier; step_click adds Ctrl+left and Ctrl+right click). Individual overrides support only the first eight ammo slots; later slots need whole-squad selection. Requires selection. Expanded ammo menu also requires this feature; out-of-mission squad scrolling does not. Restart required.",
+        depends: &[CORE_ID, "defiance.selection"],
+        gameplay: true,
         multiplayer_safe: false,
     },
     Builtin {
         id: "defiance.pickup",
         dll: "defiance_plugin_feature_pickup.dll",
-        version: "0.3.0",
+        version: "0.4.0",
         group: "weapons",
         summary: "Prefer individually selected soldiers when choosing who picks up a weapon, and rotate replacement choices across eligible soldiers on repeated pickups. Disable to use the game's original pickup choice. Can remain enabled without the individual-selection feature. Restart required.",
         depends: &[CORE_ID],
-        feature: 1,
+        gameplay: true,
         multiplayer_safe: false,
     },
     Builtin {
         id: "defiance.diagnostics",
         dll: "defiance_plugin_feature_diagnostics.dll",
-        version: "0.3.0",
+        version: "0.4.0",
         group: "diagnostics",
         summary: "Collect extra troubleshooting information about soldier selection and squad behavior. Adds no player controls. You can disable this without disabling gameplay features. Restart required.",
         depends: &[CORE_ID],
-        feature: 7,
+        gameplay: true,
         multiplayer_safe: false,
     },
     Builtin {
         id: "defiance.preview-weapon",
         dll: "defiance_plugin_feature_preview_weapon.dll",
-        version: "0.1.0",
+        version: "0.2.0",
         group: "infantry",
         summary: "Show the first matching weapon instead of the last matching weapon in squad previews, including in-mission unit info and out-of-mission squad management. Does not track later changes to the weapon a soldier is holding. Disable to restore the game's original preview choice. Works independently of selection and does not change combat. Restart required.",
         depends: &[CORE_ID],
-        feature: 10,
+        gameplay: true,
         multiplayer_safe: true,
     },
 ];
-
-/// The legacy numeric feature ID for `id`, or 0 for infrastructure and unknown
-/// IDs.
-pub fn feature_id(id: &str) -> u32 {
-    BUILTINS
-        .iter()
-        .find(|builtin| builtin.id.eq_ignore_ascii_case(id))
-        .map(|builtin| builtin.feature)
-        .unwrap_or(0)
-}
 
 /// The built-in with this stable ID, case-insensitively.
 pub fn find(id: &str) -> Option<&'static Builtin> {
@@ -205,12 +195,12 @@ pub fn by_dll(dll: &str) -> Option<&'static Builtin> {
 
 /// The built-ins that call themselves a gameplay feature (have `enabled`).
 pub fn features() -> impl Iterator<Item = &'static Builtin> {
-    BUILTINS.iter().filter(|builtin| builtin.feature != 0)
+    BUILTINS.iter().filter(|builtin| builtin.gameplay)
 }
 
 /// Selection's squad TAB modifier: held with TAB on a selected building, each
-/// press narrows the selection to one squad's occupants. Core writes its key
-/// into the game payload when selection installs.
+/// press narrows the selection to one squad's occupants. Selection writes its
+/// key into its game unit before the hooks go live.
 pub const SQUAD_TAB_MODIFIER: SettingDecl = SettingDecl {
     key: "squad_tab_modifier",
     ty: ValueType::Choice(&["ctrl", "shift", "off"]),
@@ -232,10 +222,35 @@ pub const MARQUEE: SettingDecl = SettingDecl {
     sensitive: false,
 };
 
+/// Ammunition's step modifier: held with the mouse wheel over an ammo card, it
+/// enables one more (up) or one fewer (down) of that slot's soldiers.
+/// Ammunition writes its key into its game unit before the hooks go live
+/// (`patch/ammo-panel.asm`).
+pub const AMMO_STEP_MODIFIER: SettingDecl = SettingDecl {
+    key: "step_modifier",
+    ty: ValueType::Choice(&["ctrl", "shift", "alt", "none"]),
+    default: "ctrl",
+    description: "Hold this and turn the mouse wheel over an ammo card to enable one more soldier (wheel up) or disable one (wheel down) for that weapon, in squad order. ctrl, shift, alt, or none for the wheel alone. One squad or part of one selected; the first eight ammo slots. Restart required.",
+    restart: Restart::Startup,
+    sensitive: false,
+};
+
+/// Ammunition's click steps, off by default.
+pub const AMMO_STEP_CLICK: SettingDecl = SettingDecl {
+    key: "step_click",
+    ty: ValueType::Bool,
+    default: "false",
+    description: "Hold step_modifier and left-click an ammo card to enable one more soldier for that weapon, or right-click it to disable one. With step_modifier none, a right-click alone disables one and a left-click keeps its usual toggle. Restart required.",
+    restart: Restart::Startup,
+    sensitive: false,
+};
+
 /// Settings a gameplay feature declares besides `enabled`.
 const EXTRA_SETTINGS: &[(&str, SettingDecl)] = &[
     ("defiance.selection", SQUAD_TAB_MODIFIER),
     ("defiance.selection", MARQUEE),
+    ("defiance.ammunition", AMMO_STEP_MODIFIER),
+    ("defiance.ammunition", AMMO_STEP_CLICK),
 ];
 
 /// The most settings any one built-in declares besides `enabled`.
@@ -290,7 +305,7 @@ fn declared(id: &str) -> usize {
 pub fn settings(id: &str) -> &'static [SettingDecl] {
     match BUILTINS
         .iter()
-        .position(|b| b.feature != 0 && b.id.eq_ignore_ascii_case(id))
+        .position(|b| b.gameplay && b.id.eq_ignore_ascii_case(id))
     {
         Some(index) => &BUILTIN_SETTINGS[index][..declared(BUILTINS[index].id)],
         None => &[],
@@ -350,7 +365,7 @@ pub const LOADER_SETTINGS: &[SettingDecl] = &[
         key: "live_toggle",
         ty: ValueType::Bool,
         default: "false",
-        description: "Switch plugins on and off while the game runs: after changing a plugin's enabled setting in its config file and saving, the plugin is unloaded or loaded at the main menu or as the next mission starts or save loads, instead of at the next restart. Plugins that only load at startup (Core, the expanded ammo menu, squad scrolling) still need a restart. Restart required to turn this on.",
+        description: "Apply plugin config changes while the game runs: after changing a plugin's enabled setting, or any of its other settings, in its config file and saving, the plugin is unloaded, loaded, or loaded again with the new values at the main menu or as the next mission starts or save loads, instead of at the next restart. Plugins that only load at startup (Core, the expanded ammo menu, squad scrolling, unit inspection) still need a restart. Restart required to turn this on.",
         restart: Restart::Startup,
         sensitive: false,
     },
@@ -471,20 +486,11 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn ids_dlls_and_feature_numbers_are_unique() {
+    fn ids_and_dlls_are_unique() {
         let ids: HashSet<&str> = BUILTINS.iter().map(|builtin| builtin.id).collect();
         assert_eq!(ids.len(), BUILTINS.len(), "duplicate plugin ID");
         let dlls: HashSet<&str> = BUILTINS.iter().map(|builtin| builtin.dll).collect();
         assert_eq!(dlls.len(), BUILTINS.len(), "duplicate DLL basename");
-        let features: HashSet<u32> = BUILTINS
-            .iter()
-            .map(|builtin| builtin.feature)
-            .filter(|f| *f != 0)
-            .collect();
-        assert_eq!(
-            features.len(),
-            BUILTINS.iter().filter(|b| b.feature != 0).count()
-        );
     }
 
     #[test]
@@ -550,5 +556,26 @@ mod tests {
             .unwrap()
             .description
             .starts_with("Select individual soldiers"));
+    }
+
+    #[test]
+    fn ammunition_declares_its_step_controls() {
+        let keys = settings("defiance.ammunition")
+            .iter()
+            .map(|d| d.key)
+            .collect::<Vec<_>>();
+        assert_eq!(keys, ["enabled", "step_modifier", "step_click"]);
+        assert_eq!(
+            setting("defiance.ammunition", "step_modifier")
+                .unwrap()
+                .default,
+            "ctrl"
+        );
+        assert_eq!(
+            setting("defiance.ammunition", "step_click")
+                .unwrap()
+                .default,
+            "false"
+        );
     }
 }

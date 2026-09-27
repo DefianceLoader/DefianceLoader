@@ -37,6 +37,7 @@ pub fn windows_resources(file_type: &str, description: &str) {
     );
     emit(&Output {
         name: &name,
+        dir: "res".into(),
         original,
         is_dll,
         description,
@@ -53,6 +54,7 @@ pub fn windows_resources_for(outputs: &[(Artifact<'_>, &str)]) {
         let output = match artifact {
             Artifact::Library => Output {
                 name: &crate_name,
+                dir: "res".into(),
                 original: format!("{}.dll", crate_name.replace('-', "_")),
                 is_dll: true,
                 description,
@@ -60,6 +62,7 @@ pub fn windows_resources_for(outputs: &[(Artifact<'_>, &str)]) {
             },
             Artifact::Bin(bin) => Output {
                 name: bin,
+                dir: format!("res-{bin}"),
                 original: format!("{bin}.exe"),
                 is_dll: false,
                 description,
@@ -73,6 +76,10 @@ pub fn windows_resources_for(outputs: &[(Artifact<'_>, &str)]) {
 /// What one output's resources say, and the Cargo instruction that links them.
 struct Output<'a> {
     name: &'a str,
+    /// The directory under `OUT_DIR` it compiles in. It stays short because
+    /// `rc.exe` is not long-path aware: a deep checkout plus Cargo's
+    /// `build/<crate>-<hash>/out` already comes close to `MAX_PATH`.
+    dir: String,
     original: String,
     is_dll: bool,
     description: &'a str,
@@ -97,6 +104,7 @@ fn emit(output: &Output) {
 fn generate_resources(output: &Output) -> Result<PathBuf, String> {
     let Output {
         name,
+        dir,
         original,
         is_dll,
         description,
@@ -104,8 +112,7 @@ fn generate_resources(output: &Output) -> Result<PathBuf, String> {
     } = output;
     let is_dll = *is_dll;
     // Each output compiles in its own directory, so their files never collide.
-    let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by cargo"))
-        .join(format!("resources-{name}"));
+    let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by cargo")).join(dir);
     std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
     let version = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".to_string());
     let company = env::var("DEFIANCE_COMPANY").unwrap_or_else(|_| "Defiance RE".to_string());
@@ -253,4 +260,67 @@ fn find_rc() -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Write `$OUT_DIR/units.rs`: every tracked build's patch units
+/// (`tools/variants/<build>/units/`) whose plugin is one of `plugins`, as a
+/// `defiance_feature_sdk::units::Embedded` slice expression for `include!`. The crate
+/// rebuilds when any build's units change.
+pub fn embed_units(plugins: &[&str]) {
+    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let variants = manifest
+        .ancestors()
+        .map(|dir| dir.join("tools").join("variants"))
+        .find(|dir| dir.is_dir())
+        .expect("no tools/variants above the crate");
+    println!("cargo:rerun-if-changed={}", variants.display());
+    let mut builds: Vec<PathBuf> = std::fs::read_dir(&variants)
+        .expect("tools/variants")
+        .flatten()
+        .map(|entry| entry.path().join("units"))
+        .filter(|dir| dir.is_dir())
+        .collect();
+    builds.sort();
+    let mut out = String::from("&[\n");
+    for units in builds {
+        println!("cargo:rerun-if-changed={}", units.display());
+        let build = units
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let mut names: Vec<String> = std::fs::read_dir(&units)
+            .expect("units")
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                let stem = path.file_stem()?.to_string_lossy().into_owned();
+                (path.extension()? == "json").then_some(stem)
+            })
+            .filter(|stem| {
+                plugins.iter().any(|plugin| {
+                    stem.strip_prefix(plugin)
+                        .is_some_and(|rest| rest.starts_with('-') && !rest[1..].contains('-'))
+                })
+            })
+            .collect();
+        names.sort();
+        for name in names {
+            let json = units.join(format!("{name}.json"));
+            let bin = units.join(format!("{name}.bin"));
+            println!("cargo:rerun-if-changed={}", json.display());
+            println!("cargo:rerun-if-changed={}", bin.display());
+            out += &format!(
+                "    defiance_feature_sdk::units::Embedded {{ build: {build:?}, name: {name:?}, \
+                 descriptor: include_str!({:?}), code: include_bytes!({:?}) }},\n",
+                json.display().to_string(),
+                bin.display().to_string()
+            );
+        }
+    }
+    out += "]\n";
+    let target = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("units.rs");
+    std::fs::write(target, out).expect("writing units.rs");
 }

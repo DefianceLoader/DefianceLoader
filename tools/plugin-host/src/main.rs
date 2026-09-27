@@ -1,8 +1,10 @@
-//! Load the actual plugin DLLs against mapped stock modules. Compare every
-//! module byte and relocated payload byte with the legacy injector's output.
+//! Load the actual plugin DLLs against mapped stock modules. Every module
+//! byte must be stock or one of an installed feature's unit writes, and every
+//! unit's code its blob linked where Core put it.
 use core::ffi::{c_char, c_void, CStr};
 use defiance_api::{Api, Entry};
-use defiance_core::{GamePatch, Patch, Target};
+use defiance_core::unit::{Fixup, Kind, Unit};
+use defiance_core::Target;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{path::PathBuf, sync::OnceLock};
 
@@ -67,11 +69,6 @@ fn reached(image: &[u8], at: usize, base: usize) -> usize {
         + at as isize
         + 5
         + i32::from_le_bytes(image[at + 1..at + 5].try_into().unwrap()) as isize) as usize
-}
-fn shift(image: &mut [u8], at: usize, delta: isize) {
-    let old = i32::from_le_bytes(image[at + 1..at + 5].try_into().unwrap());
-    let new = i32::try_from(old as isize + delta).unwrap();
-    image[at + 1..at + 5].copy_from_slice(&new.to_le_bytes());
 }
 unsafe extern "C" fn hook_exact(
     at: *mut c_void,
@@ -154,7 +151,7 @@ fn skipped(scenario: &str) -> Vec<u32> {
 fn omitted(scenario: &str) -> Vec<u32> {
     match scenario {
         "fail-selection" => vec![2, 4, 3, 5, 8, 9, 6],
-        "rust-fail-pickup" | "rust-changed-pickup" | "rust-disabled-pickup" => vec![1],
+        "rust-fail-pickup" | "rust-changed-pickup" => vec![1],
         "fail-firing" => vec![5],
         "without-posture" => vec![4, 3], // movement is refused without posture
         "without-selection" => vec![2, 4, 3, 5, 8, 9, 6],
@@ -172,17 +169,6 @@ fn omitted(scenario: &str) -> Vec<u32> {
         "without-movement-and-ammo" => vec![3, 6],
         "shared-helper-corrupt" => vec![1, 7],
         _ => Vec::new(),
-    }
-}
-
-/// The plan the host would hand to core before init, as a feature bit mask.
-fn configure_mask(scenario: &str) -> u64 {
-    match scenario {
-        "rust-disabled-pickup" => !(1u64 << 1),
-        "disabled-ammo-corrupt" => !(1u64 << 6),
-        "shared-helper-corrupt" => !((1u64 << 1) | (1u64 << 7)),
-        "core-only" => 0,
-        _ => u64::MAX,
     }
 }
 
@@ -220,111 +206,142 @@ fn main() {
             (targets[1].base as usize, targets[1].size),
         ])
         .unwrap();
-    let payload = std::fs::read(repo.join("tools/variants/reference/logic.bin")).unwrap();
-    let game_payload = std::fs::read(repo.join("tools/variants/reference/game.bin")).unwrap();
-    let parsed = Patch::parse(
-        &std::fs::read_to_string(repo.join("tools/variants/reference/logic.json")).unwrap(),
-    );
-    let parsed_game = GamePatch::parse(
-        &std::fs::read_to_string(repo.join("tools/variants/reference/game.json")).unwrap(),
-    );
-    let (p, relocated, logic_moves) =
-        defiance_core::logic_for_build(&parsed, &targets[0], defiance_core::Scan::Default).unwrap();
-    let (g, _, _) =
-        defiance_core::game_for_build(&parsed_game, &targets[1], defiance_core::Scan::Default)
-            .unwrap();
-    let native_functions: Vec<_> = ["firing_set", "firing_ui", "setter", "is_selected"]
-        .into_iter()
-        .map(|name| {
-            let site = parsed.sites.iter().find(|s| s.name == name).unwrap();
-            let original = parsed.detours.iter().find(|h| h.rva == site.start).unwrap();
-            (
-                name,
-                p.detours
-                    .iter()
-                    .find(|h| h.entry == original.entry)
-                    .unwrap(),
-            )
+    // The reference build's units, as Core embeds them, relocated with the
+    // same code Core uses when this copy is a verified build.
+    let module_index = |unit: &Unit| usize::from(unit.module == "game.dll");
+    // A unit's owner as this harness numbers the plugins (`order` below).
+    let owner = |unit: &Unit| -> u32 {
+        match unit.plugin.as_str() {
+            "pickup" => 1,
+            "selection" => 2,
+            "movement" => 3,
+            "posture" => 4,
+            "firing" => 5,
+            "ammunition" => 6,
+            "diagnostics" => 7,
+            "attack" => 8,
+            "garrison" => 9,
+            "preview-weapon" => 10,
+            _ => 0,
+        }
+    };
+    let mut units: Vec<(Unit, Vec<u8>)> = Vec::new();
+    let folder = repo.join("tools/variants/reference/units");
+    let mut names: Vec<_> = std::fs::read_dir(&folder)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|e| e == "json"))
+        .collect();
+    names.sort();
+    for path in names {
+        let unit = Unit::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let blob = std::fs::read(path.with_extension("bin")).unwrap();
+        units.push((unit, blob));
+    }
+    let shas: Vec<String> = targets
+        .iter()
+        .map(|t| defiance_core::sha256::file(&t.path).unwrap())
+        .collect();
+    let relocated = {
+        let core = &units
+            .iter()
+            .find(|(u, _)| u.name == "core-logic")
+            .unwrap()
+            .0;
+        defiance_core::install::needs_relocation(
+            &shas[0],
+            &core.source_sha256,
+            &core.verified,
+            defiance_core::Scan::Default,
+        )
+    };
+    let raw_units = units.clone();
+    if relocated {
+        for (unit, _) in &mut units {
+            let i = module_index(unit);
+            *unit = unit.relocate(&originals[i], &shas[i]).unwrap();
+        }
+    }
+    let unit = |name: &str| &units.iter().find(|(u, _)| u.name == name).unwrap().0;
+    let feature_units = |feature: u32| units.iter().filter(move |(u, _)| owner(u) == feature);
+    // The Rust replacements, by name: each the jmp write over its function.
+    let native_functions: Vec<(&str, &str, usize, usize)> = units
+        .iter()
+        .flat_map(|(u, _)| {
+            u.natives.iter().map(move |n| {
+                let write = u.writes.iter().find(|w| w.rva == n.rva).unwrap();
+                (n.name.as_str(), u.name.as_str(), n.rva, write.before.len())
+            })
         })
         .collect();
-    defiance_core::apply(&p, &targets[0], &payload, true).unwrap();
-    defiance_core::apply_game(&g, &targets[1], &game_payload).unwrap();
-    let mut expected: Vec<_> = targets
-        .iter()
-        .map(|t| snapshot(t.base as usize, t.size))
-        .collect();
-    let old_logic = reached(&expected[0], p.call_site, targets[0].base as usize);
-    let old_game =
-        reached(&expected[1], g.hooks[0].rva, targets[1].base as usize) - g.hooks[0].entry;
-    let mut old_code = snapshot(old_logic, payload.len());
-    let old_game_code = snapshot(old_game, game_payload.len());
-    for (t, image) in targets.iter().zip(&originals) {
-        unsafe { core::ptr::copy_nonoverlapping(image.as_ptr(), t.base, image.len()) };
-    }
-    // An ammunition site, corrupted in memory. `disabled-ammo-corrupt` has the
-    // plan exclude ammunition, so preparation must not read it and unrelated
-    // features install. `enabled-ammo-corrupt` keeps it enabled: on the source
-    // build its install refuses; on a relocated build its missing signature is
-    // dropped and only it is refused. On a relocated build the corruption is
-    // one byte of the ammunition signature window that no other site shares.
-    // Restored before the final rollback check.
+    let pickup_call = unit("pickup-logic").writes[0].rva;
+    // An ammunition site, corrupted in memory. `disabled-ammo-corrupt` does not
+    // load ammunition, so its site is never read and the rest install.
+    // `enabled-ammo-corrupt` loads it: on the source build its install
+    // refuses; on a relocated build its signature is not found and only it is
+    // refused. On a relocated build the corruption is one byte of an
+    // ammunition signature window that no other unit's site shares. Restored
+    // before the final rollback check.
     let mut corrupted: Option<(usize, u8)> = None;
-    let ammo_rva = parsed
-        .detours
+    let ammo = &raw_units
         .iter()
-        .find(|h| h.feature == 6)
-        .map(|h| h.rva);
-    if let Some(ammo_rva) = ammo_rva {
-        let scenarios = scenario == "disabled-ammo-corrupt" || scenario == "enabled-ammo-corrupt";
-        if scenarios && !relocated {
-            let byte = unsafe { *targets[0].base.add(ammo_rva) };
-            corrupted = Some((ammo_rva, byte));
-            unsafe {
-                *targets[0].base.add(ammo_rva) = byte ^ 0xff;
+        .find(|(u, _)| u.name == "ammunition-logic")
+        .unwrap()
+        .0;
+    let ammo_rva = ammo.writes[0].rva;
+    let all_sites: Vec<(&str, &defiance_core::Site)> = raw_units
+        .iter()
+        .filter(|(u, _)| u.module == "logic.dll")
+        .flat_map(|(u, _)| u.sites.iter().map(move |s| (u.name.as_str(), s)))
+        .collect();
+    let scenarios = scenario == "disabled-ammo-corrupt" || scenario == "enabled-ammo-corrupt";
+    if scenarios && !relocated {
+        let byte = unsafe { *targets[0].base.add(ammo_rva) };
+        corrupted = Some((ammo_rva, byte));
+        unsafe {
+            *targets[0].base.add(ammo_rva) = byte ^ 0xff;
+        }
+    } else if scenarios {
+        let moves = defiance_core::Moves::locate(
+            &all_sites
+                .iter()
+                .map(|(_, s)| (*s).clone())
+                .collect::<Vec<_>>(),
+            &originals[0],
+        )
+        .unwrap();
+        'choose: for site in &ammo.sites {
+            if !(site.start <= ammo_rva && ammo_rva < site.start + site.pattern.len()) {
+                continue;
             }
-        } else if scenarios {
-            if let Some(moves) = &logic_moves {
-                'choose: for site in &parsed.sites {
-                    if !(site.start <= ammo_rva && ammo_rva < site.start + site.pattern.len()) {
-                        continue;
+            let base = moves
+                .at(site.start)
+                .expect("the ammunition site was located");
+            for (i, byte) in site.pattern.iter().enumerate() {
+                let Some(byte) = byte else { continue };
+                let at = base + i;
+                let shared = all_sites.iter().any(|(owner, other)| {
+                    *owner != "ammunition-logic" && {
+                        let start = moves.at(other.start).unwrap();
+                        start <= at && at < start + other.pattern.len()
                     }
-                    let base = moves
-                        .at(site.start)
-                        .expect("the ammunition site was located");
-                    for (i, byte) in site.pattern.iter().enumerate() {
-                        let Some(byte) = byte else { continue };
-                        let at = base + i;
-                        let shared = parsed.sites.iter().any(|other| {
-                            other.start != site.start && {
-                                let start = moves.at(other.start).unwrap();
-                                start <= at && at < start + other.pattern.len()
-                            }
-                        });
-                        if !shared {
-                            corrupted = Some((at, *byte));
-                            unsafe {
-                                *targets[0].base.add(at) = *byte ^ 0xff;
-                            }
-                            break 'choose;
-                        }
+                });
+                if !shared {
+                    corrupted = Some((at, *byte));
+                    unsafe {
+                        *targets[0].base.add(at) = *byte ^ 0xff;
                     }
+                    break 'choose;
                 }
             }
         }
     }
-    // A shared anchor is required by every consumer. Damaging it must refuse
-    // the whole preparation, on the source build (the anchor check) and on a
-    // relocated build (the anchor site is always kept).
+    // The build anchor is required by every unit. Damaging it must refuse
+    // Core, on the source build (the anchor check) and on a relocated build
+    // (the anchor's signature is not found).
     if scenario == "shared-helper-corrupt" {
-        let at = if relocated {
-            logic_moves
-                .as_ref()
-                .expect("relocated")
-                .at(parsed.anchor_rva)
-                .expect("the anchor")
-        } else {
-            parsed.anchor_rva
-        };
+        let at = unit("core-logic").anchors[0].rva;
         let byte = unsafe { *targets[0].base.add(at) };
         corrupted = Some((at, byte));
         unsafe {
@@ -394,13 +411,6 @@ fn main() {
             .collect();
         let library = unsafe { LoadLibraryW(wide.as_ptr()) };
         assert!(!library.is_null(), "load {name}");
-        // The host hands its accepted plan to core before init.
-        let address =
-            unsafe { GetProcAddress(library, b"defiance_configure_enabled_v1\0".as_ptr()) };
-        if !address.is_null() {
-            let configure: unsafe extern "C" fn(u64) = unsafe { core::mem::transmute(address) };
-            unsafe { configure(configure_mask(scenario)) };
-        }
         let address = unsafe { GetProcAddress(library, b"defiance_plugin\0".as_ptr()) };
         assert!(!address.is_null());
         let entry: Entry = unsafe { core::mem::transmute(address) };
@@ -416,7 +426,7 @@ fn main() {
             FAIL_AT.store(CALLS.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
         }
         if (scenario == "fail-attack" && id == 8) || (scenario == "fail-garrison" && id == 9) {
-            // Garrison has three spans: fail the second to exercise partial rollback.
+            // Garrison has several spans: fail the second to exercise partial rollback.
             FAIL_AT.store(
                 CALLS.load(Ordering::SeqCst) + usize::from(id == 9),
                 Ordering::SeqCst,
@@ -439,10 +449,10 @@ fn main() {
         }
         // Damage the approved call after Core preparation, before pickup init.
         if id == 1 && scenario == "rust-changed-pickup" {
-            let byte = unsafe { *targets[0].base.add(p.call_site) };
-            corrupted = Some((p.call_site, byte));
+            let byte = unsafe { *targets[0].base.add(pickup_call) };
+            corrupted = Some((pickup_call, byte));
             unsafe {
-                *targets[0].base.add(p.call_site) = byte ^ 0xff;
+                *targets[0].base.add(pickup_call) = byte ^ 0xff;
             }
         }
         let result = unsafe { (plugin.init)(api) };
@@ -452,12 +462,15 @@ fn main() {
             failed.push(id);
             defiance_loader::test_host::remove_owned(id as usize);
             if scenario == "fail-selection" && id == 2 {
-                for hook in p.detours.iter().filter(|h| h.feature == 2) {
-                    assert_eq!(
-                        snapshot(targets[0].base as usize + hook.rva, hook.displaced.len()),
-                        originals[0][hook.rva..hook.rva + hook.displaced.len()],
-                        "failed selection restored immediately"
-                    );
+                for (u, _) in feature_units(2) {
+                    let i = module_index(u);
+                    for w in &u.writes {
+                        assert_eq!(
+                            snapshot(targets[i].base as usize + w.rva, w.before.len()),
+                            originals[i][w.rva..w.rva + w.before.len()],
+                            "failed selection restored immediately"
+                        );
+                    }
                 }
             }
         }
@@ -476,100 +489,158 @@ fn main() {
         assert_eq!(failed, [5]);
     } else if scenario == "fail-selection" {
         assert_eq!(failed, [2]);
-    } else if [
-        "rust-fail-pickup",
-        "rust-changed-pickup",
-        "rust-disabled-pickup",
-    ]
-    .contains(&scenario)
-    {
+    } else if ["rust-fail-pickup", "rust-changed-pickup"].contains(&scenario) {
         assert_eq!(failed, [1]);
     } else if scenario == "shared-helper-corrupt" {
-        // The shared anchor is required by every consumer, so damaging it
-        // refuses the whole preparation on both the source and a relocated
+        // The build anchor is required by every unit, so damaging it refuses
+        // Core, and with it every feature, on both the source and a relocated
         // build.
         assert_eq!(failed, [0, 2, 4, 3, 5, 8, 9, 6, 10]);
     } else if scenario == "enabled-ammo-corrupt" {
         // Only ammunition is refused: its install on the source build, its
-        // dropped signature on a relocated build. Other features install.
+        // missing signature on a relocated build. Other features install.
         assert_eq!(failed, [6], "only ammunition should be refused");
     } else {
         assert!(failed.is_empty(), "failed plugins: {failed:?}");
     }
-    // Dependency-failure mode must restore every installed plugin to stock.
-    // The byte parity needs the pickup call (the block anchor in logic.dll) and
-    // a game.dll hook (selection or ammunition) to be installed; a scenario
-    // that omits those is checked for rollback instead.
-    let compare = ![
-        "without-selection",
-        "fail-selection",
-        "without-core",
-        "unknown-build",
-        "shared-helper-corrupt",
-    ]
-    .contains(&scenario)
-        && !omitted(scenario).contains(&1);
+    // Every installed feature's writes must be exactly its units' writes, and
+    // each unit's code exactly its blob linked where Core put it; everything
+    // else in the modules is stock.
+    let installed = |feature: u32| {
+        !omitted(scenario).contains(&feature)
+            && !failed.contains(&(feature as i32))
+            && !skipped(scenario).contains(&feature)
+    };
+    let compare = !failed.contains(&0) && !skipped(scenario).contains(&0);
     if compare {
         let actual: Vec<_> = targets
             .iter()
             .map(|t| snapshot(t.base as usize, t.size))
             .collect();
-        let pickup_target = reached(&actual[0], p.call_site, targets[0].base as usize);
-        let new_logic = if rust_pickup {
-            let anchor = p
-                .detours
-                .iter()
-                .find(|h| {
-                    h.feature == 2 && !native_functions.iter().any(|(_, n)| n.entry == h.entry)
-                })
-                .expect("selection adapter anchor");
-            let base = reached(&actual[0], anchor.rva, targets[0].base as usize) - anchor.entry;
-            assert_ne!(
-                pickup_target, base,
-                "Rust pickup must replace the assembly chooser"
-            );
-            unsafe { exercise_rust_pickup(pickup_target) };
-            base
-        } else {
-            pickup_target
-        };
-        let new_game =
-            reached(&actual[1], g.hooks[0].rva, targets[1].base as usize) - g.hooks[0].entry;
-        let delta = new_logic as isize - old_logic as isize;
-        shift(
-            &mut expected[0],
-            p.call_site,
-            pickup_target as isize - old_logic as isize,
-        );
-        shift(&mut expected[0], p.move_call_site, delta);
-        for h in &p.detours {
-            shift(&mut expected[0], h.rva, delta);
-        }
-        for &(name, hook) in &native_functions {
-            if !omitted(scenario).contains(&hook.feature) {
-                let target = reached(&actual[0], hook.rva, targets[0].base as usize);
+        let mut expected = originals.clone();
+        // The trace ring every importing unit reaches must be one and the same.
+        let mut ring: Option<usize> = None;
+        for (u, blob) in &units {
+            if u.plugin == "core" || !installed(owner(u)) {
+                continue;
+            }
+            let i = module_index(u);
+            let base = targets[i].base as usize;
+            let native = |rva: usize| native_functions.iter().find(|n| n.2 == rva);
+            // Where Core put the unit, from a branch into it that nothing
+            // replaced; every such branch must agree.
+            let mut at: Option<usize> = None;
+            for w in u.writes.iter().filter(|w| w.kind != Kind::Edit) {
+                if native(w.rva).is_some() || (owner(u) == 1 && rust_pickup) {
+                    continue;
+                }
+                let here = reached(&actual[i], w.rva, base) - w.entry;
+                assert_eq!(
+                    *at.get_or_insert(here),
+                    here,
+                    "{}: branches disagree",
+                    u.name
+                );
+            }
+            if owner(u) == 1 && rust_pickup {
+                // The Rust chooser replaces the assembly one at its call.
+                let target = reached(&actual[0], pickup_call, base);
+                unsafe { exercise_rust_pickup(target) };
+                let mut after = vec![0xe8];
+                after.extend_from_slice(
+                    &i32::try_from(target as isize - (base + pickup_call + 5) as isize)
+                        .unwrap()
+                        .to_le_bytes(),
+                );
+                expected[0][pickup_call..pickup_call + 5].copy_from_slice(&after);
+                continue;
+            }
+            let at = at.unwrap_or_else(|| panic!("{}: no branch reaches it", u.name));
+            for (address, _, after) in u.placed(base, at).unwrap() {
+                let rva = address - base;
+                if native(rva).is_some() {
+                    continue;
+                }
+                expected[i][rva..rva + after.len()].copy_from_slice(&after);
+            }
+            for &(name, _, rva, length) in native_functions.iter().filter(|n| n.1 == u.name) {
+                let target = reached(&actual[0], rva, base);
                 assert_ne!(
                     target,
-                    new_logic + hook.entry,
+                    at + u.writes.iter().find(|w| w.rva == rva).unwrap().entry,
                     "{name} still targets assembly"
                 );
-                if hook.displaced.len() >= 14 {
+                let branch = if length >= 14 {
                     let mut branch = vec![0xff, 0x25, 0, 0, 0, 0];
                     branch.extend_from_slice(&(target as u64).to_le_bytes());
-                    branch.resize(hook.displaced.len(), 0x90);
-                    expected[0][hook.rva..hook.rva + branch.len()].copy_from_slice(&branch);
+                    branch
                 } else {
-                    shift(
-                        &mut expected[0],
-                        hook.rva,
-                        target as isize - (new_logic + hook.entry) as isize,
+                    let mut branch = vec![0xe9];
+                    branch.extend_from_slice(
+                        &i32::try_from(target as isize - (base + rva + 5) as isize)
+                            .unwrap()
+                            .to_le_bytes(),
                     );
-                }
+                    branch
+                };
+                let mut span = branch;
+                span.resize(length, 0x90);
+                expected[0][rva..rva + length].copy_from_slice(&span);
                 if name == "firing_ui" || name == "is_selected" {
                     let query: unsafe extern "C" fn(*mut c_void) -> u8 =
                         unsafe { core::mem::transmute(target) };
                     assert_eq!(unsafe { query(core::ptr::null_mut()) }, 0);
                 }
+            }
+            // The unit's code, linked where it is. Its cells are data: Core
+            // fills some, and the code writes others.
+            let code = snapshot(at, u.unit_bytes);
+            for fixup in &u.fixups {
+                if let Fixup::Cell { offset, end, .. } = fixup {
+                    let disp = i32::from_le_bytes(code[*offset..offset + 4].try_into().unwrap());
+                    let here = (at + end) as isize + disp as isize;
+                    assert_eq!(
+                        *ring.get_or_insert(here as usize),
+                        here as usize,
+                        "{}: a second trace ring",
+                        u.name
+                    );
+                }
+            }
+            let mut linked = u
+                .link(blob, base, at, &|_| ring, &|dll, name| {
+                    defiance_core::apply::resolve_export(dll, name).map(|a| a as usize)
+                })
+                .unwrap();
+            let mut code = code;
+            for cell in &u.cells {
+                let span = cell.offset..cell.offset + cell.bytes;
+                linked[span.clone()].fill(0);
+                code[span].fill(0);
+            }
+            assert!(
+                code == linked,
+                "{}: its code differs from its linked blob at +{:#x}",
+                u.name,
+                code.iter()
+                    .zip(&linked)
+                    .position(|(a, b)| a != b)
+                    .unwrap_or(0)
+            );
+            if u.name == "selection-logic" {
+                // Core fills the preview's material callback and the marquee's
+                // key test before the hooks that read them.
+                let cell = |name: &str| u.cell(name).unwrap().offset;
+                assert_ne!(
+                    snapshot(at + cell("preview_dim"), 8),
+                    [0; 8],
+                    "the preview callback is written"
+                );
+                assert_ne!(
+                    snapshot(at + cell("marquee"), 8),
+                    [0; 8],
+                    "the marquee's key test is written"
+                );
             }
         }
         // Execute the production setter/getter pairs through the installed
@@ -578,12 +649,12 @@ fn main() {
             (2, "setter", "is_selected", 0x40, Some(0x18), 0x30),
             (5, "firing_set", "firing_ui", 0x300, None, 0x228),
         ] {
-            if omitted(scenario).contains(&feature) {
+            if !installed(feature) {
                 continue;
             }
             let address = |name| {
-                let (_, hook) = native_functions.iter().find(|(n, _)| *n == name).unwrap();
-                reached(&actual[0], hook.rva, targets[0].base as usize)
+                let n = native_functions.iter().find(|n| n.0 == name).unwrap();
+                reached(&actual[0], n.2, targets[0].base as usize)
             };
             let set: unsafe extern "C" fn(*mut c_void, u8) =
                 unsafe { core::mem::transmute(address(setter)) };
@@ -615,66 +686,18 @@ fn main() {
                 );
             }
         }
-        for c in &p.pose_calls {
-            shift(&mut expected[0], c.rva, delta);
-        }
-        for h in &g.hooks {
-            shift(
-                &mut expected[1],
-                h.rva,
-                new_game as isize - old_game as isize,
-            );
-        }
-        // Restore every write a not-installed feature would have made, so the
-        // rest of the module can be compared byte for byte.
-        for feature in omitted(scenario) {
-            for (rva, len) in p
-                .detours
-                .iter()
-                .filter(|h| h.feature == feature)
-                .map(|h| (h.rva, h.displaced.len()))
-                .chain(
-                    p.pose_calls
-                        .iter()
-                        .filter(|c| c.feature == feature)
-                        .map(|c| (c.rva, c.before.len())),
-                )
-            {
-                expected[0][rva..rva + len].copy_from_slice(&originals[0][rva..rva + len]);
-            }
-            for h in g.hooks.iter().filter(|h| h.feature == feature) {
-                expected[1][h.rva..h.rva + h.displaced.len()]
-                    .copy_from_slice(&originals[1][h.rva..h.rva + h.displaced.len()]);
-            }
-            if feature == 1 && !p.call_before.is_empty() {
-                let (rva, len) = (p.call_site, p.call_before.len());
-                expected[0][rva..rva + len].copy_from_slice(&originals[0][rva..rva + len]);
-            }
-            if feature == 3 && !p.move_displaced.is_empty() {
-                let (rva, len) = (p.move_call_site, p.move_displaced.len());
-                expected[0][rva..rva + len].copy_from_slice(&originals[0][rva..rva + len]);
-            }
-            if feature == 2 {
-                for (rva, before) in [
-                    (p.select_is_rva, &p.select_is_before),
-                    (p.select_squad_rva, &p.select_squad_before),
-                    (p.select_toggle_rva, &p.select_toggle_before),
-                    (p.select_type_rva, &p.select_type_before),
-                ] {
-                    if !before.is_empty() {
-                        expected[0][rva..rva + before.len()]
-                            .copy_from_slice(&originals[0][rva..rva + before.len()]);
-                    }
-                }
-            }
-        }
         // Core hooks game functions in Rust whenever it initializes: the lobby
         // connection (the multiplayer guard) and the tactical state's
         // constructor and destructor (mission reports for hot reload). These are
         // the game.dll writes no feature owns. Each is found in the original
         // image, since the hook has changed the loaded one.
+        let core_game = &raw_units
+            .iter()
+            .find(|(u, _)| u.name == "core-game")
+            .unwrap()
+            .0;
         let core_site = |name: &str| {
-            let site = parsed_game
+            let site = core_game
                 .sites
                 .iter()
                 .find(|site| site.name == name)
@@ -718,8 +741,7 @@ fn main() {
             let size = usize::from_le_bytes(out[0x20..0x28].try_into().unwrap());
             assert!(size > 15, "with the message, on the game's heap");
         }
-        // The disabled ammunition site stays corrupted in memory; expected
-        // carries the same byte so the rest of the comparison is meaningful.
+        // A corrupted byte stays corrupted in memory; expected carries it too.
         if let Some((at, byte)) = corrupted {
             expected[0][at] = byte ^ 0xff;
         }
@@ -730,92 +752,14 @@ fn main() {
                 actual[i].iter().zip(&expected[i]).position(|(a, b)| a != b)
             );
         }
-        // A partial configuration leaves the disabled feature's block slots
-        // unresolved on purpose, so only the module bytes above are compared;
-        // reachable code and selected writes already matched.
-        let partial_block = (scenario == "disabled-ammo-corrupt"
-            || scenario == "enabled-ammo-corrupt")
-            && relocated;
-        for fix in &p.rel_fixups {
-            let old = i32::from_le_bytes(old_code[fix.offset..fix.offset + 4].try_into().unwrap());
-            old_code[fix.offset..fix.offset + 4]
-                .copy_from_slice(&i32::try_from(old as isize - delta).unwrap().to_le_bytes());
-        }
-        // Core fills the preview's material callback cell with the selection
-        // feature; the injector leaves it zero.
-        let cell = p.preview_dim_cell..p.preview_dim_cell + 8;
-        let callback = snapshot(new_logic + cell.start, 8);
-        if !failed.contains(&2)
-            && !skipped(scenario).contains(&2)
-            && !omitted(scenario).contains(&2)
-        {
-            assert_ne!(callback, [0; 8], "the preview callback is written");
-        }
-        old_code[cell].copy_from_slice(&callback);
-        // And the marquee's cell: GetAsyncKeyState and the mode.
-        let cell = p.marquee_cell..p.marquee_cell + 16;
-        let marquee = snapshot(new_logic + cell.start, 16);
-        if !failed.contains(&2)
-            && !skipped(scenario).contains(&2)
-            && !omitted(scenario).contains(&2)
-        {
-            assert_ne!(marquee[..8], [0; 8], "the marquee's key test is written");
-        }
-        old_code[cell].copy_from_slice(&marquee);
-        if partial_block {
-            // Every differing block byte must lie in a disabled feature's fixup
-            // slot: the enabled reachable code and its fixups are unchanged.
-            let actual_block = snapshot(new_logic, payload.len());
-            let disabled_slots: Vec<usize> = p
-                .rel_fixups
-                .iter()
-                .filter(|fix| fix.feature == 6)
-                .flat_map(|fix| fix.offset..fix.offset + 4)
-                .collect();
-            for (off, (a, b)) in actual_block.iter().zip(&old_code).enumerate() {
-                if a != b {
-                    assert!(
-                        disabled_slots.contains(&off),
-                        "enabled logic block byte at +{off:#x} differs"
-                    );
-                }
-            }
-            let actual_game = snapshot(new_game, game_payload.len());
-            let disabled_game: Vec<usize> = g
-                .fixups
-                .iter()
-                .filter(|fix| fix.feature == 6)
-                .flat_map(|fix| fix.offset..fix.offset + 8)
-                .collect();
-            for (off, (a, b)) in actual_game.iter().zip(&old_game_code).enumerate() {
-                if a != b {
-                    assert!(
-                        disabled_game.contains(&off),
-                        "enabled game block byte at +{off:#x} differs"
-                    );
-                }
-            }
-            println!("  partial configuration: only inactive slots differ; enabled code and fixups match");
-        } else {
-            assert_eq!(
-                snapshot(new_logic, payload.len()),
-                old_code,
-                "logic payload"
-            );
-            assert_eq!(
-                snapshot(new_game, game_payload.len()),
-                old_game_code,
-                "game payload"
-            );
-        }
     }
     if omitted(scenario).contains(&1) {
-        let mut original = originals[0][p.call_site..p.call_site + 5].to_vec();
+        let mut original = originals[0][pickup_call..pickup_call + 5].to_vec();
         if scenario == "rust-changed-pickup" {
             original[0] ^= 0xff;
         }
         assert_eq!(
-            snapshot(targets[0].base as usize + p.call_site, 5),
+            snapshot(targets[0].base as usize + pickup_call, 5),
             original,
             "disabled/refused pickup must not alter its call site"
         );
@@ -865,5 +809,7 @@ fn main() {
             "rollback restores stock module"
         );
     }
-    println!("PASS {scenario}: actual plugin DLLs and complete rollback; byte parity checked where features initialize");
+    println!(
+        "PASS {scenario}: actual plugin DLLs, their units' writes and code, and complete rollback"
+    );
 }

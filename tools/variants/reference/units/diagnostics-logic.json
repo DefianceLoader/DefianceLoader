@@ -1,0 +1,155 @@
+{
+ "unit_schema": 1,
+ "name": "diagnostics-logic",
+ "plugin": "diagnostics",
+ "module": "logic.dll",
+ "source_sha256": "17ef48350153306e210e14a24b0ad398c56fb99d3d46c88f246df260ade85780",
+ "unit_bytes": 867,
+ "code_offset": 512,
+ "cells": [
+  {
+   "name": "census",
+   "offset": 0,
+   "bytes": 512
+  }
+ ],
+ "writes": [
+  {
+   "kind": "jmp",
+   "rva": 4295856,
+   "before": "40534881ecc0000000",
+   "tail": "90909090",
+   "entry": 512,
+   "label": "select_trace"
+  },
+  {
+   "kind": "jmp",
+   "rva": 4296512,
+   "before": "48895c2408",
+   "tail": "",
+   "entry": 587,
+   "label": "toggle_trace"
+  },
+  {
+   "kind": "jmp",
+   "rva": 4297552,
+   "before": "4883ec28488b02",
+   "tail": "9090",
+   "entry": 656,
+   "label": "deselect_trace"
+  },
+  {
+   "kind": "jmp",
+   "rva": 4297968,
+   "before": "48895c2408",
+   "tail": "",
+   "entry": 727,
+   "label": "clear_trace"
+  },
+  {
+   "kind": "jmp",
+   "rva": 4419376,
+   "before": "8b8100020000c3",
+   "tail": "9090",
+   "entry": 816,
+   "label": "census_behaviour"
+  }
+ ],
+ "fixups": [
+  {
+   "kind": "cell",
+   "offset": 527,
+   "end": 531,
+   "cell": "trace_ring"
+  },
+  {
+   "kind": "cell",
+   "offset": 594,
+   "end": 598,
+   "cell": "trace_ring"
+  },
+  {
+   "kind": "cell",
+   "offset": 663,
+   "end": 667,
+   "cell": "trace_ring"
+  },
+  {
+   "kind": "cell",
+   "offset": 734,
+   "end": 738,
+   "cell": "trace_ring"
+  },
+  {
+   "kind": "abs64",
+   "target": 4295865,
+   "offset": 576
+  },
+  {
+   "kind": "abs64",
+   "target": 4296517,
+   "offset": 645
+  },
+  {
+   "kind": "abs64",
+   "target": 4297559,
+   "offset": 716
+  },
+  {
+   "kind": "abs64",
+   "target": 4297973,
+   "offset": 790
+  }
+ ],
+ "natives": [],
+ "anchors": [],
+ "sites": [
+  {
+   "site_name": "select_trace",
+   "site_start": 4295856,
+   "site_group": 4295856,
+   "site_pattern": "40534881ecc0000000488bda4885d20f84????????488b02",
+   "site_offset": 0
+  },
+  {
+   "site_name": "toggle_trace",
+   "site_start": 4296512,
+   "site_group": 4296512,
+   "site_pattern": "48895c24084889542410574883ec40488bda488bf9488b02",
+   "site_offset": 0
+  },
+  {
+   "site_name": "deselect_trace",
+   "site_start": 4297552,
+   "site_group": 4297552,
+   "site_pattern": "4883ec28488b02488bcaff90b0000000488b48504885c9740d",
+   "site_offset": 0
+  },
+  {
+   "site_name": "clear_trace",
+   "site_start": 4297968,
+   "site_group": 4297968,
+   "site_pattern": "48895c2408574883ec20488b7930488b5928483bdf742f660f1f840000000000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "census_behaviour",
+   "site_start": 4419376,
+   "site_group": 4419376,
+   "site_pattern": "8b8100020000c3cccccccccccccccccc8b8104020000c3cc",
+   "site_offset": 0
+  }
+ ],
+ "verified_sha": "d320f848508c45c9f04df235204b5fbc9ffbb1b7f869e4c5a58d80bb2ecc10ed",
+ "labels": {
+  "select_trace": 512,
+  "toggle_trace": 587,
+  "deselect_trace": 656,
+  "clear_trace": 727,
+  "census_behaviour": 816,
+  "census_scan": 832,
+  "census_new": 853,
+  "census_hit": 856,
+  "census_answer": 860
+ }
+}

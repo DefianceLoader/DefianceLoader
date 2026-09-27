@@ -95,6 +95,25 @@ pub fn owned_code(owner: usize) -> Vec<(usize, usize)> {
     out
 }
 
+/// Test host only: every installed hook and byte patch as (owner name,
+/// target, bytes written, kind label).
+#[cfg(feature = "test-host")]
+pub fn installed() -> Vec<(String, usize, usize, &'static str)> {
+    INSTALLED
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .map(|hook| {
+            (
+                hook.owner_name.clone(),
+                hook.target,
+                hook.original.len(),
+                hook.kind.label(),
+            )
+        })
+        .collect()
+}
+
 /// The plugin whose `init` is running on this thread.
 #[derive(Clone)]
 struct Owner {
@@ -127,6 +146,36 @@ pub fn end_plugin() {
 fn overlaps(hook: &Installed, target: usize, length: usize) -> bool {
     target < hook.target.saturating_add(hook.original.len())
         && hook.target < target.saturating_add(length)
+}
+
+/// Whether any installed hook or byte patch overlaps `length` bytes at `start`.
+pub fn written_within(start: usize, length: usize) -> bool {
+    INSTALLED
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .any(|hook| overlaps(hook, start, length))
+}
+
+/// Put back into `bytes`, a copy of memory at `start`, the original bytes of
+/// every installed hook and byte patch it overlaps, so it reads as memory did
+/// before any plugin wrote through the loader. Returns whether any overlapped.
+/// Writes a plugin makes without the loader are not seen.
+pub fn put_back_originals(start: usize, bytes: &mut [u8]) -> bool {
+    let installed = INSTALLED.lock().unwrap_or_else(|p| p.into_inner());
+    let length = bytes.len();
+    let mut any = false;
+    for hook in installed
+        .iter()
+        .filter(|hook| overlaps(hook, start, length))
+    {
+        let from = hook.target.max(start);
+        let to = (hook.target + hook.original.len()).min(start + bytes.len());
+        bytes[from - start..to - start]
+            .copy_from_slice(&hook.original[from - hook.target..to - hook.target]);
+        any = true;
+    }
+    any
 }
 
 /// The plugin charged with a new hook, or why the call is not supported.
@@ -944,6 +993,29 @@ mod tests {
         assert_eq!(info.protect, 0x20);
         assert_eq!(remove_owned(52), 1);
         assert_eq!(unsafe { read(page, 6) }, original);
+        unsafe { win::VirtualFree(page.cast(), 0, win::MEM_RELEASE) };
+    }
+
+    #[test]
+    fn originals_are_put_back_where_a_copy_overlaps_a_write() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let page = code_page();
+        let original = unsafe { read(page, 16) };
+        let replacement = [0xb8, 7, 0, 0, 0, 0xc3];
+        begin_plugin(54, "byte patcher");
+        unsafe { patch_bytes(page.add(4).cast(), &original[4..10], &replacement) }.unwrap();
+        end_plugin();
+        let mut whole = unsafe { read(page, 16) };
+        assert_ne!(whole, original);
+        assert!(put_back_originals(page as usize, &mut whole));
+        assert_eq!(whole, original);
+        // A copy covering only part of the write gets only that part back.
+        let mut tail = unsafe { read(page.add(8), 8) };
+        assert!(put_back_originals(page as usize + 8, &mut tail));
+        assert_eq!(tail, original[8..]);
+        let mut before = unsafe { read(page, 4) };
+        assert!(!put_back_originals(page as usize, &mut before));
+        assert_eq!(remove_owned(54), 1);
         unsafe { win::VirtualFree(page.cast(), 0, win::MEM_RELEASE) };
     }
     // Explicit address windows make the distant-detour cases independent of

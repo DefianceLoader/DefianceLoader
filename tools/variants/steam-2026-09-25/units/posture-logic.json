@@ -1,0 +1,277 @@
+{
+ "unit_schema": 1,
+ "name": "posture-logic",
+ "plugin": "posture",
+ "module": "logic.dll",
+ "source_sha256": "adb3ad95926036809b4e554b466bef33d4ac7aa5303e59a9e4a940890bc334b5",
+ "unit_bytes": 1248,
+ "code_offset": 0,
+ "cells": [],
+ "writes": [
+  {
+   "kind": "call",
+   "rva": 885686,
+   "before": "0fb6a99e020000",
+   "tail": "9090",
+   "stock": 0,
+   "entry": 137,
+   "label": "move_posture"
+  },
+  {
+   "kind": "call",
+   "rva": 892489,
+   "before": "0fb6a99e020000",
+   "tail": "9090",
+   "stock": 0,
+   "entry": 137,
+   "label": "move_posture"
+  },
+  {
+   "kind": "call",
+   "rva": 1144179,
+   "before": "e96849ffffcc",
+   "tail": "c3",
+   "stock": 1097440,
+   "entry": 1162,
+   "label": "pose_down_direct"
+  },
+  {
+   "kind": "call",
+   "rva": 1144195,
+   "before": "e9b84affffcc",
+   "tail": "c3",
+   "stock": 1097792,
+   "entry": 1189,
+   "label": "pose_up_direct"
+  },
+  {
+   "kind": "jmp",
+   "rva": 1150304,
+   "before": "40534883ec20",
+   "tail": "90",
+   "entry": 336,
+   "label": "prone_query"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2876208,
+   "before": "40534883ec20",
+   "tail": "90",
+   "entry": 35,
+   "label": "lie_down_gate"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2876304,
+   "before": "40534883ec20",
+   "tail": "90",
+   "entry": 0,
+   "label": "stand_up_gate"
+  },
+  {
+   "kind": "call",
+   "rva": 3333225,
+   "before": "e872e2ddff",
+   "tail": "",
+   "stock": 1097440,
+   "entry": 1120,
+   "label": "pose_down"
+  },
+  {
+   "kind": "call",
+   "rva": 3333232,
+   "before": "e8cbe3ddff",
+   "tail": "",
+   "stock": 1097792,
+   "entry": 1141,
+   "label": "pose_up"
+  },
+  {
+   "kind": "call",
+   "rva": 4526341,
+   "before": "48837b2800",
+   "tail": "",
+   "stock": 0,
+   "entry": 248,
+   "label": "move_posture_end"
+  },
+  {
+   "kind": "call",
+   "rva": 4526385,
+   "before": "33d2488bcb",
+   "tail": "",
+   "stock": 0,
+   "entry": 302,
+   "label": "squad_stand_end"
+  }
+ ],
+ "fixups": [
+  {
+   "kind": "rel32",
+   "offset": 31,
+   "target": 2876310
+  },
+  {
+   "kind": "rel32",
+   "offset": 66,
+   "target": 2876214
+  },
+  {
+   "kind": "rel32",
+   "offset": 648,
+   "target": 1150310
+  },
+  {
+   "kind": "cell",
+   "offset": 1219,
+   "end": 1223,
+   "cell": "trace_ring"
+  },
+  {
+   "kind": "delta",
+   "offset": 1127,
+   "from": 3333230,
+   "to": 1097440
+  },
+  {
+   "kind": "delta",
+   "offset": 1148,
+   "from": 3333237,
+   "to": 1097792
+  },
+  {
+   "kind": "delta",
+   "offset": 1169,
+   "from": 1144184,
+   "to": 1097440
+  },
+  {
+   "kind": "delta",
+   "offset": 1196,
+   "from": 1144200,
+   "to": 1097792
+  }
+ ],
+ "natives": [],
+ "anchors": [],
+ "sites": [
+  {
+   "site_name": "lie_down_gate",
+   "site_start": 2876208,
+   "site_group": 2876208,
+   "site_pattern": "40534883ec70488b49104885c97409488b49104885c97502",
+   "site_offset": 0
+  },
+  {
+   "site_name": "stand_up_gate",
+   "site_start": 2876304,
+   "site_group": 2876304,
+   "site_pattern": "40534883ec60488b49104885c97409488b49104885c97502",
+   "site_offset": 0
+  },
+  {
+   "site_name": "prone_query",
+   "site_start": 1150304,
+   "site_group": 1150304,
+   "site_pattern": "40534883ec20488bda4885d2746d488b02488bcbba10000000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "pose_down",
+   "site_start": 3333225,
+   "site_group": 3333072,
+   "site_pattern": "e8????????eb05e8????????488b4c24404883c10448894c2440",
+   "site_offset": 0
+  },
+  {
+   "site_name": "pose_up",
+   "site_start": 3333232,
+   "site_group": 3333072,
+   "site_pattern": "e8????????488b4c24404883c10448894c2440483b4c2448",
+   "site_offset": 0
+  },
+  {
+   "site_name": "pose_down_direct",
+   "site_start": 1144179,
+   "site_group": 1144179,
+   "site_pattern": "e9????????cccccccccccccccc488bcae9????????ccccccccccccccccf30f105c2428",
+   "site_offset": 0
+  },
+  {
+   "site_name": "pose_up_direct",
+   "site_start": 1144195,
+   "site_group": 1144195,
+   "site_pattern": "e9????????ccccccccccccccccf30f105c2428498bc0488bca",
+   "site_offset": 0
+  },
+  {
+   "site_name": "move_posture_1",
+   "site_start": 885686,
+   "site_group": 884576,
+   "site_pattern": "0fb6a99e020000488b4e204885c97409488b49104885c97503488bcf488b01ba00020000ff507084c075734084ed746e488b4e104885c97414488b49104885c9740b488b01ff5050488bc8eb03488bcf488b01ff90b0000000488b48204885c9746d83b97801000000746480b95001000000755b488b4e104885c97411488b49104885c97408488b01ff5050eb03488bc7488bc8e8????????83f8067431488b4e104885c97412488b49104885c97409488b01ff5050488bf8488bcfe8????????4885c07409488bc8e8????????90488b9c2480000000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "move_posture_2",
+   "site_start": 892489,
+   "site_group": 891664,
+   "site_pattern": "0fb6a99e020000488b4e204885c97409488b49104885c97503488bcf488b01ba00020000ff507084c075734084ed746e488b4e104885c97414488b49104885c9740b488b01ff5050488bc8eb03488bcf488b01ff90b0000000488b48204885c9746d83b97801000000746480b95001000000755b488b4e104885c97411488b49104885c97408488b01ff5050eb03488bc7488bc8e8????????83f8067431488b4e104885c97412488b49104885c97409488b01ff5050488bf8488bcfe8????????4885c07409488bc8e8????????90498b0e",
+   "site_offset": 0
+  },
+  {
+   "site_name": "squad_stand_1",
+   "site_start": 4526341,
+   "site_group": 4526307,
+   "site_pattern": "48837b28000f85????????837b7801c74374010000000f84????????4c8b8b980000004c8d442420",
+   "site_offset": 0
+  },
+  {
+   "site_name": "squad_mode_1",
+   "site_start": 4526385,
+   "site_group": 4526307,
+   "site_pattern": "33d2488bcbe8????????4983c6084c3bf50f85????????0f28742470",
+   "site_offset": 0
+  }
+ ],
+ "verified_sha": "",
+ "labels": {
+  "stand_up_gate": 0,
+  "stand_up_resume": 25,
+  "lie_down_gate": 35,
+  "lie_down_resume": 60,
+  "gate_refuse": 70,
+  "pin_of": 71,
+  "pin_none": 132,
+  "move_posture": 137,
+  "pin_end": 137,
+  "posture_done": 232,
+  "move_posture_end": 248,
+  "squad_stand_gate": 248,
+  "stand_pinned": 282,
+  "stand_answer": 285,
+  "squad_stand_end": 302,
+  "squad_stand_mode": 302,
+  "squad_mode_end": 329,
+  "prone_query": 336,
+  "next": 486,
+  "judged": 557,
+  "ask": 567,
+  "decide": 616,
+  "answer": 622,
+  "stock_prone": 642,
+  "pose": 656,
+  "count": 798,
+  "order": 919,
+  "pin": 1008,
+  "pinned": 1017,
+  "unpin": 1033,
+  "unpin_next": 1036,
+  "whole": 1097,
+  "done": 1103,
+  "pose_down": 1120,
+  "pose_up": 1141,
+  "pose_down_direct": 1162,
+  "pose_up_direct": 1189,
+  "pose_record": 1216
+ }
+}

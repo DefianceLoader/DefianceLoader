@@ -236,7 +236,7 @@ pub fn run() {
 
     let result = run_plan(
         &plan,
-        |node, index, mask| load(node, api, index, mask),
+        |node, index| load(node, api, index),
         crate::multiplayer::guarded,
     );
     for (node, state) in plan.nodes.iter().zip(&result.states) {
@@ -315,7 +315,7 @@ impl StartupResult {
 #[cfg(test)]
 fn execute_plan(
     plan: &crate::plan::Plan,
-    initialize: impl FnMut(&Planned, usize, u64) -> Result<(), LoadFailure>,
+    initialize: impl FnMut(&Planned, usize) -> Result<(), LoadFailure>,
 ) -> StartupResult {
     run_plan(plan, initialize, || true)
 }
@@ -325,7 +325,7 @@ fn execute_plan(
 /// orders every such plugin after Core, which installs it.
 fn run_plan(
     plan: &crate::plan::Plan,
-    mut initialize: impl FnMut(&Planned, usize, u64) -> Result<(), LoadFailure>,
+    mut initialize: impl FnMut(&Planned, usize) -> Result<(), LoadFailure>,
     guarded: impl Fn() -> bool,
 ) -> StartupResult {
     let mut result = StartupResult {
@@ -342,7 +342,6 @@ fn run_plan(
         degraded: false,
     };
     let mut active = BTreeSet::new();
-    let mask = plan.feature_mask();
     for &index in &plan.order {
         let node = &plan.nodes[index];
         if result.degraded {
@@ -367,7 +366,7 @@ fn run_plan(
             );
             continue;
         }
-        match initialize(node, index, mask) {
+        match initialize(node, index) {
             Ok(()) => {
                 active.insert(node.id.to_ascii_lowercase());
                 result.states[index] = RunState::Active;
@@ -407,6 +406,11 @@ pub fn test_plugins(exe_dir: &std::path::Path) -> Vec<(String, String)> {
 #[cfg(feature = "test-host")]
 static TEST_API: std::sync::OnceLock<&'static Api> = std::sync::OnceLock::new();
 
+/// The IDs the last [`test_load`] planned to initialize, in order, including
+/// any whose `init` then failed.
+#[cfg(feature = "test-host")]
+pub static TEST_ORDER: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
 /// Startup as the host runs it, without waiting for game modules, leaving the
 /// plugins loaded.
 #[cfg(feature = "test-host")]
@@ -415,11 +419,16 @@ pub fn test_load(exe_dir: &std::path::Path) -> Vec<(String, String)> {
     let config = crate::config::load();
     crate::lifecycle::clean_cache(&config.paths.root.join("cache").join("plugins"));
     let plan = crate::plan::plan(config.catalog.entries.clone(), config);
+    *TEST_ORDER.lock().unwrap() = plan
+        .order
+        .iter()
+        .map(|&index| plan.nodes[index].id.clone())
+        .collect();
     let api: &'static Api =
         TEST_API.get_or_init(|| Box::leak(Box::new(crate::resolve::build_api())));
     let result = run_plan(
         &plan,
-        |node, owner, mask| load(node, api, owner, mask),
+        |node, owner| load(node, api, owner),
         crate::multiplayer::guarded,
     );
     let active: Vec<bool> = result
@@ -451,6 +460,13 @@ pub fn test_add(id: &str) -> Result<(), String> {
 #[cfg(feature = "test-host")]
 pub fn test_remove(id: &str) -> Result<(), String> {
     crate::reload::remove(TEST_API.get().expect("test_load first"), id)
+}
+
+/// A plugin loaded again for changed settings, as the watcher does it.
+#[cfg(feature = "test-host")]
+pub fn test_resettle(id: &str) -> Result<(), String> {
+    let api = TEST_API.get().expect("test_load first");
+    crate::reload::resettle(api, id)
 }
 
 /// A plugin switched on or off, as the watcher does it.
@@ -546,14 +562,14 @@ mod startup_tests {
         )
         .unwrap();
         let plan = f.plan();
-        let result = run_plan(&plan, |_, _, _| Ok(()), || false);
+        let result = run_plan(&plan, |_, _| Ok(()), || false);
         assert_eq!(*state(&plan, &result, "display"), RunState::Active);
         assert!(
             matches!(state(&plan, &result, "gameplay"), RunState::Blocked(reason) if reason.contains("multiplayer guard")),
             "{:?}",
             state(&plan, &result, "gameplay")
         );
-        let result = run_plan(&plan, |_, _, _| Ok(()), || true);
+        let result = run_plan(&plan, |_, _| Ok(()), || true);
         assert_eq!(*state(&plan, &result, "gameplay"), RunState::Active);
     }
 
@@ -574,7 +590,7 @@ mod startup_tests {
         )
         .unwrap();
         let plan = f.plan();
-        let result = execute_plan(&plan, |node, _, _| {
+        let result = execute_plan(&plan, |node, _| {
             if node.id == "broken" {
                 Err(LoadFailure::plain("init returned 1"))
             } else {
@@ -610,7 +626,7 @@ mod startup_tests {
         f.plugin("c", &["a"], &[], ABI_VERSION);
         f.plugin("d", &["c"], &[], ABI_VERSION);
         let plan = f.plan();
-        let result = execute_plan(&plan, |_, _, _| panic!("blocked DLL loaded"));
+        let result = execute_plan(&plan, |_, _| panic!("blocked DLL loaded"));
         for id in ["a", "b"] {
             assert!(
                 matches!(state(&plan, &result, id), RunState::Blocked(reason) if reason.contains("cycle")),
@@ -634,7 +650,7 @@ mod startup_tests {
             f.plugin("a", &[], if reverse { &[] } else { &["b"] }, ABI_VERSION);
             f.plugin("b", &[], if reverse { &["a"] } else { &[] }, ABI_VERSION);
             let plan = f.plan();
-            let result = execute_plan(&plan, |_, _, _| panic!("conflicting DLL loaded"));
+            let result = execute_plan(&plan, |_, _| panic!("conflicting DLL loaded"));
             for id in ["a", "b"] {
                 assert!(
                     matches!(state(&plan, &result, id), RunState::Blocked(reason) if reason.contains("declared conflict")),
@@ -655,7 +671,7 @@ mod startup_tests {
         assert!(
             matches!(&plan.nodes[0].decision, Decision::Blocked { reason } if reason.contains("ABI"))
         );
-        let result = execute_plan(&plan, |_, _, _| panic!("incompatible DLL loaded"));
+        let result = execute_plan(&plan, |_, _| panic!("incompatible DLL loaded"));
         assert!(
             matches!(state(&plan, &result, "a"), RunState::Blocked(reason) if reason.contains("ABI"))
         );
@@ -683,7 +699,7 @@ mod startup_tests {
             std::fs::write(dir.join("legacy.dll"), b"legacy fixture").unwrap();
             f.config(name, data.as_bytes());
             let plan = f.plan();
-            let result = execute_plan(&plan, |_, _, _| {
+            let result = execute_plan(&plan, |_, _| {
                 panic!("DLL loaded with invalid shared config")
             });
             for id in ["defiance.core", "legacy"] {
@@ -705,7 +721,7 @@ mod startup_tests {
         f.plugin("z", &[], &[], ABI_VERSION);
         let plan = f.plan();
         let mut called = Vec::new();
-        let result = execute_plan(&plan, |node, _, _| {
+        let result = execute_plan(&plan, |node, _| {
             called.push(node.id.clone());
             if node.id == "a" {
                 Err(LoadFailure::plain("init failed"))
@@ -736,7 +752,7 @@ mod startup_tests {
         }
         let plan = f.plan();
         let mut called = Vec::new();
-        let result = execute_plan(&plan, |node, _, _| {
+        let result = execute_plan(&plan, |node, _| {
             called.push(node.id.clone());
             if node.id == "b" {
                 Err(LoadFailure {

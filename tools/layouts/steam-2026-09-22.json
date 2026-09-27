@@ -3,6 +3,8 @@
   "game_decided": {
     "mov|rax|0x160": 352,
     "mov|rbx|0x118": 280,
+    "mov|rcx|0x128": 296,
+    "mov|rcx|0x130": 304,
     "mov|rcx|0x200": 512
   },
   "game_layout": {

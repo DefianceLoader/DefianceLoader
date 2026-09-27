@@ -46,14 +46,18 @@
 //! (`tools/package_unit_inspection.py`) replaces it with a greyscale copy of
 //! [`GREY_BAR`]'s size; the view records the loaded texture's size (`+0x38`,
 //! `+0x3c`), and a card showing any other texture keeps the game's colour.
-//! The expanded ammo menu checks `fillSlot`'s first bytes when it starts and
-//! then calls it for its combined view; it loads first (plugins start in ID
-//! order), and its combined cards are the player's own.
+//! The expanded ammo menu checks `fillSlot`'s first bytes as they were before
+//! any hook (the loader's `original` service), so either plugin may start
+//! first, and then calls it for its combined view, whose cards are the
+//! player's own.
 //!
-//! The panel offsets are the 2026 builds' (GOG 2026-09-14, Steam 2026-09-22);
+//! The panel offsets are the 2026 builds' (GOG 2026-09-14 and 2026-09-25, Steam
+//! 2026-09-22);
 //! the relation label's function differs in the 2025 builds, where the plugin
-//! finds nothing and changes nothing. Vehicles and buildings keep the game's
-//! panel. Not multiplayer-safe: the ally toggles change another player's squad.
+//! finds nothing and changes nothing. Vehicles and platforms need nothing of
+//! their own: the ammo refresh asks the same ownership question for any shown
+//! unit, and the click gate applies to them too. Not multiplayer-safe: the
+//! ally toggles change another player's units.
 use core::ffi::c_void;
 use defiance_api::{Api, Plugin, ABI_VERSION, LOG_INFO, LOG_WARN};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
@@ -251,6 +255,8 @@ static SQUAD_RESUME: AtomicUsize = AtomicUsize::new(0);
 static AMMO_RESUME: AtomicUsize = AtomicUsize::new(0);
 
 static LABEL_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
+/// The squad the squad sub-panel last revealed, for the label.
+static REVEALED_SQUAD: AtomicUsize = AtomicUsize::new(0);
 /// The shown-entity getter, as the click handler's call reached it.
 static SHOWN: AtomicUsize = AtomicUsize::new(0);
 static FILL_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
@@ -326,7 +332,9 @@ unsafe extern "C" fn squad_reveals(sub: usize) -> u8 {
     } else {
         unsafe { field(weak, WEAK_OBJECT) }
     };
-    reveal(settings(), unsafe { relation(logic, entity) }) as u8
+    let revealed = reveal(settings(), unsafe { relation(logic, entity) });
+    REVEALED_SQUAD.store(if revealed { entity } else { 0 }, Ordering::Relaxed);
+    revealed as u8
 }
 
 /// The ammo menu's owner said no: answer yes if `entity` is revealed.
@@ -393,17 +401,16 @@ unsafe extern "C" fn clicked_entity(menu: usize) -> usize {
     entity
 }
 
-/// The panel's relation label: hidden when the squad is revealed, since the
-/// commander's name then fills its line.
+/// The panel's relation label: hidden when the squad sub-panel has just
+/// revealed this squad, since the commander's name then fills its line. The
+/// panel's set-entity (`fn_366850`) calls the sub-panel's setter just before
+/// this; a vehicle's sub-panel is not revealed, so its label stays.
 unsafe extern "C" fn label(panel: usize, entity: usize) -> usize {
     let original: Label = unsafe { core::mem::transmute(LABEL_ORIGINAL.load(Ordering::Acquire)) };
     let result = unsafe { original(panel, entity) };
     let logic = unsafe { field(panel, PANEL_LOGIC) };
     LOGIC.store(logic, Ordering::Relaxed);
-    if entity != 0
-        && !unsafe { owned(entity) }
-        && reveal(settings(), unsafe { relation(logic, entity) })
-    {
+    if entity != 0 && REVEALED_SQUAD.load(Ordering::Relaxed) == entity {
         let widget = unsafe { field(panel, PANEL_LABEL) };
         if widget != 0 && unsafe { *((widget + WIDGET_VISIBLE) as *const u8) } != 0 {
             let show: unsafe extern "C" fn(usize, u8) = unsafe { method(widget, WIDGET_SHOW) };
@@ -791,6 +798,14 @@ mod tests {
         for bad in ["blue", "12abef", "#12abe", "#12abeg", ""] {
             assert_eq!(parse_colour(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn the_plugin_loads_only_at_startup() {
+        // Live unloading and reloading is untried in game; the docs list it
+        // among the plugins that need a restart.
+        let manifest = include_str!("../defiance_plugin_unit_inspection.plugin.json");
+        assert!(manifest.contains("\"hot_reload\": false"));
     }
 
     #[test]

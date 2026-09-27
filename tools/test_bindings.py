@@ -11,6 +11,7 @@ GENERATORS = {
     "tools/regroup_bindings.py": "plugins/regroup/src/bindings.rs",
     "tools/squad_scroll_bindings.py": "plugins/squad-management-scroll/src/sites.rs",
     "tools/ammo_menu_sites.py": "plugins/expanded-ammo-menu/src/sites.rs",
+    "tools/ability_groups_bindings.py": "plugins/ability-groups/src/sites.rs",
 }
 
 

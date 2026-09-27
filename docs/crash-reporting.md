@@ -29,9 +29,14 @@ Only the first captured event in a process is retained. If the game recovers,
 restart it before collecting another reproduction.
 
 Empty `.crash.txt` files are reserved at startup; their existence is not evidence
-of a crash. Normal runs leave session information but produce no dump. Files are
-not automatically deleted: old sessions/dumps can be removed when no longer
-needed, after the game exits. Keep a problematic session before testing again.
+of a crash. Normal runs leave session information but produce no dump. At each
+start the loader keeps the newest 10 runs that crashed and the newest 20 that
+did not, and deletes the rest; copy a problematic session elsewhere before
+testing again if you need it later.
+
+`defiance-loader.log` starts over at 8 MiB; the log before it is kept as
+`defiance-loader.previous.log`. A `.session.txt` stops at 8 MiB; later lines are
+only in the log.
 
 ## Reading a report
 
@@ -41,11 +46,10 @@ to access. They are often different. Module-relative offsets remain useful when
 Windows loads DLLs at different addresses.
 
 The helper maps the instruction to a DLL or a registered allocation. Patch and
-trampoline mappings name their installing plugin; Core payload mappings identify
-the shared block. Plugins map their own allocations through the loader's
-crash-ranges service ([plugin-api.md](plugin-api.md)); log lines never map one. `payload-entry` rows in the session provide named logic entry
-addresses or game entry feature IDs for disassembly. A shared block address does
-not by itself identify the responsible feature. Fault location is not proof of
+trampoline mappings name their installing plugin; Core's mappings name each
+built-in feature's patch unit (`selection-logic unit`). Plugins map their own allocations through the loader's
+crash-ranges service ([plugin-api.md](plugin-api.md)); log lines never map one. `payload-entry` rows in the session name each unit's entries
+and their addresses for disassembly. Fault location is not proof of
 who originally corrupted an object.
 
 Open the `.dmp` in WinDbg or Visual Studio, load matching symbols, and inspect the

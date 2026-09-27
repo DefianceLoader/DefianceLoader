@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-plugin-unit-inspection"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "defiance-api",
  "defiance-build-support",

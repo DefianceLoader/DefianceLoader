@@ -19,12 +19,12 @@ DESCRIPTOR = pathlib.Path("out/payload.json")
 # Loader/injector-only extension, up to the rotation cursor. The payload carries
 # no unwind blobs, so it may use the range the file patch keeps them in; the
 # legacy file patch deliberately does not install it.
-ORDER_OFFSET = 0x2b00
+ORDER_OFFSET = 0x2a00
 # The marquee's eligibility code (patch/region-individual.asm), in the same
 # range, and its cell just below the orders: GetAsyncKeyState, then the mode,
 # both written by Core when selection installs.
 REGION_OFFSET = 0x2800
-REGION_CELL = 0x2af0
+REGION_CELL = 0x29f0
 BUILDING_SELECT = (0x1d7ff0, bytes.fromhex("885130c3cc"), "building_select")
 REGION_ICON_GATE = (0x418128, bytes.fromhex("498b06498bce"), "region_icon_gate")
 REGION_CALLS = [(site, b"\xe8" + struct.pack("<i", 0x418000 - site - 5),
@@ -58,6 +58,12 @@ ORDER_CALLS = [
     (0xaac73, bytes.fromhex("e8e8a3fbff"), "building_capacity_enter", 9),
     (0x65736, bytes.fromhex("4c3bff7544"), "building_reserve_occupant", 9),
     (0x65355, bytes.fromhex("482bc8492bce"), "building_capacity_subtract", 9),
+    (0xfe823, bytes.fromhex("ff90e8000000"), "vehicle_capacity_enter", 9),
+    (0xfef63, bytes.fromhex("ff90e8000000"), "vehicle_capacity_arrive", 9),
+    (0xc653a, bytes.fromhex("ff90e8000000"), "vehicle_capacity_cursor", 9),
+    (0x47c93, bytes.fromhex("ff90e800000084c0745f2bf7785b"), "vehicle_capacity_command", 9),
+    (0xff289, bytes.fromhex("488bceffd5"), "vehicle_exit_seat", 9),
+    (0x1077b7, bytes.fromhex("ff9080000000"), "vehicle_exit_point", 9),
 ]
 
 
@@ -80,7 +86,7 @@ def main():
         REGION_OFFSET, b.CURSOR_OFFSET, REGION_CELL)
     code, labels = b.assemble(
         pathlib.Path("patch/pickup.asm").read_text().splitlines(), BASE, b.CURSOR_OFFSET)
-    move, _ = b.assemble(
+    move, move_labels = b.assemble(
         pathlib.Path("patch/move-filter.asm").read_text().splitlines(),
         BASE + b.MOVE_OFFSET, b.CURSOR_OFFSET)
     trace, trace_labels = b.assemble(
@@ -108,7 +114,7 @@ def main():
         pathlib.Path("patch/ammo-mode.asm").read_text().splitlines(),
         BASE + b.AMMO_OFFSET, b.TRACE_OFFSET, b.AMMO_SCRATCH)
     orders, order_labels = b.assemble(
-        pathlib.Path("patch/order-members.asm").read_text().splitlines(),
+        b.source("patch/order-attack.asm", "patch/order-garrison.asm"),
         BASE + ORDER_OFFSET, b.CURSOR_OFFSET)
     dim, dim_labels = b.assemble(
         pathlib.Path("patch/preview-dim.asm").read_text().splitlines(),
@@ -301,6 +307,13 @@ def main():
         pose_calls.append({"pose_site": site, "pose_before": b.SQUAD_STAND_READ.hex(),
                            "pose_entry": posture_labels["squad_stand_gate"],
                            "pose_tail": "", "pose_stock": 0})
+    # and its gait reset's arguments, set by squad_stand_mode
+    for site in b.SQUAD_MODE_SITES:
+        if img.read(site, len(b.SQUAD_MODE_READ)) != b.SQUAD_MODE_READ:
+            raise SystemExit(f"{site:#x} is not the expected gait reset in the squad's stand-up")
+        pose_calls.append({"pose_site": site, "pose_before": b.SQUAD_MODE_READ.hex(),
+                           "pose_entry": posture_labels["squad_stand_mode"],
+                           "pose_tail": "", "pose_stock": 0})
     # and fn_2caeb0's direct read of the squad's firing mode
     for rva, stock_call, label in b.FIRING_CALLS:
         if img.read(rva, len(stock_call)) != stock_call:
@@ -386,6 +399,8 @@ def main():
               for i, site in enumerate(b.MOVE_POSTURE_SITES)]
     sites += [(f"squad_stand_{i + 1}", site, [site + len(b.SQUAD_STAND_READ)])
               for i, site in enumerate(b.SQUAD_STAND_SITES)]
+    sites += [(f"squad_mode_{i + 1}", site, [site + len(b.SQUAD_MODE_READ)])
+              for i, site in enumerate(b.SQUAD_MODE_SITES)]
     sites += [(label, rva, [rva + len(call)]) for rva, call, label in b.FIRING_CALLS]
     sites += [(f"ammo_gate_{i}", rva, [rva + len(bytes.fromhex(call))])
               for i, (rva, call, _) in enumerate(b.AMMO_GATE_CALLS)]
@@ -397,6 +412,10 @@ def main():
               ("dim_part", 0x203830, [0x20383a, 0x20383d])]
     sites.append(("building_has_places", 0x65060, [0x6507f]))
     sites.append(("building_reserve_next", 0x6577f, [0x65784]))
+    sites.append(("vehicle_command_skip", 0x47cfc, [0x47d01]))
+    sites.append(("vehicle_exit_refused", 0xff2cb, [0xff2d2]))
+    sites.append(("vehicle_exit_formation", 0x1079a5, [0x1079ac]))
+    sites.append(("member_vector_insert", 0x5a070, [0x5a078]))
     sites.append(("region_native_eligible", 0x418000, [0x418020]))
     sites.append((REGION_ICON_GATE[2], REGION_ICON_GATE[0], [0x41812e, 0x4181d3]))
     sites.append((BUILDING_SELECT[2], BUILDING_SELECT[0], [BUILDING_SELECT[0] + 5]))
@@ -453,7 +472,8 @@ def main():
     for hook in detours:
         hook["hook_feature"] = owners[hook["hook_rva"]]
     call_owners = {site: 4 for site, *_ in b.POSE_CALLS}
-    call_owners.update({site: 4 for site in b.MOVE_POSTURE_SITES + b.SQUAD_STAND_SITES})
+    call_owners.update({site: 4 for site in b.MOVE_POSTURE_SITES + b.SQUAD_STAND_SITES
+                        + b.SQUAD_MODE_SITES})
     call_owners.update({site: 5 for site, *_ in b.FIRING_CALLS})
     call_owners.update({site: 6 for site, *_ in b.AMMO_GATE_CALLS})
     call_owners.update({site: feature for site, _, _, feature in ORDER_CALLS + REGION_CALLS})
@@ -469,7 +489,19 @@ def main():
                          "make them shared symbols:\n  " + "\n  ".join(
                              f"{name}: {code}   ({key} -> {new:#x})" for name, code, key, new in gaps))
 
+    # Every label's block offset, for tools/module_writes.py to name the
+    # routine each branch into the block reaches. The chooser, the move filter
+    # and the soldier setter are entered at their first byte, before any label.
+    names = {0: {"chooser"}, b.MOVE_OFFSET: {"move_filter"}, b.SETTER_OFFSET: {"set_selected"}}
+    for table in (labels, move_labels, trace_labels, setter_labels, pose_labels, posture_labels,
+                  prone_labels, census_labels, firing_labels, ammo_labels, order_labels,
+                  region_labels, dim_labels):
+        for label, offset in table.items():
+            names.setdefault(offset, set()).add(label)
     payload_path.parent.mkdir(exist_ok=True)
+    descriptor_path.with_suffix(".labels.json").write_text(json.dumps(
+        {str(offset): sorted(found) for offset, found in sorted(names.items())}, indent=1) + "\n",
+        encoding="utf-8", newline="\n")
     payload_path.write_bytes(bytes(payload))
     descriptor_path.write_text(json.dumps({
         "feature_schema": 1,
@@ -550,4 +582,5 @@ def main():
     print(f"descriptor {descriptor_path}")
 
 
-main()
+if __name__ == "__main__":
+    main()

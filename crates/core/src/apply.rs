@@ -69,7 +69,7 @@ extern "system" {
 /// resolves it may not have user32 loaded, so it loads it; system DLLs sit at
 /// the same base in every process, so the address resolved here is the one the
 /// target can call.
-pub(crate) fn resolve_export(dll: &str, name: &str) -> Result<*mut c_void, String> {
+pub fn resolve_export(dll: &str, name: &str) -> Result<*mut c_void, String> {
     let mut wide: Vec<u16> = dll.encode_utf16().collect();
     wide.push(0);
     let module = unsafe { LoadLibraryW(wide.as_ptr()) };
@@ -223,7 +223,7 @@ impl Process {
     /// as the address space allows, so that a rel32 from the call site can
     /// still reach it. Walks outward in allocation-granularity steps and stays
     /// inside 2GB either way.
-    pub(crate) fn reserve_near(&self, hint: *mut u8, size: usize) -> Result<*mut u8, String> {
+    pub fn reserve_near(&self, hint: *mut u8, size: usize) -> Result<*mut u8, String> {
         const GRANULARITY: usize = 0x10000;
         const REACH: usize = 0x8000; // 0x8000 * 64K is 2GB
         let base = (hint as usize) & !(GRANULARITY - 1);

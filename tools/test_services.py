@@ -63,6 +63,7 @@ def reload():
     remove_case(fixed=False)
     remove_case(fixed=True)
     toggle_case()
+    settings_case()
 
 
 def host_with(root, plugins_json):
@@ -165,6 +166,23 @@ def toggle_case():
         # a fresh counter, incremented twice by the returning counter-user
         assert "total: 2" in lines, lines
         print("PASS toggle: switched off and on again with the plugin that needs it", flush=True)
+
+
+def settings_case():
+    """A loaded plugin loaded again for changed settings reads the new values:
+    `fail_init = true` makes its init fail. Switched on after the value is set
+    back, it loads with the value as the file says then."""
+    with tempfile.TemporaryDirectory(prefix="defiance-services-") as tmp:
+        exe = host_with(pathlib.Path(tmp), {"defiance_example_counter": {}, "defiance_example_counter_user": {}})
+        result = subprocess.run([str(exe), "settings"], capture_output=True, text=True)
+        lines = result.stdout.splitlines()
+        assert result.returncode == 0, (result.returncode, lines, result.stderr)
+        failed = next(i for i, l in enumerate(lines) if l.startswith("resettle: "))
+        assert "init returned 1" in lines[failed], lines
+        assert lines[failed + 1] == "loaded: ", lines
+        on = lines.index("on: Ok(())")
+        assert lines[on + 1] == "loaded: example.counter, example.counter-user", lines
+        print("PASS settings: loaded again with the values its config file says now", flush=True)
 
 
 def multiplayer_case():

@@ -1,17 +1,25 @@
-//! Shared payload storage and build validation for the built-in feature plugins.
+//! Build identity, patch units and shared services for the built-in feature
+//! plugins.
 //!
-//! The assembled payload and the descriptors are the same files the injector
-//! carries; the difference is that the sites are found and the writes made
-//! in-process, through `defiance-core`, instead of from an injector watching
-//! for the process. The known-build / verified-build / relocate decision is the
-//! same code (`install::logic_for_build` and `game_for_build`). The runtime
-//! prepares storage; feature plugins own the writes through Api::patch_bytes.
+//! Core recognises the (logic.dll, game.dll) pair the game loaded: the
+//! reference build, a verified build whose sites are found by signature, or a
+//! layout variant resolved offline. Each built-in feature's code is a set of
+//! patch units (`tools/units.py`), one per module it patches, resolved per
+//! build (`tools/variant.py`). Core embeds every supported build's units; when
+//! a feature plugin installs, Core relocates that feature's units if the build
+//! calls for it, links them into a pool near their module and writes their
+//! sites under the calling plugin's ownership (`Api::patch_bytes`).
 
 use core::ffi::{c_char, c_void, CStr};
 use defiance_api::{Api, Plugin, ABI_VERSION, LOG_ERROR, LOG_INFO, LOG_WARN};
-use defiance_core::install::{self, Scan};
-use defiance_core::{GamePatch, Patch, Target};
+use defiance_core::apply::{module_image, Process};
+use defiance_core::install::{needs_relocation, Scan};
+use defiance_core::unit::Unit;
+use defiance_core::Target;
+use defiance_feature_sdk::units::Embedded;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Mutex;
 mod affinity;
 mod ammo_menu;
 mod game;
@@ -20,10 +28,9 @@ mod grass;
 #[cfg(feature = "inspect-probe")]
 mod inspect_probe;
 mod inverse;
-mod marquee;
 mod mesh_sort;
 mod multiplayer;
-mod preview;
+mod patch;
 mod session;
 mod shadow;
 mod shadow_fit;
@@ -39,23 +46,23 @@ pub extern "C" fn defiance_test_game_access() -> *const defiance_api::GameAccess
 static NAME: &[u8] = b"defiance.core\0";
 static VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "\0");
 
-const PAYLOAD: &[u8] = include_bytes!("../../../tools/variants/reference/logic.bin");
-const DESCRIPTOR: &str = include_str!("../../../tools/variants/reference/logic.json");
-const GAME_PAYLOAD: &[u8] = include_bytes!("../../../tools/variants/reference/game.bin");
-const GAME_DESCRIPTOR: &str = include_str!("../../../tools/variants/reference/game.json");
+/// Every supported build's units, from `tools/variants/<build>/units/`
+/// (`build.rs`).
+static UNITS: &[Embedded] = include!(concat!(env!("OUT_DIR"), "/units.rs"));
 
-/// A build whose classes gained members: its payload was assembled from the
+/// The build the units were written for, and relocated from.
+const REFERENCE: &str = "reference";
+
+/// A build whose classes gained members: its units were assembled from the
 /// same source with that build's layout (`tools/layouts/*.json`) and resolved
-/// against its DLLs (`tools/variant.py`), so it applies without relocation.
+/// against its DLLs (`tools/variant.py`), so they apply without relocation.
 /// Both modules' hashes are the variant's identity: a logic.dll from one build
 /// with a game.dll from another is refused, never patched.
 struct Variant {
+    /// The folder under `tools/variants/` its units come from.
+    build: &'static str,
     logic_sha: &'static str,
     game_sha: &'static str,
-    logic_payload: &'static [u8],
-    logic_descriptor: &'static str,
-    game_payload: &'static [u8],
-    game_descriptor: &'static str,
     /// The build's squad AI facet roster getter slot (reference 0x3b8); one
     /// class offset the shared `GameAccessV1` table reads directly.
     roster_slot: usize,
@@ -63,21 +70,27 @@ struct Variant {
 
 static VARIANTS: &[Variant] = &[
     Variant {
+        build: "gog-2026-09-14",
         logic_sha: "eb8674f1d16595a3e9cf6a9ec0062735b1184976495d8d6ade36f7e2574e8aab",
         game_sha: "bc2af42369f9f6fe70e206ae4846f8f0e46ac01cca9a325c8159ee04a9b5e405",
-        logic_payload: include_bytes!("../../../tools/variants/gog-2026-09-14/logic.bin"),
-        logic_descriptor: include_str!("../../../tools/variants/gog-2026-09-14/logic.json"),
-        game_payload: include_bytes!("../../../tools/variants/gog-2026-09-14/game.bin"),
-        game_descriptor: include_str!("../../../tools/variants/gog-2026-09-14/game.json"),
         roster_slot: 0x3d0,
     },
     Variant {
+        build: "steam-2026-09-22",
         logic_sha: "30264904e1d5199b954bafbd7828cf7190930c246d35fa7b94eefa915e8f0c38",
         game_sha: "d926a213731d73bac8ccc56b50e2b4292fe8613c7a9bb7c8b9fc9132c122ed25",
-        logic_payload: include_bytes!("../../../tools/variants/steam-2026-09-22/logic.bin"),
-        logic_descriptor: include_str!("../../../tools/variants/steam-2026-09-22/logic.json"),
-        game_payload: include_bytes!("../../../tools/variants/steam-2026-09-22/game.bin"),
-        game_descriptor: include_str!("../../../tools/variants/steam-2026-09-22/game.json"),
+        roster_slot: 0x3d0,
+    },
+    Variant {
+        build: "gog-2026-09-25",
+        logic_sha: "1216d627c7288c7db6940168363be582232ed4d3cb860b8b8c8d7489652eca74",
+        game_sha: "8ec30a0b59aebf2240f00229d54a0f58e2e338f9ab3511046c9ff36970dd1489",
+        roster_slot: 0x3d0,
+    },
+    Variant {
+        build: "steam-2026-09-25",
+        logic_sha: "adb3ad95926036809b4e554b466bef33d4ac7aa5303e59a9e4a940890bc334b5",
+        game_sha: "c336b5ed4a367628a9c370457d82b1d4e75cab9007cffe5354e27688e836f98e",
         roster_slot: 0x3d0,
     },
 ];
@@ -108,7 +121,7 @@ fn verified_pair(logic_sha: &str, game_sha: &str) -> bool {
 
 /// How Core patches a (logic.dll, game.dll) pair.
 enum Choice {
-    /// A layout-changing build: its own payload, applied without relocation.
+    /// A layout-changing build: its own units, applied without relocation.
     Variant(&'static Variant),
     /// The reference pair, or a verified pair relocation carries.
     Reference,
@@ -116,15 +129,17 @@ enum Choice {
     Unknown,
 }
 
-/// The payload for a pair, or None to refuse it. `allow_unknown_build` opens
-/// the signature path only when neither module is one any supported pair
-/// names (the reference, a verified build or a variant), so a recognized
-/// module is never patched beside one from another build.
+/// The units for a pair, or None to refuse it. `logic` and `game` are the
+/// reference build's Core units, which name its hashes and the verified
+/// builds. `allow_unknown_build` opens the signature path only when neither
+/// module is one any supported pair names (the reference, a verified build or
+/// a variant), so a recognized module is never patched beside one from
+/// another build.
 fn choose(
     logic_sha: &str,
     game_sha: &str,
-    logic: &Patch,
-    game: &GamePatch,
+    logic: &Unit,
+    game: &Unit,
     allow_unknown: bool,
 ) -> Option<Choice> {
     if let Some(v) = variant_for(logic_sha, game_sha) {
@@ -142,6 +157,29 @@ fn choose(
         || game.verified.iter().any(|v| v == game_sha)
         || VARIANTS.iter().any(|v| v.game_sha == game_sha);
     (allow_unknown && !logic_known && !game_known).then_some(Choice::Unknown)
+}
+
+/// A build's units, parsed, each beside its embedded form.
+fn units_of(build: &str) -> Result<Vec<(Unit, &'static Embedded)>, String> {
+    UNITS
+        .iter()
+        .filter(|embedded| embedded.build == build)
+        .map(|embedded| {
+            Unit::parse(embedded.descriptor)
+                .map(|unit| (unit, embedded))
+                .map_err(|e| format!("{build} {}: {e}", embedded.name))
+        })
+        .collect()
+}
+
+/// Core's own unit for `module` ("logic.dll" or "game.dll"): the build
+/// anchors, and the sites of the functions Core hooks itself.
+fn core_unit(units: &[(Unit, &'static Embedded)], module: &str) -> Result<Unit, String> {
+    units
+        .iter()
+        .find(|(unit, _)| unit.plugin == "core" && unit.module == module)
+        .map(|(unit, _)| unit.clone())
+        .ok_or_else(|| format!("no Core unit for {module}"))
 }
 
 #[link(name = "kernel32")]
@@ -172,8 +210,7 @@ fn game_dir() -> PathBuf {
 }
 
 /// A loaded game module as the core's `Target`, with its path on disk so the
-/// build can be hashed and relocated if it is not the one the patch was
-/// written for.
+/// build can be hashed.
 fn module_target(api: &Api, name: &str) -> Option<Target> {
     let symbol: Vec<u8> = name.bytes().chain(core::iter::once(0)).collect();
     let base: *mut c_void = unsafe { (api.module_base)(symbol.as_ptr() as *const c_char) };
@@ -189,10 +226,8 @@ fn module_target(api: &Api, name: &str) -> Option<Target> {
     })
 }
 
-/// A yes/no setting from `defiance-loader.ini`. An empty `section` is the
-/// loader's own top level (`allow_unknown_build`); `defiance.core` is this
-/// plugin's own section.
-/// A plugin's setting as text, lower case; empty when it has none.
+/// A plugin's setting as text, lower case; empty when it has none. An empty
+/// `section` is the loader's own top level (`allow_unknown_build`).
 fn config_text(api: &Api, section: &str, key: &str) -> String {
     let section: Vec<u8> = section.bytes().chain(core::iter::once(0)).collect();
     let name: Vec<u8> = key.bytes().chain(core::iter::once(0)).collect();
@@ -210,87 +245,134 @@ fn config_text(api: &Api, section: &str, key: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// The virtual key for `squad_tab_modifier`: Ctrl by default, Shift, or none.
-fn tab_modifier_key(setting: &str) -> u32 {
-    match setting {
-        "shift" => 0x10,
-        "off" => 0,
-        _ => 0x11,
+/// A yes/no setting from `defiance-loader.ini`.
+fn config_flag(api: &Api, section: &str, key: &str) -> bool {
+    matches!(
+        config_text(api, section, key).as_str(),
+        "true" | "yes" | "on" | "1"
+    )
+}
+
+/// Executable memory near a module, handed out in 16-byte-aligned pieces
+/// that stay for the process's life: a unit's code must be within rel32 reach
+/// of its module and of the cells it imports.
+struct Pool {
+    start: usize,
+    size: usize,
+    used: Mutex<usize>,
+}
+
+/// Each module's pool. Every built-in unit of a build fits with room to spare
+/// (tools/units.py prints their sizes).
+const POOL_BYTES: usize = 0x10000;
+
+impl Pool {
+    fn near(target: &Target) -> Result<Self, String> {
+        let start =
+            Process::open(target.process_id)?.reserve_near(target.base, POOL_BYTES)? as usize;
+        Ok(Self {
+            start,
+            size: POOL_BYTES,
+            used: Mutex::new(0),
+        })
+    }
+
+    fn take(&self, bytes: usize) -> Option<usize> {
+        let mut used = self.used.lock().unwrap();
+        let at = used.next_multiple_of(16);
+        if at + bytes > self.size {
+            return None;
+        }
+        *used = at + bytes;
+        Some(self.start + at)
     }
 }
 
-fn config_flag(api: &Api, section: &str, key: &str) -> bool {
-    let section: Vec<u8> = section.bytes().chain(core::iter::once(0)).collect();
-    let name: Vec<u8> = key.bytes().chain(core::iter::once(0)).collect();
-    let value = unsafe {
-        (api.config_get)(
-            section.as_ptr() as *const c_char,
-            name.as_ptr() as *const c_char,
-        )
-    };
-    if value.is_null() {
-        return false;
-    }
-    let text = unsafe { CStr::from_ptr(value) }
-        .to_string_lossy()
-        .to_ascii_lowercase();
-    matches!(text.as_str(), "true" | "yes" | "on" | "1")
+/// One loaded game module.
+struct Module {
+    base: usize,
+    sha: String,
+    /// The module as it was when Core initialized, before any feature wrote
+    /// to it, when this build's sites have to be found by signature; None when
+    /// the units describe the build as it is.
+    pristine: Option<Vec<u8>>,
+    pool: Pool,
 }
 
 struct Runtime {
-    native_entries: std::collections::BTreeMap<String, (u32, usize)>,
-    logic: defiance_core::features::Prepared,
-    game: defiance_core::features::Prepared,
-    installed: std::sync::Mutex<u32>,
-    /// The features core actually prepared; one whose signature was missing on
-    /// a relocated build is absent and refuses to install.
-    available: u64,
-    record: String,
+    logic: Module,
+    game: Module,
+    /// The logic manager's trace ring, which diagnostics, posture and
+    /// ammunition units import.
+    trace_ring: usize,
+    /// The build whose units apply (`BuildV1::name`).
+    build: &'static CStr,
+    /// Every unit linked so far, by name ([`patch`]).
+    linked: Mutex<BTreeMap<String, patch::Linked>>,
+    crash_ranges: Option<&'static defiance_api::CrashRangesV1>,
     /// The game's lobby connection, which the multiplayer guard hooks; None
     /// when its signature was not found in this build.
     lobby_connect: Option<usize>,
     /// The tactical state's constructor and destructor, which the mission
     /// report hooks; None when either signature was not found.
     tactical_state: Option<(usize, usize)>,
-    /// The game block cell for the squad TAB modifier's virtual key, and the
-    /// block's size, which bounds it.
-    tab_modifier_offset: usize,
-    game_block_bytes: usize,
-    /// The logic block cell for the squad preview's material callback.
-    preview_dim_cell: usize,
-    /// The logic block cell for the marquee's key test and mode.
-    marquee_cell: usize,
-    logic_block_bytes: usize,
 }
 static RUNTIME: std::sync::OnceLock<Runtime> = std::sync::OnceLock::new();
 
-/// The host's accepted plan, as a bit per legacy feature ID. Set before `init`
-/// through `defiance_configure_enabled_v1`; all features when it is not, so the
-/// injector's test host and an older host keep the previous behavior.
-static ENABLED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+/// The logic manager's trace ring: an index, then 32 sixteen-byte entries.
+const TRACE_RING_BYTES: usize = 0x10 + 32 * 16;
 
-/// Called by the host after loading this DLL and before `init`, with the
-/// features its accepted plan will install. Only those are validated during
-/// preparation; the rest keep their fixed offsets but are not installed.
-#[no_mangle]
-pub extern "C" fn defiance_configure_enabled_v1(mask: u64) {
-    ENABLED.store(mask, std::sync::atomic::Ordering::Relaxed);
+pub(crate) fn say(api: &Api, level: u32, message: &str) {
+    let text = std::ffi::CString::new(message.replace('\0', "")).unwrap_or_default();
+    unsafe { (api.log)(level, text.as_ptr()) };
 }
 
-/// Called by the host when it unloads a feature plugin (hot reload): the
-/// plugin's patch spans are restored, so the feature may be installed again.
-#[no_mangle]
-pub extern "C" fn defiance_feature_removed_v1(feature: u32) {
-    if let Some(runtime) = RUNTIME.get() {
-        if feature < 32 {
-            *runtime.installed.lock().unwrap() &= !(1 << feature);
+impl Runtime {
+    pub(crate) fn module(&self, unit: &Unit) -> &Module {
+        if unit.module == "game.dll" {
+            &self.game
+        } else {
+            &self.logic
         }
     }
 }
 
-fn say(api: &Api, level: u32, message: &str) {
-    let text = std::ffi::CString::new(message.replace('\0', "")).unwrap_or_default();
-    unsafe { (api.log)(level, text.as_ptr()) };
+impl Runtime {
+    /// Where `--select-probe` finds the diagnostics: the trace hook it checks
+    /// still reaches the diagnostics unit, the trace ring, the census and the
+    /// ammunition scratch, each once its unit is linked.
+    pub(crate) fn record(&self) {
+        let linked = self.linked.lock().unwrap();
+        let Some(diagnostics) = linked.get("diagnostics-logic").map(|l| &l.prepared) else {
+            return;
+        };
+        let Some(hook) = diagnostics
+            .unit
+            .writes
+            .iter()
+            .find(|w| w.label == "select_trace")
+        else {
+            return;
+        };
+        let cell = |unit: &str, name: &str| {
+            linked
+                .get(unit)
+                .and_then(|unit| unit.prepared.cell(name))
+                .map_or(0, |(address, _)| address)
+        };
+        let record = format!(
+            "pid={:#x}\nbase={:#x}\nblock={:#x}\ntrace={:#x}\nentry={:#x}\nring={:#x}\ncensus={:#x}\nscratch={:#x}\n",
+            unsafe { GetCurrentProcessId() },
+            self.logic.base,
+            diagnostics.at,
+            hook.rva,
+            hook.entry,
+            self.trace_ring,
+            cell("diagnostics-logic", "census"),
+            cell("ammunition-logic", "scratch"),
+        );
+        let _ = std::fs::write(game_dir().join("defiance-pickup-inject.block"), record);
+    }
 }
 
 unsafe extern "C" fn init(api: *const Api) -> i32 {
@@ -301,7 +383,6 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
     if api.abi_version != ABI_VERSION || api.reserved != 0 {
         return 1;
     }
-    preview::set_logger(api.log);
     let prepare = || -> Result<Runtime, String> {
         let logic_target = module_target(api, "logic.dll").ok_or("logic.dll is not loaded")?;
         let game_target = module_target(api, "game.dll").ok_or("game.dll is not loaded")?;
@@ -310,22 +391,19 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
         } else {
             Scan::Default
         };
-        // Resolve both unmodified modules before any feature installs hooks.
-        let enabled = ENABLED.load(std::sync::atomic::Ordering::Relaxed);
-        // The two hashes together choose the payload: a build's classes moved
+        // The two hashes together choose the units: a build's classes moved
         // relative to another's, so a logic.dll and game.dll from different
         // builds must never be mixed.
         let logic_sha = defiance_core::sha256::file(&logic_target.path)
             .map_err(|e| format!("hashing logic.dll: {e}"))?;
         let game_sha = defiance_core::sha256::file(&game_target.path)
             .map_err(|e| format!("hashing game.dll: {e}"))?;
-        let reference_logic = Patch::parse(DESCRIPTOR);
-        let reference_game = GamePatch::parse(GAME_DESCRIPTOR);
+        let reference = units_of(REFERENCE)?;
         let choice = choose(
             &logic_sha,
             &game_sha,
-            &reference_logic,
-            &reference_game,
+            &core_unit(&reference, "logic.dll")?,
+            &core_unit(&reference, "game.dll")?,
             scan == Scan::Unknown,
         )
         .ok_or_else(|| {
@@ -338,126 +416,108 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
             Choice::Variant(v) => v.roster_slot,
             Choice::Reference | Choice::Unknown => REFERENCE_ROSTER_SLOT,
         });
-        let (logic_raw, game_raw, logic_payload, game_payload) = match choice {
+        let (build, units) = match choice {
             Choice::Variant(v) => {
                 say(
                     api,
                     LOG_INFO,
-                    "both modules match a supported build pair; using its payload",
+                    &format!(
+                        "both modules match the supported build {}; using its units",
+                        v.build
+                    ),
                 );
-                (
-                    Patch::parse(v.logic_descriptor),
-                    GamePatch::parse(v.game_descriptor),
-                    v.logic_payload,
-                    v.game_payload,
-                )
+                (v.build, units_of(v.build)?)
             }
-            Choice::Reference => (reference_logic, reference_game, PAYLOAD, GAME_PAYLOAD),
+            Choice::Reference => (REFERENCE, reference),
             Choice::Unknown => {
                 say(api, LOG_WARN, "allow_unknown_build: patching an unrecognized logic.dll/game.dll pair by signature");
-                (reference_logic, reference_game, PAYLOAD, GAME_PAYLOAD)
+                (REFERENCE, reference)
             }
         };
-        // A feature whose signature is missing on a relocated build is dropped
-        // here; the rest still prepare. Only features available in both modules
-        // are prepared, so a feature installs into neither or both.
-        let logic_ok = install::available_features_logic(&logic_raw, &logic_target, scan, enabled)?;
-        let game_ok = install::available_features_game(&game_raw, &game_target, scan, enabled)?;
-        let available = logic_ok & game_ok;
-        let unavailable = enabled & !available;
-        if unavailable != 0 {
-            say(api, LOG_WARN, &format!("features {unavailable:#x} could not be prepared; they and their dependents will be refused"));
-        }
-        let (logic_patch, _, _) =
-            install::logic_for_build_masked(&logic_raw, &logic_target, scan, available)?;
-        let (game_patch, _, _) =
-            install::game_for_build_masked(&game_raw, &game_target, scan, available)?;
-        let logic = defiance_core::features::prepare_logic_enabled(
-            &logic_patch,
-            &logic_target,
-            logic_payload,
-            available,
-        )?;
-        let game = defiance_core::features::prepare_game_enabled(
-            &game_patch,
-            &game_target,
-            game_payload,
-            available,
-        )?;
-        if logic
-            .writes
-            .iter()
-            .chain(&game.writes)
-            .any(|w| !(1..=defiance_core::features::KNOWN_FEATURES).contains(&w.feature))
-        {
-            return Err("payload contains an unknown feature ID".into());
-        }
-        // Name the blocks in crash reports through the loader's service; the
-        // log line is for people reading the log.
-        let ranges = unsafe { defiance_feature_sdk::services::crash_ranges() };
-        for (label, block, size) in [
-            (
-                c"core.logic assembly payload",
-                logic.block,
-                logic_patch.block_bytes,
-            ),
-            (
-                c"core.game assembly payload",
-                game.block,
-                game_patch.block_bytes,
-            ),
-        ] {
-            if let Some(ranges) = ranges {
-                unsafe { (ranges.map)(block, block + size, label.as_ptr()) };
+        // Resolve both unmodified modules before any feature installs hooks:
+        // a build found by signature keeps the image as it is now, so a later
+        // feature's signatures are matched against it, not against another
+        // feature's writes.
+        let mut modules = Vec::new();
+        for (target, sha) in [(logic_target, logic_sha), (game_target, game_sha)] {
+            let name = target
+                .path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_ascii_lowercase();
+            let own = core_unit(&units, &name)?;
+            let pristine = needs_relocation(&sha, &own.source_sha256, &own.verified, scan)
+                .then(|| module_image(&target))
+                .transpose()?;
+            let own = match &pristine {
+                Some(image) => own
+                    .relocate(image, &sha)
+                    .map_err(|e| format!("{name}: {e}"))?,
+                None => own,
+            };
+            // The build anchors every unit relies on: bytes the module must
+            // hold before anything is written.
+            for anchor in &own.anchors {
+                let now = unsafe {
+                    core::slice::from_raw_parts(target.base.add(anchor.rva), anchor.bytes.len())
+                };
+                if anchor.rva + anchor.bytes.len() > target.size || now != anchor.bytes {
+                    return Err(format!("{name}: module anchor mismatch"));
+                }
             }
+            let pool = Pool::near(&target)?;
+            modules.push((
+                Module {
+                    base: target.base as usize,
+                    sha,
+                    pristine,
+                    pool,
+                },
+                own,
+            ));
+        }
+        let (game, core_game) = modules.pop().unwrap();
+        let (logic, _) = modules.pop().unwrap();
+        let crash_ranges = unsafe { defiance_feature_sdk::services::crash_ranges() };
+        for (label, module) in [
+            (c"core.logic unit pool", &logic),
+            (c"core.game unit pool", &game),
+        ] {
             say(
                 api,
                 LOG_INFO,
                 &format!(
-                    "{} at {block:#x}..{:#x}",
+                    "{} at {:#x}..{:#x}",
                     label.to_string_lossy(),
-                    block + size
+                    module.pool.start,
+                    module.pool.start + module.pool.size
                 ),
             );
         }
-        for detour in &logic_patch.detours {
-            let name = logic_raw
-                .detours
+        let trace_ring = logic
+            .pool
+            .take(TRACE_RING_BYTES)
+            .ok_or("no room for the trace ring")?;
+        if let Some(ranges) = crash_ranges {
+            unsafe {
+                (ranges.map)(
+                    trace_ring,
+                    trace_ring + TRACE_RING_BYTES,
+                    c"core.logic trace ring".as_ptr(),
+                )
+            };
+        }
+        let site = |name: &str| {
+            core_game
+                .sites
                 .iter()
-                .find(|raw| raw.entry == detour.entry)
-                .and_then(|raw| logic_raw.sites.iter().find(|site| site.start == raw.rva))
-                .map_or("unnamed", |site| site.name.as_str());
-            say(
-                api,
-                LOG_INFO,
-                &format!(
-                    "payload-entry core.logic {name} feature={} address={:#x} site-rva={:#x}",
-                    detour.feature,
-                    logic.block + detour.entry,
-                    detour.rva
-                ),
-            );
-        }
-        for detour in &game_patch.hooks {
-            say(
-                api,
-                LOG_INFO,
-                &format!(
-                    "payload-entry core.game feature={} address={:#x} site-rva={:#x}",
-                    detour.feature,
-                    game.block + detour.entry,
-                    detour.rva
-                ),
-            );
-        }
-        let hook = logic_patch
-            .detours
-            .iter()
-            .find(|h| h.feature == 7)
-            .ok_or("missing diagnostics hook")?;
-        let lobby_connect = match install::game_site(&game_raw, &game_target, scan, "lobby_connect")
-        {
-            Ok(rva) => Some(game_target.base as usize + rva),
+                .find(|site| site.name == name)
+                .map(|site| game.base + site.start)
+                .ok_or_else(|| format!("the build has no {name} site"))
+        };
+        let lobby_connect = match site("lobby_connect") {
+            Ok(address) => Some(address),
             Err(e) => {
                 say(
                     api,
@@ -467,12 +527,8 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
                 None
             }
         };
-        let site = |name| install::game_site(&game_raw, &game_target, scan, name);
         let tactical_state = match (site("tactical_state_ctor"), site("tactical_state_dtor")) {
-            (Ok(ctor), Ok(dtor)) => Some((
-                game_target.base as usize + ctor,
-                game_target.base as usize + dtor,
-            )),
+            (Ok(ctor), Ok(dtor)) => Some((ctor, dtor)),
             (Err(e), _) | (_, Err(e)) => {
                 say(
                     api,
@@ -482,48 +538,17 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
                 None
             }
         };
-        let record = format!(
-            "pid={:#x}\nbase={:#x}\nblock={:#x}\ntrace={:#x}\nentry={:#x}\n",
-            logic_target.process_id, logic_target.base as usize, logic.block, hook.rva, hook.entry
-        );
-        let mut native_entries = std::collections::BTreeMap::new();
-        // Names are resolved through the same descriptor/relocation decision as
-        // assembly patches. Only ordinary function entries are eligible here.
-        for name in ["firing_set", "firing_ui", "setter", "is_selected"] {
-            let site = logic_raw
-                .sites
-                .iter()
-                .find(|s| s.name == name)
-                .ok_or("native entry missing its signature")?;
-            let raw = logic_raw
-                .detours
-                .iter()
-                .find(|h| h.rva == site.start)
-                .ok_or("native entry missing its patch")?;
-            let resolved = logic_patch
-                .detours
-                .iter()
-                .find(|h| h.entry == raw.entry && h.feature == raw.feature)
-                .ok_or("native entry missing after relocation")?;
-            native_entries.insert(
-                name.to_owned(),
-                (resolved.feature, logic_target.base as usize + resolved.rva),
-            );
-        }
         Ok(Runtime {
-            tab_modifier_offset: game_patch.tab_modifier_offset,
-            game_block_bytes: game_patch.block_bytes,
-            preview_dim_cell: logic_patch.preview_dim_cell,
-            marquee_cell: logic_patch.marquee_cell,
-            logic_block_bytes: logic_patch.block_bytes,
             logic,
             game,
-            installed: std::sync::Mutex::new(0),
-            available,
-            record,
+            trace_ring,
+            build: std::ffi::CString::new(build)
+                .map(|name| &*Box::leak(name.into_boxed_c_str()))
+                .map_err(|_| "a build name holds a NUL")?,
+            linked: Mutex::new(BTreeMap::new()),
+            crash_ranges,
             lobby_connect,
             tactical_state,
-            native_entries,
         })
     };
     match prepare() {
@@ -547,6 +572,17 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
             {
                 return 1;
             }
+            if defiance_feature_sdk::services::available()
+                && unsafe { defiance_feature_sdk::services::register(c"patch", 1, &patch::API) }
+                    .is_err()
+            {
+                return 1;
+            }
+            if defiance_feature_sdk::services::available()
+                && unsafe { defiance_feature_sdk::services::register(c"build", 1, &BUILD) }.is_err()
+            {
+                return 1;
+            }
             if let Some(address) = RUNTIME.get().and_then(|runtime| runtime.lobby_connect) {
                 multiplayer::install(api, address);
             }
@@ -565,7 +601,7 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
             say(
                 api,
                 LOG_INFO,
-                "shared payloads prepared; gameplay patches belong to feature plugins",
+                "build recognised; gameplay units belong to feature plugins",
             );
             0
         }
@@ -576,235 +612,14 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
     }
 }
 
-/// Called during a feature's init, so Api::patch_bytes charges that feature.
-/// No feature can run after failed preparation. Full process restart is the
-/// lifecycle; the shared blocks are never freed while game code can reach them.
-#[no_mangle]
-pub unsafe extern "C" fn defiance_install_feature_v1(api: *const Api, feature: u32) -> i32 {
-    unsafe { install_feature(api, feature, core::ptr::null_mut(), &[]) }
+unsafe extern "C" fn build_name() -> *const c_char {
+    RUNTIME
+        .get()
+        .map_or(core::ptr::null(), |runtime| runtime.build.as_ptr())
 }
 
-/// Rust pickup uses exactly the site approved by Core's normal
-/// build checks. The host owns its call hook, including any near relay.
-#[no_mangle]
-pub unsafe extern "C" fn defiance_install_pickup_rust_v1(
-    api: *const Api,
-    detour: *mut c_void,
-) -> i32 {
-    if detour.is_null() {
-        return 1;
-    }
-    unsafe { install_feature(api, 1, detour, &[]) }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn defiance_install_native_v1(
-    api: *const Api,
-    feature: u32,
-    replacements: *const defiance_api::NativeReplacementV1,
-    count: usize,
-) -> i32 {
-    if replacements.is_null() || count == 0 || count > 16 {
-        return 1;
-    }
-    unsafe {
-        install_feature(
-            api,
-            feature,
-            core::ptr::null_mut(),
-            core::slice::from_raw_parts(replacements, count),
-        )
-    }
-}
-
-unsafe fn install_feature(
-    api: *const Api,
-    feature: u32,
-    detour: *mut c_void,
-    replacements: &[defiance_api::NativeReplacementV1],
-) -> i32 {
-    if api.is_null() || !(1..=defiance_core::features::KNOWN_FEATURES).contains(&feature) {
-        return 1;
-    }
-    let api = unsafe { &*api };
-    if api.abi_version != ABI_VERSION || api.reserved != 0 {
-        return 1;
-    }
-    let Some(runtime) = RUNTIME.get() else {
-        say(
-            api,
-            LOG_ERROR,
-            "feature refused: core runtime did not initialize",
-        );
-        return 1;
-    };
-    let mut installed = runtime.installed.lock().unwrap();
-    if *installed & (1 << feature) != 0 {
-        return 0;
-    }
-    if !defiance_core::features::mask_has(runtime.available, feature) {
-        say(
-            api,
-            LOG_ERROR,
-            "feature refused: its site could not be prepared in this build",
-        );
-        return 1;
-    }
-    let writes: Vec<_> = runtime
-        .logic
-        .writes
-        .iter()
-        .chain(&runtime.game.writes)
-        .filter(|w| w.feature == feature)
-        .collect();
-    let mut native = std::collections::BTreeMap::new();
-    for replacement in replacements {
-        if replacement.name.is_null() || replacement.detour.is_null() {
-            return 1;
-        }
-        let Ok(name) = (unsafe { CStr::from_ptr(replacement.name) }).to_str() else {
-            return 1;
-        };
-        let Some(&(owner, address)) = runtime.native_entries.get(name) else {
-            return 1;
-        };
-        if owner != feature
-            || !writes.iter().any(|w| w.address == address)
-            || native.insert(address, replacement.detour).is_some()
-        {
-            return 1;
-        }
-    }
-    if !detour.is_null()
-        && (writes.len() != 1 || writes[0].before.len() != 5 || writes[0].before[0] != 0xe8)
-    {
-        say(
-            api,
-            LOG_ERROR,
-            "Rust pickup refused: expected one verified rel32 call",
-        );
-        return 1;
-    }
-    // Validate the whole feature before changing either module.
-    for write in &writes {
-        let now =
-            unsafe { core::slice::from_raw_parts(write.address as *const u8, write.before.len()) };
-        if now != write.before {
-            say(
-                api,
-                LOG_ERROR,
-                "feature refused: patch site changed since preparation",
-            );
-            return 1;
-        }
-    }
-    if feature == 2 && runtime.preview_dim_cell + 8 <= runtime.logic_block_bytes {
-        // The preview's hooks read the callback, so it is in place before them.
-        unsafe {
-            ((runtime.logic.block + runtime.preview_dim_cell) as *mut usize).write_volatile(
-                preview::dim_material as unsafe extern "C" fn(usize, usize) -> usize as usize,
-            )
-        };
-    }
-    if feature == 2 && runtime.marquee_cell + 16 <= runtime.logic_block_bytes {
-        // Likewise the marquee's key test and mode, before its hooks.
-        let setting = config_text(api, "defiance.selection", "marquee");
-        unsafe { marquee::write(runtime.logic.block + runtime.marquee_cell, &setting) };
-    }
-    for write in &writes {
-        let result = if let Some(&replacement) = native.get(&write.address) {
-            if write.before.len() >= 14 {
-                // Complete replacement needs no original trampoline. An absolute
-                // branch can cover bodies containing relative instructions.
-                let mut branch = vec![0xff, 0x25, 0, 0, 0, 0];
-                branch.extend_from_slice(&(replacement as usize as u64).to_le_bytes());
-                branch.resize(write.before.len(), 0x90);
-                unsafe {
-                    (api.patch_bytes)(
-                        write.address as *mut c_void,
-                        write.before.as_ptr(),
-                        branch.as_ptr(),
-                        branch.len(),
-                    )
-                }
-            } else {
-                let mut original = core::ptr::null_mut();
-                unsafe {
-                    (api.hook_exact)(
-                        write.address as *mut c_void,
-                        replacement,
-                        write.before.len(),
-                        &mut original,
-                    )
-                }
-            }
-        } else if detour.is_null() {
-            unsafe {
-                (api.patch_bytes)(
-                    write.address as *mut c_void,
-                    write.before.as_ptr(),
-                    write.after.as_ptr(),
-                    write.before.len(),
-                )
-            }
-        } else {
-            let mut original = core::ptr::null_mut();
-            unsafe { (api.hook_call)(write.address as *mut c_void, detour, &mut original) }
-        };
-        if result != 0 {
-            // The host rolls back everything owned by this failed feature.
-            say(
-                api,
-                LOG_ERROR,
-                "feature patch failed; host will roll back its owned spans",
-            );
-            return 1;
-        }
-    }
-    *installed |= 1 << feature;
-    if feature == 2 {
-        // The building TAB code reads the modifier from the game block; 0
-        // leaves only the plain TAB cycle.
-        let key = tab_modifier_key(&config_text(
-            api,
-            "defiance.selection",
-            "squad_tab_modifier",
-        ));
-        if runtime.tab_modifier_offset + 4 <= runtime.game_block_bytes {
-            unsafe {
-                ((runtime.game.block + runtime.tab_modifier_offset) as *mut u32).write_volatile(key)
-            };
-        }
-    }
-    if !detour.is_null() {
-        say(api, LOG_INFO, "pickup: Rust chooser installed");
-    }
-    if !native.is_empty() {
-        say(
-            api,
-            LOG_INFO,
-            &format!(
-                "feature {feature}: {} verified Rust function replacements",
-                native.len()
-            ),
-        );
-    }
-    if feature == 7 {
-        let _ = std::fs::write(
-            game_dir().join("defiance-pickup-inject.block"),
-            &runtime.record,
-        );
-    }
-    say(
-        api,
-        LOG_INFO,
-        &format!(
-            "feature {feature}: installed {} owned patch spans",
-            writes.len()
-        ),
-    );
-    0
-}
+/// `defiance.core` / `build`, version 1.
+static BUILD: defiance_api::BuildV1 = defiance_api::BuildV1 { name: build_name };
 
 #[no_mangle]
 pub extern "C" fn defiance_plugin() -> *const Plugin {
@@ -822,47 +637,103 @@ defiance_feature_sdk::crash_handshake!();
 #[cfg(test)]
 mod tests {
     use super::*;
+    use defiance_core::unit::Kind;
 
-    /// Each variant's roster slot must be the one its payload was assembled
-    /// with, read back from select-squad's `call [rax+disp32]`, so the shared
-    /// service and the payload cannot drift apart.
+    /// Every build's units parse, each feature unit has a Core pair beside it,
+    /// and each build carries the same set of units.
     #[test]
-    fn a_variant_roster_slot_matches_its_descriptor() {
-        for variant in VARIANTS {
-            let descriptor = Patch::parse(variant.logic_descriptor);
-            let after = &descriptor.select_squad_after;
-            let called: Vec<usize> = after
-                .windows(6)
-                .filter(|w| w[0] == 0xff && w[1] == 0x90)
-                .map(|w| u32::from_le_bytes(w[2..6].try_into().unwrap()) as usize)
+    fn every_build_has_every_unit() {
+        let names = |build: &str| {
+            let mut names: Vec<String> = units_of(build)
+                .unwrap()
+                .into_iter()
+                .map(|(unit, _)| unit.name)
                 .collect();
-            assert!(
-                called.contains(&variant.roster_slot),
-                "select_squad_after calls {called:x?}, not the roster slot {:#x}",
-                variant.roster_slot
+            names.sort();
+            names
+        };
+        let reference = names(REFERENCE);
+        assert!(reference.contains(&"core-logic".to_string()));
+        assert!(reference.contains(&"core-game".to_string()));
+        for variant in VARIANTS {
+            assert_eq!(names(variant.build), reference, "{}", variant.build);
+            let units = units_of(variant.build).unwrap();
+            assert_eq!(
+                core_unit(&units, "logic.dll").unwrap().source_sha256,
+                variant.logic_sha
+            );
+            assert_eq!(
+                core_unit(&units, "game.dll").unwrap().source_sha256,
+                variant.game_sha
             );
         }
     }
 
-    /// The runtime ties a native entry to its patch by `site.start == hook.rva`.
-    /// A variant whose sites stayed at reference addresses failed here with
-    /// "native entry missing its patch"; this keeps them in step.
+    /// A tracked unit of a build, read from `tools/variants`: selection's and
+    /// firing's are theirs, not Core's.
+    fn tracked(build: &str, name: &str) -> Unit {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tools/variants")
+            .join(build)
+            .join("units")
+            .join(format!("{name}.json"));
+        Unit::parse(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    /// Each variant's roster slot must be the one selection's unit was
+    /// assembled with, read back from select-squad's `call [rax+disp32]`, so
+    /// the shared service and the payload cannot drift apart.
     #[test]
-    fn a_variant_ties_each_native_entry_to_its_detour() {
-        for variant in VARIANTS {
-            let logic = Patch::parse(variant.logic_descriptor);
-            for name in ["firing_set", "firing_ui", "setter", "is_selected"] {
-                let site = logic
-                    .sites
-                    .iter()
-                    .find(|s| s.name == name)
-                    .unwrap_or_else(|| panic!("{name} has no site"));
-                assert!(
-                    logic.detours.iter().any(|h| h.rva == site.start),
-                    "{name}: no detour at its site {:#x}",
-                    site.start
-                );
+    fn a_variant_roster_slot_matches_its_units() {
+        for (build, slot) in VARIANTS
+            .iter()
+            .map(|v| (v.build, v.roster_slot))
+            .chain([(REFERENCE, REFERENCE_ROSTER_SLOT)])
+        {
+            let selection = tracked(build, "selection-logic");
+            let called: Vec<usize> = selection
+                .writes
+                .iter()
+                .filter(|w| w.kind == Kind::Edit)
+                .flat_map(|w| {
+                    w.after
+                        .windows(6)
+                        .filter(|w| w[0] == 0xff && w[1] == 0x90)
+                        .map(|w| u32::from_le_bytes(w[2..6].try_into().unwrap()) as usize)
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            assert!(
+                called.contains(&slot),
+                "{build}: the selection edits call {called:x?}, not the roster slot {slot:#x}"
+            );
+        }
+    }
+
+    /// The Rust replacements name a jmp write of their own unit.
+    #[test]
+    fn a_native_entry_is_a_jmp_of_its_unit() {
+        for build in VARIANTS.iter().map(|v| v.build).chain([REFERENCE]) {
+            let units = [
+                tracked(build, "selection-logic"),
+                tracked(build, "firing-logic"),
+            ];
+            let mut names = Vec::new();
+            for unit in &units {
+                for native in &unit.natives {
+                    assert!(
+                        unit.writes
+                            .iter()
+                            .any(|w| w.rva == native.rva && w.kind == Kind::Jmp),
+                        "{build} {}: {} has no jmp",
+                        unit.name,
+                        native.name
+                    );
+                    names.push(native.name.clone());
+                }
             }
+            names.sort();
+            assert_eq!(names, ["firing_set", "firing_ui", "is_selected", "setter"]);
         }
     }
 
@@ -880,11 +751,12 @@ mod tests {
 
     /// `allow_unknown_build` never pairs a recognized module with a stranger:
     /// a variant's logic.dll with an unknown game.dll (or the reverse) would
-    /// otherwise get the reference payload and its stale class offsets.
+    /// otherwise get the reference units and their stale class offsets.
     #[test]
     fn unknown_builds_are_never_mixed_with_known_modules() {
-        let logic = Patch::parse(DESCRIPTOR);
-        let game = GamePatch::parse(GAME_DESCRIPTOR);
+        let reference = units_of(REFERENCE).unwrap();
+        let logic = core_unit(&reference, "logic.dll").unwrap();
+        let game = core_unit(&reference, "game.dll").unwrap();
         let pick = |l: &str, g: &str, allow: bool| choose(l, g, &logic, &game, allow);
         let (logic_ref, game_ref) = (logic.source_sha256.clone(), game.source_sha256.clone());
         assert!(matches!(
@@ -926,22 +798,24 @@ mod tests {
         ));
     }
 
-    /// The pair table and the per-module verified lists must agree: a pair
-    /// whose hashes are not both listed would never be selected, and a listed
-    /// hash without a pair would be unreachable.
+    /// The pair table and the reference units' verified lists must agree: a
+    /// pair whose hashes are not both listed would never be relocated, and a
+    /// listed hash without a pair would be unreachable.
     #[test]
-    fn verified_pairs_are_listed_by_both_descriptors() {
-        let logic = Patch::parse(DESCRIPTOR);
-        let game = GamePatch::parse(GAME_DESCRIPTOR);
-        for &(logic_sha, game_sha) in VERIFIED_PAIRS {
-            assert!(
-                logic.verified.iter().any(|s| s == logic_sha),
-                "logic {logic_sha} is not verified"
-            );
-            assert!(
-                game.verified.iter().any(|s| s == game_sha),
-                "game {game_sha} is not verified"
-            );
+    fn verified_pairs_are_listed_by_both_core_units() {
+        let reference = units_of(REFERENCE).unwrap();
+        for (unit, _) in &reference {
+            let module_shas: Vec<&str> = VERIFIED_PAIRS
+                .iter()
+                .map(|&(l, g)| if unit.module == "logic.dll" { l } else { g })
+                .collect();
+            for sha in module_shas {
+                assert!(
+                    unit.verified.iter().any(|s| s == sha),
+                    "{}: {sha} is not verified",
+                    unit.name
+                );
+            }
         }
     }
 }

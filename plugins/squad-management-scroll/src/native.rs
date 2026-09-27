@@ -7,7 +7,7 @@
 //! and object identity survive callbacks; inventory record addresses do not.
 use super::{
     viewport::{Viewport, PERK_VISIBLE, UPGRADE_VISIBLE, VISIBLE},
-    Build, ACTIVE, ENGINE, LOG_WARN, ORIGINAL, ORIGINAL_SQUAD_CHOOSER, ORIGINAL_THUMB,
+    Build, ACTIVE, ENGINE, LOG_DEBUG, LOG_WARN, ORIGINAL, ORIGINAL_SQUAD_CHOOSER, ORIGINAL_THUMB,
     ORIGINAL_VEHICLE, ORIGINAL_VEHICLE_CHOOSER,
 };
 use core::{ffi::c_char, ptr};
@@ -112,10 +112,14 @@ pub(super) struct Engine {
     perk_limit: usize,
     training_key: unsafe extern "C" fn(usize) -> usize,
     upgrade_key: usize,
+    squad_fit_name: usize,
     perk_slots: usize,
     upgrade_slots: usize,
-    /// Settings: whether the upgrade columns and the vehicle panel take part.
+    /// Settings: whether the upgrade columns and the vehicle panel take part,
+    /// and whether an upgrade column is only as long as its unit's type can
+    /// fill ([`upgrade_column`]).
     upgrades: bool,
+    fit_upgrades: bool,
     vehicles: bool,
     log: unsafe extern "C" fn(u32, *const c_char),
 }
@@ -127,6 +131,7 @@ impl Engine {
         perk_slots: usize,
         upgrade_slots: usize,
         upgrades: bool,
+        fit_upgrades: bool,
         vehicles: bool,
     ) -> Self {
         Self {
@@ -154,9 +159,11 @@ impl Engine {
                 base + b.training_key.rva,
             ),
             upgrade_key: base + b.upgrade_key,
+            squad_fit_name: b.squad_fit_name,
             perk_slots: perk_slots.clamp(PERK_SLOTS_MIN, PERK_SLOTS_MAX),
             upgrade_slots: upgrade_slots.clamp(UPGRADE_SLOTS_MIN, UPGRADE_SLOTS_MAX),
             upgrades,
+            fit_upgrades,
             vehicles,
             log,
         }
@@ -188,6 +195,8 @@ thread_local! {
     static STATES: RefCell<HashMap<usize, State>> = RefCell::new(HashMap::new());
     static BUSY: Cell<bool> = const { Cell::new(false) };
     static WARNED: Cell<bool> = const { Cell::new(false) };
+    /// The last logged [`upgrades_installable`] answer per unit type name.
+    static FITTED: RefCell<HashMap<Vec<u8>, Installable>> = RefCell::new(HashMap::new());
 }
 #[link(name = "user32")]
 extern "system" {
@@ -504,6 +513,195 @@ unsafe fn trainings_available(e: &Engine, panel: usize, squad: usize) -> Option<
     }
     Some(count)
 }
+/// The lists of vehicle types an upgrade record fits (each a vector of
+/// pointers to entries named at +0x28): the vehicle chooser's match (GOG
+/// 2026-09-14 `fn_95940`) walks these nine. The squad chooser's match
+/// (`fn_961b0`) walks the one list at `SQUAD_FITS`, whose entries name their
+/// squad at the build's `squad_fit_name`, an empty name fitting every squad.
+/// tools/squad_scroll_bindings.py checks both in every supported build.
+const FITS: [usize; 9] = [
+    0x190, 0x1a8, 0x1c0, 0x1d8, 0x1f0, 0x208, 0x220, 0x238, 0x250,
+];
+const SQUAD_FITS: usize = 0x268;
+/// Whether an upgrade record fits a unit type, as the stock chooser of the
+/// unit's panel decides.
+unsafe fn fits(e: &Engine, record: usize, name: &[u8], squad: bool) -> bool {
+    let entries = |list: usize| {
+        vector(record, list, 8)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|at| read::<usize>(at))
+            .filter(|&entry| entry != 0)
+    };
+    if squad {
+        entries(SQUAD_FITS).any(|entry| {
+            msvc_string(entry + e.squad_fit_name).is_some_and(|n| n.is_empty() || n == name)
+        })
+    } else {
+        FITS.iter()
+            .any(|&list| entries(list).any(|entry| msvc_string(entry + 0x28) == Some(name)))
+    }
+}
+/// The most of `sets` (tag bitmasks) that share no bit: the most tagged
+/// upgrades a unit holds at once, since two sharing any tag conflict. A set
+/// containing another is dropped first (the smaller always serves as well),
+/// which leaves a handful; past `LIMIT` there is no answer.
+fn most_disjoint(mut sets: Vec<u64>) -> Option<usize> {
+    const LIMIT: usize = 24;
+    sets.sort_unstable_by_key(|s| s.count_ones());
+    sets.dedup();
+    let mut kept: Vec<u64> = Vec::new();
+    for set in sets {
+        if !kept.iter().any(|&k| k & set == k) {
+            kept.push(set);
+        }
+    }
+    fn best(sets: &[u64], used: u64) -> usize {
+        match sets.split_first() {
+            None => 0,
+            Some((&set, rest)) if set & used == 0 => {
+                (1 + best(rest, used | set)).max(best(rest, used))
+            }
+            Some((_, rest)) => best(rest, used),
+        }
+    }
+    (kept.len() <= LIMIT).then(|| best(&kept, 0))
+}
+/// What [`upgrades_installable`] found for a unit type: the most upgrades it
+/// can hold at once, how many distinct upgrades fit it, and the table rows
+/// walked (logged; one table serves every type).
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Installable {
+    holds: usize,
+    fitting: usize,
+    rows: usize,
+}
+/// The most upgrades a unit's type can hold at once: of the upgrades that fit
+/// it ([`fits`]), each untagged one and the most tagged ones sharing no tag
+/// ([`most_disjoint`]; the chooser replaces an upgrade sharing any tag). The
+/// walk is the training table's ([`trainings_available`]) over the upgrade
+/// table, keyed by the static the stock upgrade loop resolves its cards with;
+/// before that static is set (no upgrade card drawn yet this session) there is
+/// no answer.
+unsafe fn upgrades_installable(
+    e: &Engine,
+    panel: usize,
+    unit: usize,
+    squad: bool,
+) -> Option<Installable> {
+    type Get = unsafe extern "C" fn(usize) -> usize;
+    type Path = unsafe extern "C" fn(usize, usize) -> usize;
+    type Lookup = unsafe extern "C" fn(usize, usize, usize) -> usize;
+    let method = |object: usize, slot: usize| read::<usize>(read::<usize>(object) + slot);
+    let context = read::<usize>(panel + 0x118);
+    let holder = if context == 0 {
+        0
+    } else {
+        read::<usize>(context + e.context_service)
+    };
+    let name = msvc_string(unit + 0x28)?;
+    let key = read::<usize>(e.upgrade_key);
+    if holder == 0 || name.is_empty() || key == 0 {
+        return None;
+    }
+    let key = key + 8;
+    let scripts = std::mem::transmute::<usize, Get>(method(holder, 0x58))(holder);
+    if scripts == 0 {
+        return None;
+    }
+    let path = std::mem::transmute::<usize, Path>(method(scripts, 0x20))(scripts, key);
+    let tables = std::mem::transmute::<usize, Get>(method(holder, 0x70))(holder);
+    if path == 0 || tables == 0 {
+        return None;
+    }
+    let table = std::mem::transmute::<usize, Path>(method(tables, 0x20))(tables, path);
+    if table == 0 {
+        return None;
+    }
+    let (cells, columns, rows) = (
+        read::<usize>(table),
+        read::<usize>(table + 0x18),
+        read::<usize>(table + 0x20),
+    );
+    if cells == 0 || !(1..=256).contains(&columns) || rows > 4096 {
+        return None;
+    }
+    let lookup = std::mem::transmute::<usize, Lookup>(method(scripts, 0x8));
+    let mut seen = Vec::new();
+    let mut names: Vec<&[u8]> = Vec::new();
+    let mut sets = Vec::new();
+    let mut untagged = 0;
+    for row in 1..rows {
+        let cell = cells + row * columns * 0x20;
+        if read::<usize>(cell + 0x10) == 0 {
+            continue;
+        }
+        let record = lookup(scripts, key, cell);
+        if record == 0 || seen.contains(&record) || !fits(e, record, name, squad) {
+            continue;
+        }
+        seen.push(record);
+        let mut set = 0u64;
+        for tag in tags(record) {
+            let bit = match names.iter().position(|&n| n == tag) {
+                Some(bit) => bit,
+                None => {
+                    names.push(tag);
+                    names.len() - 1
+                }
+            };
+            set |= 1u64.checked_shl(bit as u32)?;
+        }
+        if set == 0 {
+            untagged += 1;
+        } else {
+            sets.push(set);
+        }
+    }
+    Some(Installable {
+        holds: untagged + most_disjoint(sets)?,
+        fitting: seen.len(),
+        rows: rows.saturating_sub(1),
+    })
+}
+/// The upgrade column's length for a unit owning `owned` upgrades (already
+/// capped at `upgrade_slots`): `upgrade_slots`, or with `fit_upgrades` the
+/// most its type can hold ([`upgrades_installable`]) up to that, and never
+/// shorter than what it owns. No answer, or an answer of none (a type
+/// nothing fits, or a table this walk misreads), keeps `upgrade_slots`. Each type's answer is logged, at
+/// debug, when first seen and whenever it changes.
+unsafe fn upgrade_column(
+    e: &Engine,
+    panel: usize,
+    layout: &Layout,
+    unit: usize,
+    owned: usize,
+) -> usize {
+    if !e.fit_upgrades {
+        return e.upgrade_slots.max(owned);
+    }
+    let found = upgrades_installable(e, panel, unit, layout.squad);
+    if let (Some(found), Some(name)) = (found, msvc_string(unit + 0x28)) {
+        let fresh = FITTED.with(|f| f.borrow_mut().insert(name.to_vec(), found) != Some(found));
+        if fresh {
+            let text = format!(
+                "squad scrolling: {} holds {} upgrades at once ({} fit it, {} upgrade table rows)",
+                String::from_utf8_lossy(name),
+                found.holds,
+                found.fitting,
+                found.rows,
+            );
+            if let Ok(text) = std::ffi::CString::new(text) {
+                (e.log)(LOG_DEBUG, text.as_ptr());
+            }
+        }
+    }
+    found
+        .map(|found| found.holds)
+        .filter(|&holds| holds > 0)
+        .map_or(e.upgrade_slots, |holds| holds.min(e.upgrade_slots))
+        .max(owned)
+}
 /// The display object the stock upgrade loop builds for one element: the script
 /// service at [[panel+0x118]+context_service] -> vt+0x58, then its vt+8 called
 /// with the lazily-initialised key static (+8) and the element. The stock
@@ -610,13 +808,13 @@ unsafe fn update(panel: usize, layout: &'static Layout, input: Input, event: usi
             items[PERK].resize(cards.max(owned), 0);
         }
     }
-    // The upgrade column is `upgrade_slots` long whatever the unit owns: its
+    // The upgrade column is [`upgrade_column`] long whatever the unit owns: its
     // upgrades, then blank cards (zero records). The stock drag-start chooser
     // targets the first visible card with no bound upgrade, so scrolling a
     // blank card into view is what lets a sixth and later upgrade be dropped.
     if upgrades {
         let owned = items[UPGRADE].len();
-        items[UPGRADE].resize(e.upgrade_slots.max(owned), 0);
+        items[UPGRADE].resize(upgrade_column(e, panel, layout, unit, owned), 0);
     }
     // Drop the state-map borrow before invoking any native code; redraws can
     // dispatch synchronous events. Reentrant callbacks retain stock behavior.
@@ -840,7 +1038,8 @@ unsafe fn tags<'a>(record: usize) -> Vec<&'a [u8]> {
 /// then replaces it while an empty card was highlighted. So: the first
 /// installed upgrade that is this item or shares a tag with it is scrolled into
 /// view (it precedes every empty card, so the chooser picks it, or refuses a
-/// duplicate); otherwise the first empty card is.
+/// duplicate); otherwise the first empty card is, when the column
+/// ([`upgrade_column`]) has one.
 unsafe fn show_target(panel: usize, layout: &'static Layout, item: usize) {
     let e = ENGINE.get().unwrap();
     if !ACTIVE.load(Ordering::Acquire) || item == 0 || read::<u32>(item + 0x2c) != 0 {
@@ -862,8 +1061,9 @@ unsafe fn show_target(panel: usize, layout: &'static Layout, item: usize) {
         let display = upgrade_display(e, panel, entry);
         display == item || (display != 0 && tags(display).iter().any(|t| wanted.contains(t)))
     });
-    let target = conflict.unwrap_or(entries.len());
-    if target < e.upgrade_slots {
+    let owned = entries.len().min(e.upgrade_slots);
+    let target = conflict.unwrap_or(owned);
+    if target < upgrade_column(e, panel, layout, unit, owned) {
         update(panel, layout, Input::Show(UPGRADE, target), 0);
     }
 }
@@ -1029,5 +1229,19 @@ mod tests {
         assert_eq!(count(0x1000, 0x1001, 0x48), None);
         assert_eq!(count(0, 0x48, 0x48), None);
         assert_eq!(count(0x1000, 0x1000 + 4097 * 0x48, 0x48), None);
+    }
+    #[test]
+    fn counts_upgrades_sharing_no_tag() {
+        assert_eq!(most_disjoint(vec![]), Some(0));
+        // one per tag, however many share it
+        assert_eq!(most_disjoint(vec![0b1, 0b1, 0b10]), Some(2));
+        // a multi-tag upgrade conflicts with each of its tags: the Abrams'
+        // mounted guns (mounted_gun, some with more) take one card
+        assert_eq!(most_disjoint(vec![0b001, 0b011, 0b111, 0b101]), Some(1));
+        // a set holding two others is worth less than both
+        assert_eq!(most_disjoint(vec![0b11, 0b01, 0b10]), Some(2));
+        // the best choice is not the first found
+        assert_eq!(most_disjoint(vec![0b110, 0b011, 0b100, 0b001]), Some(2));
+        assert_eq!(most_disjoint((0..25).map(|b| 1u64 << b).collect()), None);
     }
 }

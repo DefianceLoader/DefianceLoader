@@ -1,0 +1,424 @@
+{
+ "unit_schema": 1,
+ "name": "garrison-logic",
+ "plugin": "garrison",
+ "module": "logic.dll",
+ "source_sha256": "17ef48350153306e210e14a24b0ad398c56fb99d3d46c88f246df260ade85780",
+ "unit_bytes": 1055,
+ "code_offset": 0,
+ "cells": [],
+ "writes": [
+  {
+   "kind": "call",
+   "rva": 294035,
+   "before": "ff90e800000084c0745f2bf7785b",
+   "tail": "909090909090909090",
+   "stock": 0,
+   "entry": 723,
+   "label": "vehicle_capacity_command"
+  },
+  {
+   "kind": "call",
+   "rva": 414549,
+   "before": "482bc8492bce",
+   "tail": "90",
+   "stock": 0,
+   "entry": 1041,
+   "label": "building_capacity_subtract"
+  },
+  {
+   "kind": "call",
+   "rva": 415542,
+   "before": "4c3bff7544",
+   "tail": "",
+   "stock": 0,
+   "entry": 1002,
+   "label": "building_reserve_occupant"
+  },
+  {
+   "kind": "call",
+   "rva": 682909,
+   "before": "e8bee4fbff",
+   "tail": "",
+   "stock": 0,
+   "entry": 448,
+   "label": "building_capacity_approach"
+  },
+  {
+   "kind": "call",
+   "rva": 699507,
+   "before": "e8e8a3fbff",
+   "tail": "",
+   "stock": 0,
+   "entry": 476,
+   "label": "building_capacity_enter"
+  },
+  {
+   "kind": "call",
+   "rva": 812346,
+   "before": "ff90e8000000",
+   "tail": "90",
+   "stock": 0,
+   "entry": 706,
+   "label": "vehicle_capacity_cursor"
+  },
+  {
+   "kind": "call",
+   "rva": 1042467,
+   "before": "ff90e8000000",
+   "tail": "90",
+   "stock": 0,
+   "entry": 675,
+   "label": "vehicle_capacity_enter"
+  },
+  {
+   "kind": "call",
+   "rva": 1044323,
+   "before": "ff90e8000000",
+   "tail": "90",
+   "stock": 0,
+   "entry": 692,
+   "label": "vehicle_capacity_arrive"
+  },
+  {
+   "kind": "call",
+   "rva": 1045129,
+   "before": "488bceffd5",
+   "tail": "",
+   "stock": 0,
+   "entry": 779,
+   "label": "vehicle_exit_seat"
+  },
+  {
+   "kind": "call",
+   "rva": 1079223,
+   "before": "ff9080000000",
+   "tail": "90",
+   "stock": 0,
+   "entry": 812,
+   "label": "vehicle_exit_point"
+  },
+  {
+   "kind": "call",
+   "rva": 1079558,
+   "before": "488b78504885ff",
+   "tail": "9090",
+   "stock": 0,
+   "entry": 28,
+   "label": "building_exit_point"
+  },
+  {
+   "kind": "call",
+   "rva": 1080880,
+   "before": "488b58504885db",
+   "tail": "9090",
+   "stock": 0,
+   "entry": 48,
+   "label": "building_exit_target"
+  },
+  {
+   "kind": "call",
+   "rva": 1092191,
+   "before": "e8fca5f5ff",
+   "tail": "",
+   "stock": 0,
+   "entry": 371,
+   "label": "building_capacity_command"
+  },
+  {
+   "kind": "call",
+   "rva": 1092651,
+   "before": "e830a4f5ff",
+   "tail": "",
+   "stock": 0,
+   "entry": 371,
+   "label": "building_capacity_command"
+  },
+  {
+   "kind": "call",
+   "rva": 1112070,
+   "before": "488b58504885db",
+   "tail": "9090",
+   "stock": 0,
+   "entry": 48,
+   "label": "building_exit_target"
+  },
+  {
+   "kind": "call",
+   "rva": 3251412,
+   "before": "488b58504885db",
+   "tail": "9090",
+   "stock": 0,
+   "entry": 48,
+   "label": "building_exit_target"
+  },
+  {
+   "kind": "call",
+   "rva": 4441805,
+   "before": "498b7d004885ff",
+   "tail": "9090",
+   "stock": 0,
+   "entry": 0,
+   "label": "garrison_members"
+  }
+ ],
+ "fixups": [
+  {
+   "kind": "rel32",
+   "offset": 421,
+   "target": 413792
+  },
+  {
+   "kind": "rel32",
+   "offset": 575,
+   "target": 413792
+  },
+  {
+   "kind": "rel32",
+   "offset": 775,
+   "target": 294140
+  },
+  {
+   "kind": "rel32",
+   "offset": 808,
+   "target": 1045195
+  },
+  {
+   "kind": "rel32",
+   "offset": 979,
+   "target": 368752
+  },
+  {
+   "kind": "rel32",
+   "offset": 998,
+   "target": 1079717
+  },
+  {
+   "kind": "rel32",
+   "offset": 1037,
+   "target": 415615
+  }
+ ],
+ "natives": [],
+ "anchors": [],
+ "sites": [
+  {
+   "site_name": "garrison_members",
+   "site_start": 4441805,
+   "site_group": 4435824,
+   "site_pattern": "498b7d004885ff7409488b7f104885ff7503498bfe498bf6",
+   "site_offset": 0
+  },
+  {
+   "site_name": "building_exit_point",
+   "site_start": 1079558,
+   "site_group": 1078784,
+   "site_pattern": "488b78504885ff0f84????????4c8b7740488b7f38493bfe",
+   "site_offset": 0
+  },
+  {
+   "site_name": "building_exit_target",
+   "site_start": 1080880,
+   "site_group": 1080384,
+   "site_pattern": "488b58504885db0f84????????488b7340488b5b38483bde",
+   "site_offset": 0
+  },
+  {
+   "site_name": "building_facing_direct",
+   "site_start": 1112070,
+   "site_group": 1111952,
+   "site_pattern": "488b58504885db0f84????????4c8b7340488b5b38493bde",
+   "site_offset": 0
+  },
+  {
+   "site_name": "building_facing_command",
+   "site_start": 3251412,
+   "site_group": 3250384,
+   "site_pattern": "488b58504885db0f84????????4c8b6340488b5b38493bdc",
+   "site_offset": 0
+  },
+  {
+   "site_name": "building_capacity_command",
+   "site_start": 1092191,
+   "site_group": 1091568,
+   "site_pattern": "e8????????84c07462488beb488b0780bc2450010000007422",
+   "site_offset": 0
+  },
+  {
+   "site_name": "building_capacity_transfer",
+   "site_start": 1092651,
+   "site_group": 1092384,
+   "site_pattern": "e8????????488b9c24d00000004881c4c00000005fc3488b9c24d0000000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "building_capacity_approach",
+   "site_start": 682909,
+   "site_group": 681184,
+   "site_pattern": "e8????????84c00f85????????41c74720030000004885ff",
+   "site_offset": 0
+  },
+  {
+   "site_name": "building_capacity_enter",
+   "site_start": 699507,
+   "site_group": 699152,
+   "site_pattern": "e8????????84c00f84????????498bbe180300004885ff7409",
+   "site_offset": 0
+  },
+  {
+   "site_name": "building_reserve_occupant",
+   "site_start": 415542,
+   "site_group": 414736,
+   "site_pattern": "4c3bff7544488d8d88010000488d5310e8????????488b3b",
+   "site_offset": 0
+  },
+  {
+   "site_name": "building_capacity_subtract",
+   "site_start": 414549,
+   "site_group": 413792,
+   "site_pattern": "482bc8492bce483b4d770f93c34d85e4743b4d2bfc4983e7f8",
+   "site_offset": 0
+  },
+  {
+   "site_name": "vehicle_capacity_enter",
+   "site_start": 1042467,
+   "site_group": 1042128,
+   "site_pattern": "ff90e800000084c00f84????????498b5e704885db7409488b5b10",
+   "site_offset": 0
+  },
+  {
+   "site_name": "vehicle_capacity_arrive",
+   "site_start": 1044323,
+   "site_group": 1044300,
+   "site_pattern": "ff90e800000084c00f84????????488b7d704885ff7409488b7f10",
+   "site_offset": 0
+  },
+  {
+   "site_name": "vehicle_capacity_cursor",
+   "site_start": 812346,
+   "site_group": 812210,
+   "site_pattern": "ff90e800000084c0741b488b9c24d0000000b001488bb424d8000000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "vehicle_capacity_command",
+   "site_start": 294035,
+   "site_group": 292672,
+   "site_pattern": "ff90e800000084c0745f2bf7785b498b14244885d27409488b5210",
+   "site_offset": 0
+  },
+  {
+   "site_name": "vehicle_exit_seat",
+   "site_start": 1045129,
+   "site_group": 1044608,
+   "site_pattern": "488bceffd5488b4b104885c97412488b49104885c97409488b01",
+   "site_offset": 0
+  },
+  {
+   "site_name": "vehicle_exit_point",
+   "site_start": 1079223,
+   "site_group": 1078784,
+   "site_pattern": "ff90800000004c8be84889457f498b0c24488b596048895d77",
+   "site_offset": 0
+  },
+  {
+   "site_name": "building_has_places",
+   "site_start": 413792,
+   "site_group": 413792,
+   "site_pattern": "48895c24104c8944241848894c24085556574154415541564157488d6c24d94881eca0000000498bf8",
+   "site_offset": 0
+  },
+  {
+   "site_name": "building_reserve_next",
+   "site_start": 415615,
+   "site_group": 414736,
+   "site_pattern": "488b1beb42488b3b488b4308488938488b0b488b43084889410848ff8da0010000488b4b104885c9740d834108ff7507488b01ff501090ba18000000488bcbe8????????488bdf483b9d980100000f85????????",
+   "site_offset": 0
+  },
+  {
+   "site_name": "vehicle_command_skip",
+   "site_start": 294129,
+   "site_group": 292672,
+   "site_pattern": "e9????????33db33ffeb888b7567e9????????e8????????cc",
+   "site_offset": 11
+  },
+  {
+   "site_name": "vehicle_exit_refused",
+   "site_start": 1045195,
+   "site_group": 1044608,
+   "site_pattern": "c7432805000000eb07c7432804000000488b9c24a8000000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "vehicle_exit_formation",
+   "site_start": 1079717,
+   "site_group": 1078784,
+   "site_pattern": "488b7daf483bfb0f84????????4c8d4dc74d8bc7488d55af",
+   "site_offset": 0
+  },
+  {
+   "site_name": "member_vector_insert",
+   "site_start": 368752,
+   "site_group": 368752,
+   "site_pattern": "405355415541574883ec28488b41084c8bfa488b11498bef482bea482bc24d8be848c1fd03",
+   "site_offset": 0
+  }
+ ],
+ "verified_sha": "d320f848508c45c9f04df235204b5fbc9ffbb1b7f869e4c5a58d80bb2ecc10ed",
+ "labels": {
+  "garrison_members": 0,
+  "building_exit_point": 28,
+  "building_exit_target": 48,
+  "building_facing_command": 48,
+  "building_facing_direct": 48,
+  "occupant_view": 68,
+  "no_occupant_view": 101,
+  "entering_members": 104,
+  "selected_members": 112,
+  "filter_members": 115,
+  "count_members": 141,
+  "counted_members": 166,
+  "pack_members": 184,
+  "next_member": 212,
+  "left_behind_member": 217,
+  "keep_members": 301,
+  "packed_members": 304,
+  "member_selected": 321,
+  "no_selection": 364,
+  "building_capacity_command": 371,
+  "building_capacity_transfer": 371,
+  "capacity_candidate": 397,
+  "next_capacity_candidate": 429,
+  "no_capacity": 438,
+  "capacity_done": 440,
+  "building_capacity_approach": 448,
+  "building_capacity_enter": 476,
+  "capacity_state_owner": 506,
+  "no_owner_capacity": 586,
+  "owner_capacity_done": 590,
+  "vehicle_owner_only": 597,
+  "vehicle_owner_done": 655,
+  "vehicle_capacity_enter": 675,
+  "vehicle_capacity_arrive": 692,
+  "vehicle_capacity_cursor": 706,
+  "vehicle_cursor_native": 717,
+  "vehicle_capacity_command": 723,
+  "vehicle_command_check": 734,
+  "vehicle_command_take": 768,
+  "vehicle_command_skip": 769,
+  "vehicle_exit_seat": 779,
+  "vehicle_exit_refused": 802,
+  "vehicle_exit_point": 812,
+  "vehicle_exit_native": 853,
+  "vehicle_exit_members": 868,
+  "vehicle_exit_next": 893,
+  "vehicle_exit_take": 946,
+  "vehicle_exit_grow": 970,
+  "vehicle_exit_skip": 983,
+  "vehicle_exit_formation": 989,
+  "building_reserve_occupant": 1002,
+  "reserve_other_occupant": 1031,
+  "building_capacity_subtract": 1041,
+  "capacity_zero": 1052
+ }
+}

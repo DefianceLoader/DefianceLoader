@@ -11,7 +11,7 @@ card (`AmmoInfo.txt`), whose user count is right-aligned in a wider box so an
 enabled/selected fraction such as `11/14` fits. It also carries a darker copy
 of every standard material, `materials/defiance_dim/<path>`, which the squad
 preview gives the unselected soldiers of a partly selected squad
-(`patch/preview-dim.asm`, `plugins/core/src/preview.rs`).
+(`patch/preview-dim.asm`, `plugins/selection/src/preview.rs`).
 """
 import argparse
 import hashlib

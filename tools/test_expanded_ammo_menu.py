@@ -41,7 +41,7 @@ def resolve(module,source,at):
     return matches[0]+at-start
 
 # The builds by the index of the generated tables.
-BUILDS=("gog-2025-12-23", "steam-2025-12-23", "gog-2026-09-14", "steam-2026-09-22")
+BUILDS=("gog-2025-12-23", "steam-2025-12-23", "gog-2026-09-14", "steam-2026-09-22", "gog-2026-09-25", "steam-2026-09-25")
 PATHS={i:builds.build(n).game for i,n in enumerate(BUILDS)}
 LOGIC={i:builds.build(n).logic for i,n in enumerate(BUILDS)}
 # The AmmunitionMenu constructor slice (reference game.dll+0x3df21..0x3df62),
