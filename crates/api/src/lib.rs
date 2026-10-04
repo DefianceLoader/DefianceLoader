@@ -89,6 +89,20 @@ pub struct CrashRangesV1 {
     pub unmap: unsafe extern "C" fn(start: usize) -> i32,
 }
 
+/// `defiance.loader` / `near-memory`, service version 1. Address space the
+/// loader holds near `logic.dll` and `game.dll` from the moment each loads,
+/// before the game's own allocations can crowd it. Code a module must reach
+/// with a rel32 commits from here before searching for free pages itself. The
+/// call may be made from any thread once the table is resolved.
+#[repr(C)]
+pub struct NearMemoryV1 {
+    /// Commit `size` bytes (1..=0x10000) of executable, writable memory in a
+    /// held 64K slot within rel32 reach of `hint`. Returns the slot's address,
+    /// which `VirtualFree(address, 0, MEM_RELEASE)` releases, or 0 when `size`
+    /// is out of range or no held slot reaches `hint`.
+    pub take: unsafe extern "C" fn(hint: usize, size: usize) -> usize,
+}
+
 /// `defiance.loader` / `trace`, service version 1. Diagnostic call-stack
 /// tracing with a hardware breakpoint: each hit at the address is logged to the
 /// loader log with its registers and stack, and execution resumes unchanged.

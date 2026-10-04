@@ -386,9 +386,13 @@ fn load_once() -> Snapshot {
     // From here the log directory is known; switch the sink to it.
     let log_path = crate::log::relocate(&paths);
     crate::log::info(&format!(
-        "DefianceLoader {} (ABI {}); exe {}; root {}; config {}; plugins {}; log {}",
+        "DefianceLoader {} (ABI {}); {}; exe {}; root {}; config {}; plugins {}; log {}",
         env!("CARGO_PKG_VERSION"),
         defiance_api::ABI_VERSION,
+        match crate::win::wine_version() {
+            Some(version) => format!("Wine {version}"),
+            None => "Windows".to_string(),
+        },
         paths.exe_dir.display(),
         paths.root.display(),
         paths.config_dir.display(),

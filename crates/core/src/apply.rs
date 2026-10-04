@@ -242,14 +242,21 @@ impl Process {
     /// as the address space allows, so that a rel32 from the call site can
     /// still reach it. Walks outward in allocation-granularity steps and stays
     /// inside 2GB either way.
+    ///
+    /// A candidate that is already in use fails with `ERROR_INVALID_ADDRESS`.
+    /// Any other error is the system refusing executable memory outright (an
+    /// exploit-protection policy, say), so the first one is named in the
+    /// failure rather than reported as a full address space.
     pub fn reserve_near(&self, hint: *mut u8, size: usize) -> Result<*mut u8, String> {
         const GRANULARITY: usize = 0x10000;
         const REACH: usize = 0x8000; // 0x8000 * 64K is 2GB
+        const ERROR_INVALID_ADDRESS: u32 = 487;
         let base = (hint as usize) & !(GRANULARITY - 1);
+        let mut refused: Option<(u32, usize)> = None;
         for step in 1..REACH {
             for candidate in [
                 base.wrapping_add(step * GRANULARITY),
-                base.wrapping_sub(step * GRANULARITY),
+                base.checked_sub(step * GRANULARITY).unwrap_or(0),
             ] {
                 if candidate == 0 {
                     continue;
@@ -277,9 +284,19 @@ impl Process {
                 if !got.is_null() {
                     return Ok(got);
                 }
+                let error = unsafe { GetLastError() };
+                if error != ERROR_INVALID_ADDRESS && refused.is_none() {
+                    refused = Some((error, candidate));
+                }
             }
         }
-        Err("no free page within reach of the call site".to_string())
+        Err(match refused {
+            Some((error, at)) => format!(
+                "no executable page within reach of the call site: VirtualAlloc at {at:#x} \
+                 failed with error {error}"
+            ),
+            None => "no free page within reach of the call site".to_string(),
+        })
     }
 }
 

@@ -136,6 +136,7 @@ threading obligations; wrappers do not validate game objects.
 | `services::query<T>(provider, name, version)` | Resolve a table with matching size/alignment. Caller must choose the correct C-compatible type. |
 | `services::crash_ranges()` | Resolve the loader's crash-ranges-v1 table; no dependency needed. |
 | `services::trace()` | Resolve the loader's trace-v1 table; no dependency needed. |
+| `services::near_memory()` | Resolve the loader's near-memory-v1 table; no dependency needed. |
 | `services::multiplayer()` | Resolve the loader's multiplayer-v1 table; no dependency needed. |
 | `services::original()` | Resolve the loader's original-v1 table; no dependency needed. |
 | `services::selection()` | Resolve the selection-v1 table from `defiance.selection`. |
@@ -168,6 +169,27 @@ already.
 
 Both may be called from any thread once the table is resolved. A mapping is
 attribution, not proof of who caused a fault. Log text never maps a range.
+
+## Loader service: near memory v1
+
+Provider: `defiance.loader`. Name: `near-memory`. Exact service version: `1`.
+Table: Rust `NearMemoryV1`, C `DefianceNearMemoryV1`. No manifest dependency
+is needed.
+
+Code that a module reaches with a rel32 must sit within 2GB of it. When the
+game's DLLs are relocated low, the game's own allocations can fill that range
+before a plugin asks. The loader therefore reserves 64K slots near
+`logic.dll` and `game.dll` as each one loads. The startup log shows how many
+it holds next to each module's base.
+
+- `take(hint, size) -> usize` commits `size` bytes (1–0x10000) of executable,
+  writable memory in the held slot nearest `hint` that a rel32 from `hint` can
+  reach. It returns the slot's address, or 0 when `size` is out of range or no
+  held slot reaches `hint`. On 0, search for free pages as before.
+  `VirtualFree(address, 0, MEM_RELEASE)` releases the memory.
+
+Callable from any thread. Each call uses up a whole slot, so allocate one block
+and divide it up rather than calling once per small stub.
 
 ## Loader service: multiplayer v1
 

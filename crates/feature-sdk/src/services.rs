@@ -125,6 +125,16 @@ pub unsafe fn crash_ranges() -> Option<&'static defiance_api::CrashRangesV1> {
     unsafe { query(defiance_api::LOADER_PROVIDER, c"crash-ranges", 1) }
 }
 
+/// Resolve the loader's near-memory-v1 table: executable memory held within
+/// rel32 reach of the game's modules. Needs no manifest dependency; None from
+/// a loader that predates it.
+/// # Safety
+/// Same lifecycle requirements as query; the table's call may then be made
+/// from any thread.
+pub unsafe fn near_memory() -> Option<&'static defiance_api::NearMemoryV1> {
+    unsafe { query(defiance_api::LOADER_PROVIDER, c"near-memory", 1) }
+}
+
 /// Resolve the loader's trace-v1 table, for diagnostic call-stack tracing.
 /// Needs no manifest dependency; None from a loader that predates it.
 /// # Safety

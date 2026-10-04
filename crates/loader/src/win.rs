@@ -12,6 +12,7 @@ pub type Handle = *mut c_void;
 pub const DLL_PROCESS_ATTACH: u32 = 1;
 pub const PAGE_EXECUTE_READWRITE: u32 = 0x40;
 pub const MEM_COMMIT: u32 = 0x1000;
+pub const MEM_RESERVE: u32 = 0x2000;
 pub const MEM_COMMIT_RESERVE: u32 = 0x3000;
 pub const MEM_RELEASE: u32 = 0x8000;
 /// Used by the restore-failure tests: decommit but keep the reservation.
@@ -164,6 +165,37 @@ extern "system" {
     ) -> i32;
 }
 
+/// `UNICODE_STRING`: `length` counts bytes, not characters.
+#[repr(C)]
+pub struct UnicodeString {
+    pub length: u16,
+    pub maximum_length: u16,
+    pub buffer: *const u16,
+}
+
+/// The `Loaded` arm of `LDR_DLL_NOTIFICATION_DATA`; the `Unloaded` arm has
+/// the same layout.
+#[repr(C)]
+pub struct DllNotification {
+    pub flags: u32,
+    pub full_name: *const UnicodeString,
+    pub base_name: *const UnicodeString,
+    pub base: *mut c_void,
+    pub size: u32,
+}
+
+/// `LdrRegisterDllNotification`, which `ntdll.lib` does not export, so it is
+/// looked up by name.
+pub type RegisterDllNotification = unsafe extern "system" fn(
+    flags: u32,
+    callback: unsafe extern "system" fn(u32, *const DllNotification, *mut c_void),
+    context: *mut c_void,
+    cookie: *mut *mut c_void,
+) -> i32;
+
+/// `LDR_DLL_NOTIFICATION_REASON_LOADED`.
+pub const DLL_LOADED: u32 = 1;
+
 #[link(name = "psapi")]
 extern "system" {
     pub fn GetModuleInformation(
@@ -184,6 +216,29 @@ pub struct ModuleInfo {
 /// A NUL-terminated UTF-16 string, from `&str`.
 pub fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(core::iter::once(0)).collect()
+}
+
+/// The Wine version when this process runs under Wine or Proton, from the
+/// `wine_get_version` export Wine's `ntdll.dll` carries and Windows' lacks.
+pub fn wine_version() -> Option<String> {
+    let ntdll = unsafe { GetModuleHandleW(wide("ntdll.dll").as_ptr()) };
+    if ntdll.is_null() {
+        return None;
+    }
+    let get = unsafe { GetProcAddress(ntdll, c"wine_get_version".as_ptr().cast()) };
+    if get.is_null() {
+        return None;
+    }
+    let get: unsafe extern "C" fn() -> *const core::ffi::c_char =
+        unsafe { core::mem::transmute(get) };
+    let version = unsafe { get() };
+    Some(if version.is_null() {
+        "unknown".to_string()
+    } else {
+        unsafe { core::ffi::CStr::from_ptr(version) }
+            .to_string_lossy()
+            .into_owned()
+    })
 }
 
 /// The `&str` up to the first NUL of a UTF-16 buffer.

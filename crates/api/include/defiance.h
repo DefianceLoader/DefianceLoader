@@ -130,6 +130,17 @@ typedef struct DefianceCrashRangesV1 {
     int32_t (*unmap)(uintptr_t start);
 } DefianceCrashRangesV1;
 
+/* Provider defiance.loader, name near-memory, service version 1. 64K slots the
+ * loader holds near logic.dll and game.dll from the moment each loads.
+ * take: commits size (1..0x10000) bytes of executable, writable memory in a
+ * held slot within rel32 reach of hint; returns its address, released with
+ * VirtualFree(address, 0, MEM_RELEASE), or 0 when none reaches hint.
+ * Callable from any thread once resolved.
+ */
+typedef struct DefianceNearMemoryV1 {
+    uintptr_t (*take)(uintptr_t hint, uintptr_t size);
+} DefianceNearMemoryV1;
+
 /* Provider defiance.loader, name trace, service version 1. Diagnostic
  * call-stack tracing with a hardware breakpoint: each hit is logged with its
  * registers and stack, and execution resumes unchanged. Four sites at most,

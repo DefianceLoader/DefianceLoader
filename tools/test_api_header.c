@@ -15,6 +15,7 @@ CHECK(offsetof(DefianceServiceApiV1, query_service) == 16, "query offset");
 CHECK(sizeof(DefianceSelectionV1) == 8, "selection table layout");
 CHECK(sizeof(DefianceCrashRangesV1) == 16, "crash ranges table layout");
 CHECK(offsetof(DefianceCrashRangesV1, unmap) == 8, "crash ranges unmap offset");
+CHECK(sizeof(DefianceNearMemoryV1) == 8, "near memory table layout");
 CHECK(sizeof(DefianceTraceV1) == 16, "trace table layout");
 CHECK(offsetof(DefianceTraceV1, stop) == 8, "trace stop offset");
 CHECK(sizeof(DefianceTraceFieldV1) == 32, "trace field layout");

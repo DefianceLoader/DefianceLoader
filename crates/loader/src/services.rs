@@ -47,6 +47,10 @@ fn loader_table(name: &str, version: u32) -> Option<(usize, usize)> {
             &crate::crash::RANGES_API as *const _ as usize,
             core::mem::size_of::<defiance_api::CrashRangesV1>(),
         )),
+        ("near-memory", 1) => Some((
+            &crate::near::API as *const _ as usize,
+            core::mem::size_of::<defiance_api::NearMemoryV1>(),
+        )),
         ("trace", 1) => Some((
             &crate::trace::API as *const _ as usize,
             core::mem::size_of::<defiance_api::TraceV1>(),

@@ -102,6 +102,9 @@ pub fn run() {
     if !is_game_process() {
         return;
     }
+    // Before anything else, while the game's modules still have free pages
+    // around them.
+    crate::near::watch();
     // The patching core's progress notes go to the same log.
     defiance_core::report::set(Box::new(crate::log::info as fn(&str)));
     let config = crate::config::load();
@@ -158,7 +161,10 @@ pub fn run() {
     for name in ["logic.dll", "game.dll"] {
         match crate::resolve::wait_for(name, wait) {
             Some((base, size)) => {
-                crate::log::debug(&format!("{name} at {base:p}, {size:#x} bytes"))
+                let held = crate::near::hold(base as usize, size);
+                crate::log::info(&format!(
+                    "{name} at {base:p}, {size:#x} bytes; {held} pages held within reach"
+                ))
             }
             None => {
                 crate::log::error(&format!(

@@ -78,7 +78,7 @@ pub const BUILTINS: &[Builtin] = &[
     Builtin {
         id: CORE_ID,
         dll: "defiance_plugin_core.dll",
-        version: "0.4.2",
+        version: "0.4.3",
         group: "core",
         summary: "Required support for the infantry and weapon features. Core has no enabled toggle; disable individual features instead.",
         depends: &[],

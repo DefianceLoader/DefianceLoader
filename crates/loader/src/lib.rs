@@ -33,6 +33,7 @@ mod lifecycle;
 mod log;
 mod manifest;
 mod multiplayer;
+mod near;
 mod original;
 mod plan;
 mod plugin;

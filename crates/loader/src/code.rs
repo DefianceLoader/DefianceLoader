@@ -72,16 +72,27 @@ pub fn flush(address: usize, size: usize) -> Result<(), String> {
     Ok(())
 }
 
-/// Commit executable memory as close to `hint` as the address space allows,
-/// walking outward until a rel32 from the target could reach it.
+/// Commit executable memory as close to `hint` as the address space allows:
+/// a slot [`crate::near`] held since the module loaded, or else the first
+/// free one walking outward that a rel32 from the target could reach.
+///
+/// A candidate that is already in use fails with `ERROR_INVALID_ADDRESS`.
+/// Any other error is the system refusing executable memory outright (an
+/// exploit-protection policy, say), so the first one is named in the failure
+/// rather than reported as a full address space.
 pub fn alloc_near(hint: usize, size: usize) -> Result<usize, String> {
     const GRANULARITY: usize = 0x10000;
     const REACH: usize = 0x8000;
+    const ERROR_INVALID_ADDRESS: u32 = 487;
+    if let Some(held) = crate::near::take(hint, size) {
+        return Ok(held);
+    }
     let base = hint & !(GRANULARITY - 1);
+    let mut refused: Option<(u32, usize)> = None;
     for step in 1..REACH {
         for candidate in [
             base.wrapping_add(step * GRANULARITY),
-            base.wrapping_sub(step * GRANULARITY),
+            base.checked_sub(step * GRANULARITY).unwrap_or(0),
         ] {
             if candidate == 0 {
                 continue;
@@ -97,9 +108,19 @@ pub fn alloc_near(hint: usize, size: usize) -> Result<usize, String> {
             if !got.is_null() {
                 return Ok(got as usize);
             }
+            let error = unsafe { win::GetLastError() };
+            if error != ERROR_INVALID_ADDRESS && refused.is_none() {
+                refused = Some((error, candidate));
+            }
         }
     }
-    Err("no free page within reach of the hook".to_string())
+    Err(match refused {
+        Some((error, at)) => format!(
+            "no executable page within reach of the hook: VirtualAlloc at {at:#x} \
+             failed with error {error}"
+        ),
+        None => "no free page within reach of the hook".to_string(),
+    })
 }
 
 /// One page region whose original protection is saved for restore.

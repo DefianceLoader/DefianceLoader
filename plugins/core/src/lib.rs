@@ -12,8 +12,8 @@
 
 use core::ffi::{c_char, c_void, CStr};
 use defiance_api::{
-    Api, PatchContractV1, Plugin, ABI_VERSION, LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_WARN,
-    PATCH_KIND_CALL, PATCH_KIND_ENTRY,
+    Api, PatchContractV1, Plugin, ABI_VERSION, LOG_ERROR, LOG_INFO, LOG_WARN, PATCH_KIND_CALL,
+    PATCH_KIND_ENTRY,
 };
 use defiance_core::apply::{module_image, Process};
 use defiance_core::install::{needs_relocation, Scan};
@@ -326,9 +326,17 @@ struct Pool {
 const POOL_BYTES: usize = 0x10000;
 
 impl Pool {
+    /// A slot the loader has held near the module since it loaded, or else the
+    /// nearest free one: a loader that predates near-memory, or holds none
+    /// within reach.
     fn near(target: &Target) -> Result<Self, String> {
-        let start =
-            Process::open(target.process_id)?.reserve_near(target.base, POOL_BYTES)? as usize;
+        let held = unsafe { defiance_feature_sdk::services::near_memory() }
+            .map(|near| unsafe { (near.take)(target.base as usize, POOL_BYTES) })
+            .unwrap_or(0);
+        let start = match held {
+            0 => Process::open(target.process_id)?.reserve_near(target.base, POOL_BYTES)? as usize,
+            held => held,
+        };
         Ok(Self {
             start,
             size: POOL_BYTES,
@@ -545,7 +553,7 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
         ] {
             say(
                 api,
-                LOG_DEBUG,
+                LOG_INFO,
                 &format!(
                     "{} at {:#x}..{:#x}",
                     label.to_string_lossy(),
