@@ -48,7 +48,7 @@ Windows loads DLLs at different addresses.
 The helper maps the instruction to a DLL or a registered allocation. Patch and
 trampoline mappings name their installing plugin; Core's mappings name each
 built-in feature's patch unit (`selection-logic unit`). Plugins map their own allocations through the loader's
-crash-ranges service ([plugin-api.md](plugin-api.md)); log lines never map one. `payload-entry` rows in the session name each unit's entries
+crash-ranges service ([plugin-api.md](plugin-api.md)); log lines never map one. With `[logging] level = debug`, `payload-entry` rows in the session name each unit's entries
 and their addresses for disassembly. Fault location is not proof of
 who originally corrupted an object.
 

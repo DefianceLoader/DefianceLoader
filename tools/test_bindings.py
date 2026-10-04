@@ -12,6 +12,7 @@ GENERATORS = {
     "tools/squad_scroll_bindings.py": "plugins/squad-management-scroll/src/sites.rs",
     "tools/ammo_menu_sites.py": "plugins/expanded-ammo-menu/src/sites.rs",
     "tools/ability_groups_bindings.py": "plugins/ability-groups/src/sites.rs",
+    "tools/weapon_drop_bindings.py": "plugins/weapon-drops/src/sites.rs",
 }
 
 

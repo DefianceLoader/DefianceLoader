@@ -10,6 +10,15 @@ defiance_feature_sdk::service_handshake!();
 
 /// Every supported build's units (`build.rs`).
 static UNITS: &[Embedded] = include!(concat!(env!("OUT_DIR"), "/units.rs"));
+defiance_feature_sdk::export_unit_patch_contract!(
+    UNITS,
+    if cfg!(feature = "rust-controls") {
+        &["firing_set", "firing_ui"]
+    } else {
+        &[]
+    },
+    false,
+);
 
 unsafe extern "C" fn init(api: *const Api) -> i32 {
     #[cfg(feature = "rust-controls")]

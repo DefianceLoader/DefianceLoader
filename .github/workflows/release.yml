@@ -43,13 +43,26 @@ jobs:
           cargo build --release --manifest-path plugins/squad-management-scroll/Cargo.toml
           cargo build --release --manifest-path plugins/unit-inspection/Cargo.toml
           cargo build --release --manifest-path plugins/ability-groups/Cargo.toml
+          cargo build --release --manifest-path plugins/legion-vehicle-hacking/Cargo.toml
+          cargo build --release --manifest-path plugins/vehicle-arrival/Cargo.toml
+          cargo build --release --manifest-path plugins/cover-markers/Cargo.toml
+          cargo build --release --manifest-path plugins/weapon-drops/Cargo.toml
           target\release\manifest-gen.exe --out target\release
+      - name: Verify the release injector
+        run: |
+          cargo test -p defiance-pickup-inject
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python tools/test_check_injector.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python tools/check_injector.py
       - name: Package and checksum
         id: package
         shell: pwsh
         run: |
           $name = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 10))" }
           python tools/package.py --out "out/release/defiance-loader-$name.zip"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python tools/package.py --startup exe --out "out/release/defiance-loader-exe-$name.zip"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # PowerShell does not expand globs for native commands; list the files.
           python tools/checksums.py (Get-ChildItem out/release/*.zip).FullName --out out/release/SHA256SUMS.txt

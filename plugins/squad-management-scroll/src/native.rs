@@ -10,12 +10,14 @@ use super::{
     Build, ACTIVE, ENGINE, LOG_DEBUG, LOG_WARN, ORIGINAL, ORIGINAL_SQUAD_CHOOSER, ORIGINAL_THUMB,
     ORIGINAL_VEHICLE, ORIGINAL_VEHICLE_CHOOSER,
 };
+mod training;
 use core::{ffi::c_char, ptr};
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
     sync::atomic::{AtomicPtr, Ordering},
 };
+pub(super) use training::training_show;
 
 /// The range of the `perk_slots` setting (the manifest declares the same and
 /// the default, five, which matches stock). Fewer than five would blank cards
@@ -106,6 +108,9 @@ pub(super) struct Engine {
     listen: Two,
     thumb: One,
     slider_vtable: usize,
+    training_layout: training::Place,
+    training_vtable: usize,
+    training_destroy: unsafe extern "C" fn(usize, u32) -> usize,
     squad_vtable: usize,
     vehicle_vtable: usize,
     context_service: usize,
@@ -151,6 +156,9 @@ impl Engine {
             listen: std::mem::transmute::<usize, Two>(base + b.listen.rva),
             thumb: std::mem::transmute::<usize, One>(base + b.thumb.rva),
             slider_vtable: base + b.slider_vtable,
+            training_layout: std::mem::transmute(base + b.training_layout.rva),
+            training_vtable: base + b.training_vtable,
+            training_destroy: std::mem::transmute(base + b.training_destroy.rva),
             squad_vtable: base + b.panel_vtable,
             vehicle_vtable: base + b.vehicle_vtable,
             context_service: b.context_service,
@@ -939,9 +947,12 @@ pub(super) unsafe extern "C" fn refresh_vehicle(panel: usize) {
 pub(super) unsafe extern "C" fn destroy(panel: usize, flags: u32) -> usize {
     STATES.with(|s| s.borrow_mut().remove(&panel));
     let e = ENGINE.get().unwrap();
-    // Each panel class has its own deleting destructor; both slots point here,
-    // so the original is chosen from the object's own vtable before it runs.
-    let original = if read::<usize>(panel) == e.vehicle_vtable {
+    // Each window class has its own deleting destructor. Select the original
+    // from the object's vtable before it runs.
+    let original = if read::<usize>(panel) == e.training_vtable {
+        training::forget(panel);
+        e.training_destroy
+    } else if read::<usize>(panel) == e.vehicle_vtable {
         e.vehicle_destroy
     } else {
         e.destroy
@@ -982,6 +993,15 @@ pub(super) unsafe extern "C" fn dispatch(panel: usize, source: usize, arg: usize
     let e = ENGINE.get().unwrap();
     if event != 0 && ACTIVE.load(Ordering::Acquire) {
         let message = read::<u32>(event);
+        if read::<usize>(panel) == e.training_vtable {
+            if let Some(_guard) = Guard::enter() {
+                if training::input(panel, source, event) {
+                    return;
+                }
+            }
+            (e.dispatch)(panel, source, arg, event);
+            return;
+        }
         if message == 0x20a || message == 0x481 {
             if let Some(_guard) = Guard::enter() {
                 if let Some(layout) = layout_of(e, panel) {
@@ -1179,6 +1199,9 @@ pub(super) unsafe extern "C" fn slider_dispatch(
     let message = if event != 0 { read::<u32>(event) } else { 0 };
     if message == 0x20a && ACTIVE.load(Ordering::Acquire) {
         if let Some(_guard) = Guard::enter() {
+            if training::wheel_slider(read(ctrl + 8), event) {
+                return;
+            }
             if let Some((panel, layout, section)) = owner(e, read(ctrl + 8)) {
                 // Normalize the stock horizontal slider's reversed wheel
                 // direction, and retain sub-tick deltas as on the cards.

@@ -441,6 +441,7 @@ pub static BUILDS: &[Build] = &[
             pool_get: 0x1b8,
             world_player: 0x700,
             ai_set: 0x3e0,
+            tooltip: 0x238,
         },
     },
     Build {
@@ -883,6 +884,7 @@ pub static BUILDS: &[Build] = &[
             pool_get: 0x1b8,
             world_player: 0x700,
             ai_set: 0x3e0,
+            tooltip: 0x258,
         },
     },
     Build {
@@ -1325,6 +1327,7 @@ pub static BUILDS: &[Build] = &[
             pool_get: 0x1c8,
             world_player: 0x708,
             ai_set: 0x3f8,
+            tooltip: 0x238,
         },
     },
     Build {
@@ -1767,6 +1770,7 @@ pub static BUILDS: &[Build] = &[
             pool_get: 0x1c8,
             world_player: 0x708,
             ai_set: 0x3f8,
+            tooltip: 0x258,
         },
     },
     Build {
@@ -2209,6 +2213,7 @@ pub static BUILDS: &[Build] = &[
             pool_get: 0x1c8,
             world_player: 0x708,
             ai_set: 0x3f8,
+            tooltip: 0x238,
         },
     },
     Build {
@@ -2651,6 +2656,7 @@ pub static BUILDS: &[Build] = &[
             pool_get: 0x1c8,
             world_player: 0x708,
             ai_set: 0x3f8,
+            tooltip: 0x258,
         },
     },
 ];

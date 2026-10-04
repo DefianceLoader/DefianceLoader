@@ -1,3 +1,7 @@
+#[cfg(feature = "patch-v1-test")]
+#[path = "../patch_v1_test.rs"]
+mod patch_v1_test;
+
 fn main() {
     let exe = std::env::current_exe().unwrap();
     let dir = exe.parent().unwrap();
@@ -9,6 +13,13 @@ fn main() {
         Some("remove") => return remove(dir),
         Some("toggle") => return toggle(dir),
         Some("settings") => return settings(dir),
+        Some("live-enable-settings") => return live_enable_settings(dir),
+        Some("live-enable-reload") => return live_enable_reload(dir),
+        Some("revoke-target") => return revoke_reload_permission(dir, true),
+        Some("revoke-consumer") => return revoke_reload_permission(dir, false),
+        Some("mixed-reload-config") => return mixed_reload_config(dir),
+        #[cfg(feature = "patch-v1-test")]
+        Some("patch-v1") => return patch_v1_test::run(),
         _ => {}
     }
     for (id, state) in defiance_loader::test_host::run_plugins(dir) {
@@ -147,6 +158,22 @@ fn add(dir: &std::path::Path) {
     if let Some(total) = query::<TotalV1>(c"example.counter-user", c"total", 1) {
         println!("total: {}", unsafe { (total.total)() });
     }
+    let result = defiance_loader::test_host::resettle_plugin("example.counter-user");
+    println!("resettle added: {result:?}");
+    print_loaded();
+
+    let manifest = plugins.join("defiance_example_counter_user.plugin.json");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let changed = text.replacen(
+        "\"settings\": [",
+        "\"settings\":[{\"key\":\"audit_marker\",\"type\":\"bool\",\"default\":\"false\",\"description\":\"Audit marker.\"},",
+        1,
+    );
+    assert_ne!(changed, text, "the fixture manifest has a settings array");
+    std::fs::write(manifest, changed).unwrap();
+    let result = defiance_loader::test_host::resettle_plugin("example.counter-user");
+    println!("resettle changed schema: {result:?}");
+    print_loaded();
 }
 
 /// The counter and counter-user at startup; the counter's files are then
@@ -224,6 +251,180 @@ fn settings(dir: &std::path::Path) {
     let result = defiance_loader::test_host::toggle_plugin("example.counter", true);
     println!("on: {result:?}");
     print_loaded();
+}
+
+/// A plugin disabled in the startup snapshot is enabled live, then reloaded
+/// with a changed setting from the current configuration.
+fn live_enable_settings(dir: &std::path::Path) {
+    let config = dir.join("../DefianceLoader/config/examples.ini");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(&config, "[example.counter]\nenabled = false\n").unwrap();
+    for (id, state) in defiance_loader::test_host::load_plugins(dir) {
+        println!("{id}: {state}");
+    }
+    print_loaded();
+
+    set_enabled(dir, "example.counter", true);
+    let result = defiance_loader::test_host::toggle_plugin("example.counter", true);
+    println!("live enable: {result:?}");
+    print_loaded();
+
+    set_value(dir, "example.counter", "fail_init", "true");
+    let result = defiance_loader::test_host::resettle_plugin("example.counter");
+    println!("settings after live enable: {result:?}");
+    print_loaded();
+
+    set_value(dir, "example.counter", "fail_init", "false");
+    let result = defiance_loader::test_host::toggle_plugin("example.counter", true);
+    println!("re-enabled: {result:?}");
+    print_loaded();
+}
+
+/// Start with the provider disabled and its consumer enabled. Enable both
+/// after startup, then reload the provider's DLL; planning must use their
+/// current enabled state rather than the startup snapshot.
+fn live_enable_reload(dir: &std::path::Path) {
+    let config = dir.join("../DefianceLoader/config/examples.ini");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &config,
+        "[example.counter]\nenabled = false\n[example.counter-user]\nenabled = true\n",
+    )
+    .unwrap();
+    for (id, state) in defiance_loader::test_host::load_plugins(dir) {
+        println!("{id}: {state}");
+    }
+    print_loaded();
+
+    set_enabled(dir, "example.counter", true);
+    let result = defiance_loader::test_host::toggle_plugin("example.counter", true);
+    println!("live enable provider: {result:?}");
+    set_enabled(dir, "example.counter-user", true);
+    let result = defiance_loader::test_host::toggle_plugin("example.counter-user", true);
+    println!("live enable consumer: {result:?}");
+    print_loaded();
+
+    let before = defiance_loader::test_host::loaded_plugins();
+    let provider = dir.join("../DefianceLoader/plugins/defiance_example_counter.dll");
+    let bytes = std::fs::read(&provider).unwrap();
+    std::fs::write(&provider, &bytes).unwrap();
+    let result = defiance_loader::test_host::reload_plugin("example.counter");
+    println!("reload: {result:?}");
+    let after = defiance_loader::test_host::loaded_plugins();
+    print_owner_changes(&before, &after);
+    if let Some(total) = query::<TotalV1>(c"example.counter-user", c"total", 1) {
+        println!("total after reload: {}", unsafe { (total.total)() });
+    }
+}
+
+/// Revoke permission on either the replacement target or a reloadable
+/// dependant, then attempt a group reload. Preflight must refuse before any
+/// owner is unloaded or service table is replaced.
+fn revoke_reload_permission(dir: &std::path::Path, revoke_target: bool) {
+    for (id, state) in defiance_loader::test_host::load_plugins(dir) {
+        println!("{id}: {state}");
+    }
+    let provider_before =
+        query::<TotalV1>(c"example.counter", c"counter", 1).expect("the provider service");
+    let consumer_before =
+        query::<TotalV1>(c"example.counter-user", c"total", 1).expect("the consumer service");
+    println!("total before: {}", unsafe { (consumer_before.total)() });
+    let before = defiance_loader::test_host::loaded_plugins();
+
+    let manifest_name = if revoke_target {
+        "defiance_example_counter.plugin.json"
+    } else {
+        "defiance_example_counter_user.plugin.json"
+    };
+    let manifest = dir.join("../DefianceLoader/plugins").join(manifest_name);
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let changed = if text.contains("\"hot_reload\"") {
+        text.replace("\"hot_reload\": true", "\"hot_reload\": false")
+    } else {
+        let body = text.trim_end().strip_suffix('}').unwrap().trim_end();
+        format!(
+            "{},\n  \"hot_reload\": false\n}}\n",
+            body.trim_end_matches(',')
+        )
+    };
+    assert_ne!(changed, text, "manifest reload permission changed");
+    assert!(changed.contains("\"hot_reload\": false"), "{changed}");
+    std::fs::write(manifest, changed).unwrap();
+
+    let provider = dir.join("../DefianceLoader/plugins/defiance_example_counter.dll");
+    let bytes = std::fs::read(&provider).unwrap();
+    std::fs::write(&provider, &bytes).unwrap();
+    let result = defiance_loader::test_host::reload_plugin("example.counter");
+    println!("reload: {result:?}");
+    let after = defiance_loader::test_host::loaded_plugins();
+    print_owner_changes(&before, &after);
+    print_loaded();
+
+    let provider_after = query::<TotalV1>(c"example.counter", c"counter", 1)
+        .expect("the provider service remains available");
+    let consumer_after = query::<TotalV1>(c"example.counter-user", c"total", 1)
+        .expect("the consumer service remains available");
+    println!(
+        "provider service unchanged: {}",
+        core::ptr::eq(provider_before, provider_after)
+    );
+    println!(
+        "consumer service unchanged: {}",
+        core::ptr::eq(consumer_before, consumer_after)
+    );
+    println!("total after: {}", unsafe { (consumer_after.total)() });
+}
+
+fn print_owner_changes(before: &[(String, usize)], after: &[(String, usize)]) {
+    for (id, owner) in after {
+        let old = before
+            .iter()
+            .find(|(old_id, _)| old_id == id)
+            .map(|(_, old)| *old);
+        println!(
+            "loaded {id}: {}",
+            if old == Some(*owner) { "same" } else { "new" }
+        );
+    }
+}
+
+/// Queue a provider DLL change together with a consumer setting change that
+/// makes the consumer's init fail. The failed candidate must not be committed.
+fn mixed_reload_config(dir: &std::path::Path) {
+    for (id, state) in defiance_loader::test_host::load_plugins(dir) {
+        println!("{id}: {state}");
+    }
+    let before = defiance_loader::test_host::loaded_plugins();
+    let provider = dir.join("../DefianceLoader/plugins/defiance_example_counter.dll");
+    let mut bytes = std::fs::read(&provider).unwrap();
+    // A changed length guarantees the watcher observes a new stamp. The PE
+    // loader ignores this trailing overlay byte.
+    bytes.push(0);
+    std::fs::write(&provider, bytes).unwrap();
+    set_value(dir, "example.counter-user", "service_version", "2");
+
+    let result = defiance_loader::test_host::apply_reload_and_config(
+        "example.counter",
+        "example.counter-user",
+    );
+    println!("apply mixed: {result:?}");
+    let after = defiance_loader::test_host::loaded_plugins();
+    print_owner_changes(&before, &after);
+    print_loaded();
+
+    let api = defiance_loader::test_host::build_api();
+    let version = unsafe {
+        let value = (api.config_get)(
+            c"example.counter-user".as_ptr(),
+            c"service_version".as_ptr(),
+        );
+        (!value.is_null()).then(|| {
+            core::ffi::CStr::from_ptr(value)
+                .to_string_lossy()
+                .into_owned()
+        })
+    };
+    println!("service version after failed config: {version:?}");
 }
 
 /// Load, replace the provider's DLL on disk (possible only because the loader

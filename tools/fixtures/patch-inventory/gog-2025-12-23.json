@@ -46,13 +46,8 @@
     ["game", 3438544, 5, "function"],
     ["game", 3439520, 5, "function"]
   ]},
-   "defiance.diagnostics": {"state": "Active", "spans": [
-    ["logic", 4295856, 9, "byte patch"],
-    ["logic", 4296512, 5, "byte patch"],
-    ["logic", 4297552, 7, "byte patch"],
-    ["logic", 4297968, 5, "byte patch"],
-    ["logic", 4419376, 7, "byte patch"]
-  ]},
+   "defiance.cover-markers": {"state": "Disabled", "spans": []},
+   "defiance.diagnostics": {"state": "Active", "spans": []},
    "defiance.expanded-ammo-menu": {"state": "Active", "spans": [
     ["game", 253628, 5, "byte patch"],
     ["game", 253639, 7, "byte patch"],
@@ -136,9 +131,21 @@
     ["logic", 3251412, 7, "byte patch"],
     ["logic", 4441805, 7, "byte patch"]
   ]},
+   "defiance.legion-vehicle-hacking": {"state": "Active", "spans": [
+    ["game", 3371973, 2, "byte patch"]
+  ]},
    "defiance.movement": {"state": "Active", "spans": [
     ["logic", 4431922, 5, "byte patch"]
   ]},
+   "defiance.moving-actions": {"state": "Active", "spans": [
+    ["logic", 2870164, 1, "byte patch"],
+    ["logic", 2870165, 1, "byte patch"],
+    ["logic", 2870184, 1, "byte patch"]
+  ]},
+   "defiance.moving-actions-animation": {"state": "Failed", "spans": []},
+   "defiance.moving-actions-render-sync": {"state": "Failed", "spans": []},
+   "defiance.moving-actions-sync": {"state": "Failed", "spans": []},
+   "defiance.moving-grenades": {"state": "Failed", "spans": []},
    "defiance.pickup": {"state": "Active", "spans": [
     ["logic", 4437976, 5, "call site"]
   ]},
@@ -192,7 +199,6 @@
     ["logic", 4292904, 6, "byte patch"],
     ["logic", 4295898, 124, "byte patch"],
     ["logic", 4296223, 5, "byte patch"],
-    ["logic", 4296336, 29, "byte patch"],
     ["logic", 4296855, 5, "byte patch"],
     ["logic", 4297008, 5, "byte patch"],
     ["logic", 4297481, 11, "byte patch"],
@@ -203,17 +209,43 @@
     ["logic", 4493776, 18, "byte patch"]
   ]},
    "defiance.squad-management-scroll": {"state": "Active", "spans": [
+    ["game", 2724704, 22, "function"],
     ["game", 2739264, 21, "function"],
     ["game", 2746048, 21, "function"],
     ["game", 2764496, 22, "function"],
     ["game", 2767936, 21, "function"],
     ["game", 2908544, 24, "function"],
+    ["game", 5342056, 8, "byte patch"],
+    ["game", 5342064, 8, "byte patch"],
     ["game", 5343176, 8, "byte patch"],
     ["game", 5343184, 8, "byte patch"],
     ["game", 5344040, 8, "byte patch"],
     ["game", 5344048, 8, "byte patch"],
     ["game", 5349816, 8, "byte patch"]
   ]},
-   "defiance.unit-inspection": {"state": "Active", "spans": []}
+   "defiance.unit-inspection": {"state": "Active", "spans": []},
+   "defiance.vehicle-arrival": {"state": "Active", "spans": [
+    ["logic", 1199072, 10, "function"]
+  ]},
+   "defiance.vehicle-special-fire": {"state": "Active", "spans": [
+    ["game", 2357215, 7, "function"],
+    ["logic", 918352, 5, "function"],
+    ["logic", 1090240, 5, "function"],
+    ["logic", 1094384, 5, "function"],
+    ["logic", 1834400, 7, "byte patch"],
+    ["logic", 2662448, 5, "function"],
+    ["logic", 2717504, 7, "function"],
+    ["logic", 2718752, 5, "function"],
+    ["logic", 2720432, 5, "function"],
+    ["logic", 2722208, 5, "function"],
+    ["logic", 2726336, 5, "function"],
+    ["logic", 2726882, 10, "byte patch"],
+    ["logic", 2727173, 8, "byte patch"],
+    ["logic", 4621259, 5, "byte patch"],
+    ["logic", 4622043, 5, "byte patch"],
+    ["logic", 4623792, 5, "byte patch"],
+    ["logic", 4624619, 5, "byte patch"]
+  ]},
+   "defiance.weapon-drops": {"state": "Failed", "spans": []}
  }
 }

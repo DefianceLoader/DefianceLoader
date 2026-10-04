@@ -28,6 +28,7 @@ enum {
 typedef struct DefianceApi {
     uint32_t abi_version;
     uint32_t reserved; /* must be zero */
+    /* The API table binds log messages to its plugin ID, on any thread. */
     void (*log)(uint32_t level, const char *message);
     void *(*module_base)(const char *name);
     size_t (*module_size)(void *base);
@@ -35,12 +36,12 @@ typedef struct DefianceApi {
     void *(*find_pattern)(void *base, size_t size, const char *pattern);
     /* offset bytes into the signature window; offset 0 is find_pattern */
     void *(*find_pattern_at)(void *base, size_t size, const char *pattern, size_t offset);
-    /* Decode whole instructions; refuse spans needing relative relocation.
-       Distant detours use an owned nearby relay when the span is short. */
+    /* Managed requests stage until their group commits before the next legacy
+       initializer or at startup end. Decode whole instructions. */
     int32_t (*hook)(void *target, void *detour, void **original);
-    /* Exact count is never expanded; same validation and relay support as hook. */
+    /* Exact count is never expanded; same validation as hook. */
     int32_t (*hook_exact)(void *target, void *detour, size_t displaced, void **original);
-    /* redirect one direct call; *original gets the address it reached before */
+    /* redirect one direct call; managed requests commit with their group */
     int32_t (*hook_call)(void *site, void *detour, void **original);
     int32_t (*unhook)(void *target);
     void *(*rtti_method)(const char *class_name, const char *method);
@@ -54,7 +55,7 @@ typedef struct DefianceApi {
        to keep it. Legacy ABI 5 plugins can still read their own
        defiance-loader.ini sections here. */
     const char *(*config_get)(const char *plugin_id, const char *key);
-    /* compare/replace an owned byte span; unhook restores it */
+    /* compare/replace an owned span; managed writes stage until plan commit */
     int32_t (*patch_bytes)(void *target, const uint8_t *before, const uint8_t *after, size_t length);
 } DefianceApi;
 
@@ -62,9 +63,36 @@ typedef struct DefiancePlugin {
     uint32_t abi_version; /* must be DEFIANCE_ABI_VERSION */
     const char *name;
     const char *version;
-    int32_t (*init)(const DefianceApi *api); /* 0 = loaded */
+    /* 0 = initialized; managed plan conflicts may still call stop() */
+    int32_t (*init)(const DefianceApi *api);
     void (*stop)(void);
 } DefiancePlugin;
+
+/* Optional versioned export, separate from ABI 5's DefiancePlugin layout. */
+#define DEFIANCE_PATCH_KIND_ENTRY 1u
+#define DEFIANCE_PATCH_KIND_BYTES 2u
+#define DEFIANCE_PATCH_KIND_CALL 3u
+
+typedef struct DefiancePatchContractEntryV1 {
+    const char *module; /* loaded module basename, e.g. "logic.dll" */
+    size_t rva;
+    uint32_t kind; /* one of DEFIANCE_PATCH_KIND_* */
+    const uint8_t *before;
+    size_t before_len;
+    /* Optional exact replacement; null/zero for runtime-linked branches/hooks. */
+    const uint8_t *after;
+    size_t after_len;
+} DefiancePatchContractEntryV1;
+
+typedef struct DefiancePatchContractV1 {
+    uint32_t version; /* must be 1 */
+    uint32_t size; /* must be at least sizeof(DefiancePatchContractV1) */
+    const DefiancePatchContractEntryV1 *entries;
+    size_t count;
+} DefiancePatchContractV1;
+
+/* Optional export: const DefiancePatchContractV1 *fn(const DefianceApi *api). */
+typedef const DefiancePatchContractV1 *(*DefiancePatchContractFnV1)(const DefianceApi *api);
 
 /* Optional extension, independent of ABI 5. A plugin may export:
  * __declspec(dllexport) int32_t defiance_plugin_services(const DefianceServiceApiV1 *);
@@ -115,6 +143,71 @@ typedef struct DefianceTraceV1 {
     int32_t (*trace)(uintptr_t address, uint32_t hits, const char *label);
     int32_t (*stop)(uintptr_t address);
 } DefianceTraceV1;
+
+#define DEFIANCE_TRACE_FIELDS 16
+#define DEFIANCE_TRACE_FRAMES 16
+#define DEFIANCE_TRACE_REGISTERS 17
+#define DEFIANCE_TRACE_U8 1
+#define DEFIANCE_TRACE_U16 2
+#define DEFIANCE_TRACE_U32 3
+#define DEFIANCE_TRACE_U64 4
+#define DEFIANCE_TRACE_F32 5
+#define DEFIANCE_TRACE_F64 6
+#define DEFIANCE_TRACE_NO_FILTER UINT32_MAX
+
+/* Registers: rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi, r8..r15, rip.
+ * Depth 0 captures the register's low bits at the declared width.
+ * Depth 1..4 adds each signed offset, reads
+ * pointers at intermediate steps, then reads kind at the final address.
+ * Floating-point values are raw bits. Unreadable paths clear the valid bit. */
+typedef struct DefianceTraceFieldV1 {
+    uint32_t reg, kind;
+    int32_t offsets[4];
+    uint32_t depth, reserved;
+} DefianceTraceFieldV1;
+
+typedef struct DefianceTraceRequestV1 {
+    uint32_t size, hits;
+    uintptr_t address;
+    uint32_t every, min_interval_ms, field_count, stack_frames;
+    uint32_t filter_field, reserved;
+    uint64_t filter_value, filter_mask;
+    DefianceTraceFieldV1 fields[DEFIANCE_TRACE_FIELDS];
+} DefianceTraceRequestV1;
+
+typedef struct DefianceTraceEventV1 {
+    uintptr_t address;
+    uint64_t sequence, timestamp_ms;
+    uint32_t thread_id, valid_fields;
+    uint64_t registers[DEFIANCE_TRACE_REGISTERS];
+    uint64_t values[DEFIANCE_TRACE_FIELDS];
+    uint32_t frame_count, scanned_frames;
+    uintptr_t frames[DEFIANCE_TRACE_FRAMES];
+} DefianceTraceEventV1;
+
+typedef struct DefianceTraceStatsV1 {
+    uint64_t hits, captured, dropped;
+    uint32_t active, reserved;
+} DefianceTraceStatsV1;
+
+/* Provider defiance.loader, name trace-capture, version 1. Plans/events are
+ * copied; no plugin callbacks run in the exception handler. Four sites shared
+ * with trace-v1. Open only during init; all other operations any thread.
+ * Failed init/unload revokes sessions. Request size must match, reserved=0,
+ * hits=1..1000000, every>=1, field_count<=16, stack_frames<=16.
+ * A filter requires a readable field and masked equality. Hits count all
+ * encounters. Finished sites retain their queue and slot until stop/close.
+ * open: nonzero session or 0. start: 0 success, 1 invalid, 2 full, 3 duplicate,
+ * 4 unavailable, 5 closed session. poll: count copied or negative invalid;
+ * events may be NULL only for capacity=0, stats may be NULL. stop/close:
+ * 0 success or 1 unknown/closed. Handles never identify a replacement site. */
+typedef struct DefianceTraceCaptureV1 {
+    uint64_t (*open)(void);
+    int32_t (*start)(uint64_t session, const DefianceTraceRequestV1 *request, uint64_t *handle);
+    int32_t (*poll)(uint64_t handle, DefianceTraceEventV1 *events, size_t capacity, DefianceTraceStatsV1 *stats);
+    int32_t (*stop)(uint64_t handle);
+    int32_t (*close)(uint64_t session);
+} DefianceTraceCaptureV1;
 
 /* Provider defiance.loader, name multiplayer, service version 1. Which active
  * plugins block multiplayer (no multiplayer_safe in their manifest). Any
@@ -198,6 +291,12 @@ typedef struct DefianceAmmoMenuV1 {
     int32_t (*publish)(uint32_t slots);
 } DefianceAmmoMenuV1;
 
+typedef int32_t (*DefianceAmmoStepHandlerV1)(void *menu, void *widget,
+                                             int32_t direction);
+typedef struct DefianceAmmoStepV1 {
+    void (*set_handler)(DefianceAmmoStepHandlerV1 handler);
+} DefianceAmmoStepV1;
+
 /* A function a patch unit names in its natives, replaced by detour. */
 typedef struct DefianceNativeReplacementV1 {
     const char *name;
@@ -212,14 +311,15 @@ typedef struct DefiancePatchUnitV1 {
     size_t code_len;
 } DefiancePatchUnitV1;
 
-/* Core service "patch" v1: prepare, fill cells, install; during init only.
- * See docs/plugin-api.md. */
+/* Core service "patch" v1: prepare, fill cells, install during init; contract
+ * reads the accepted writes after successful init. See docs/plugin-api.md. */
 typedef struct DefiancePatchV1 {
     void *(*prepare)(const DefianceApi *api, const DefiancePatchUnitV1 *units, size_t count);
     size_t (*cell)(void *prepared, const char *name);
     int32_t (*install)(const DefianceApi *api, void *prepared,
                        const DefianceNativeReplacementV1 *replacements, size_t count,
                        void *call_detour);
+    const DefiancePatchContractV1 *(*contract)(const DefianceApi *api, void *prepared);
 } DefiancePatchV1;
 
 /* Core service "build" v1: the recognised build's name, process lifetime. */

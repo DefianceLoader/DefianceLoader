@@ -32,6 +32,16 @@ pub const PLUGIN_ENTRY: &[u8] = b"defiance_plugin\0";
 /// Export `extern "C" fn(*const ServiceApiV1) -> i32` under this name.
 pub const SERVICES_ENTRY: &[u8] = b"defiance_plugin_services\0";
 
+/// Optional expected-write declaration for managed plugins. The loader calls
+/// `extern "C" fn(*const Api) -> *const PatchContractV1` after successful
+/// `init`, before its managed requests are planned or published.
+pub const PATCH_CONTRACT_ENTRY: &[u8] = b"defiance_patch_contract_v1\0";
+
+/// Patch request kinds used by [`PatchContractEntryV1`].
+pub const PATCH_KIND_ENTRY: u32 = 1;
+pub const PATCH_KIND_BYTES: u32 = 2;
+pub const PATCH_KIND_CALL: u32 = 3;
+
 /// Service discovery is permitted only on the thread executing plugin init.
 /// Providers register permanent C-compatible tables; consumers resolve tables
 /// from declared dependencies and cache them. The loader never owns table memory.
@@ -95,6 +105,121 @@ pub struct TraceV1 {
     /// Release `address` before its hits are logged. Returns 0, or 1 when it
     /// is not traced.
     pub stop: unsafe extern "C" fn(address: usize) -> i32,
+}
+
+/// Limits of the loader's bounded trace-capture service.
+pub const TRACE_FIELDS: usize = 16;
+pub const TRACE_FRAMES: usize = 16;
+pub const TRACE_REGISTERS: usize = 17;
+/// Field encodings; floating-point values are returned as their raw bits.
+pub const TRACE_U8: u32 = 1;
+pub const TRACE_U16: u32 = 2;
+pub const TRACE_U32: u32 = 3;
+pub const TRACE_U64: u32 = 4;
+pub const TRACE_F32: u32 = 5;
+pub const TRACE_F64: u32 = 6;
+pub const TRACE_NO_FILTER: u32 = u32::MAX;
+
+/// An at-hit field read, copied by the loader before arming a breakpoint.
+/// Registers use the order rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi, r8..r15, rip.
+/// With depth zero, capture the register's low bits at the declared width.
+/// Otherwise add each signed offset, reading a pointer at intermediate steps
+/// and `kind` at the last.
+/// An unreadable or overflowing path clears the event's corresponding valid bit.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TraceFieldV1 {
+    pub register: u32,
+    pub kind: u32,
+    pub offsets: [i32; 4],
+    pub depth: u32,
+    pub reserved: u32,
+}
+
+/// A bounded capture plan. `size` must equal `size_of::<TraceRequestV1>()`;
+/// reserved fields must be zero. Hits (1..=1_000_000) count all encounters,
+/// including filtered and sampled hits. Every must be positive. The minimum
+/// interval is per site, measured in milliseconds of system uptime.
+/// `filter_field` is [`TRACE_NO_FILTER`] or a valid field index; its read must
+/// succeed and its masked value must equal the masked `filter_value`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TraceRequestV1 {
+    pub size: u32,
+    pub hits: u32,
+    pub address: usize,
+    pub every: u32,
+    pub min_interval_ms: u32,
+    pub field_count: u32,
+    pub stack_frames: u32,
+    pub filter_field: u32,
+    pub reserved: u32,
+    pub filter_value: u64,
+    pub filter_mask: u64,
+    pub fields: [TraceFieldV1; TRACE_FIELDS],
+}
+
+/// A snapshot owned entirely by the caller after polling. Field values contain
+/// raw bits; `valid_fields` marks successful reads. Stack frame addresses are
+/// captured at the hit, with scanned-frame bits marking speculative return
+/// addresses from a bounded stack scan.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TraceEventV1 {
+    pub address: usize,
+    pub sequence: u64,
+    pub timestamp_ms: u64,
+    pub thread_id: u32,
+    pub valid_fields: u32,
+    pub registers: [u64; TRACE_REGISTERS],
+    pub values: [u64; TRACE_FIELDS],
+    pub frame_count: u32,
+    pub scanned_frames: u32,
+    pub frames: [usize; TRACE_FRAMES],
+}
+
+/// Cumulative statistics for one capture handle. `active` becomes zero when
+/// the hit limit is reached; queued events remain available until stop.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TraceStatsV1 {
+    pub hits: u64,
+    pub captured: u64,
+    pub dropped: u64,
+    pub active: u32,
+    pub reserved: u32,
+}
+
+/// `defiance.loader` / `trace-capture`, version 1. Four hardware sites shared
+/// with [`TraceV1`]. Plans and event buffers live in the loader; the exception
+/// handler never calls plugin code. A site retains its slot until stopped.
+/// The loader automatically closes a plugin's handles on failed init or unload.
+#[repr(C)]
+pub struct TraceCaptureV1 {
+    /// Init-thread only. Creates a plugin-owned session capability; zero when
+    /// called outside init. A session permits reconfiguration from a worker.
+    pub open: unsafe extern "C" fn() -> u64,
+    /// Any thread with a live session. Copies the plan and writes a nonzero
+    /// generation handle.
+    /// Returns 0 on success; 1 invalid, 2 full, 3 duplicate, 4 unavailable,
+    /// 5 closed/unknown session. The request and handle pointers must be valid.
+    pub start:
+        unsafe extern "C" fn(session: u64, request: *const TraceRequestV1, handle: *mut u64) -> i32,
+    /// Any thread until stop. Copies up to capacity events and current stats.
+    /// Returns the number copied, or a negative value for invalid/closed handles.
+    /// Stats may be null; events may be null only when capacity is zero.
+    pub poll: unsafe extern "C" fn(
+        handle: u64,
+        events: *mut TraceEventV1,
+        capacity: usize,
+        stats: *mut TraceStatsV1,
+    ) -> i32,
+    /// Any thread. Discards remaining events and closes the handle. Returns 0
+    /// on success, 1 for a closed/unknown handle. Never stops a replacement site.
+    pub stop: unsafe extern "C" fn(handle: u64) -> i32,
+    /// Any thread. Closes the session and all its sites. Returns 0 on success,
+    /// 1 for a closed/unknown session. Plugin unload also closes every session.
+    pub close: unsafe extern "C" fn(session: u64) -> i32,
 }
 
 /// `defiance.loader` / `multiplayer`, service version 1. Which active plugins
@@ -218,7 +343,8 @@ pub struct PatchUnitV1 {
 /// build calls for it) and links the units near their module, writing
 /// nothing to the game; `cell` gives a prepared unit's named cell, for the
 /// plugin to fill before its hooks go live; `install` checks every site and
-/// writes them all under the calling plugin's ownership, or none. The host
+/// writes them all under the calling plugin's ownership, or none. `contract`
+/// describes those installed writes using the same relocated units. The host
 /// restores them when the plugin fails or is unloaded; the linked code stays
 /// for the process's life.
 #[repr(C)]
@@ -242,6 +368,11 @@ pub struct PatchV1 {
         count: usize,
         call_detour: *mut c_void,
     ) -> i32,
+    /// The expected writes accepted by `install`, or null before a successful
+    /// install. The returned contract and its storage stay valid for the
+    /// process's life.
+    pub contract:
+        unsafe extern "C" fn(api: *const Api, prepared: *mut c_void) -> *const PatchContractV1,
 }
 
 /// `defiance.core` / `build`, version 1: the game build Core recognised.
@@ -267,10 +398,12 @@ pub const LOG_DEBUG: u32 = 3;
 /// `reserved` must be zero: a plugin checks it so a future ABI can add fields
 /// without old plugins reading them.
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Api {
     pub abi_version: u32,
     pub reserved: u32,
-    /// level: one of the `LOG_*` constants.
+    /// level: one of the `LOG_*` constants. The loader attributes messages to
+    /// this API table's plugin ID, including calls from worker threads.
     pub log: unsafe extern "C" fn(level: u32, message: *const c_char),
     /// The base address of a loaded module by file name (`logic.dll`), or null.
     pub module_base: unsafe extern "C" fn(name: *const c_char) -> *mut c_void,
@@ -297,8 +430,10 @@ pub struct Api {
     /// instructions overwritten at `target` and then returns. The loader works
     /// out how many bytes to displace by decoding whole instructions. On
     /// success `*original` receives the trampoline to call for the stock
-    /// behaviour, and the loader remembers how to `unhook`. Returns zero on
-    /// success, non-zero otherwise. Displaced instructions requiring relocation
+    /// behaviour, and the loader remembers how to `unhook`. Managed requests
+    /// publish with their staged group before the next legacy initializer or at
+    /// the end of startup.
+    /// Returns zero when accepted, non-zero otherwise. Displaced instructions requiring relocation
     /// (relative branches/calls or RIP/EIP-relative operands) are refused.
     /// A distant detour uses an owned nearby relay when the displaced span is
     /// too short for an absolute jump; the original trampoline is unchanged.
@@ -307,7 +442,8 @@ pub struct Api {
         detour: *mut c_void,
         original: *mut *mut c_void,
     ) -> i32,
-    /// As `hook`, but with an explicit byte count. The loader still validates
+    /// As `hook`, but with an explicit byte count. Managed requests are staged
+    /// until the runtime patch plan commits. The loader still validates
     /// instruction boundaries and rejects instructions requiring relocation.
     /// The count is never expanded to accommodate a distant detour.
     pub hook_exact: unsafe extern "C" fn(
@@ -320,14 +456,16 @@ pub struct Api {
     /// call reached before into `*original` for the stock behaviour. Unlike
     /// `hook`, which takes a function over for every caller, this changes one
     /// call site: the function's other callers are untouched. A stub near the
-    /// site carries the jump, so `detour` may be anywhere. Returns zero on
-    /// success; `unhook(site)` puts the call back.
+    /// site carries the jump, so `detour` may be anywhere. Returns zero when
+    /// accepted; managed requests are published with the runtime plan.
+    /// `unhook(site)` drops a staged request or puts a published call back.
     pub hook_call: unsafe extern "C" fn(
         site: *mut c_void,
         detour: *mut c_void,
         original: *mut *mut c_void,
     ) -> i32,
-    /// Put the bytes `hook` displaced back. Returns zero on success.
+    /// Drop a staged request or put the bytes `hook` displaced back. Returns
+    /// zero on success.
     pub unhook: unsafe extern "C" fn(target: *mut c_void) -> i32,
     /// The address of a method of an RTTI class by name, or null. `class` is
     /// the decorated or bare class name (`Squad`, `.?AVSquad@@`), matched as a
@@ -360,8 +498,9 @@ pub struct Api {
     pub config_get:
         unsafe extern "C" fn(section: *const c_char, key: *const c_char) -> *const c_char,
     /// Compare and replace an exact byte span, owned by the initializing plugin.
-    /// Conflicts/mismatches are refused. unhook restores it; failed init rolls
-    /// it back with all other owned hooks. Caller supplies valid readable spans.
+    /// Conflicts/mismatches are refused. Managed writes are staged for their
+    /// group; unhook drops a staged request or restores a published one.
+    /// Failed init discards all staged requests. Caller supplies valid spans.
     pub patch_bytes: unsafe extern "C" fn(
         target: *mut c_void,
         before: *const u8,
@@ -378,13 +517,50 @@ pub struct Plugin {
     pub abi_version: u32,
     pub name: *const c_char,
     pub version: *const c_char,
-    /// Called once, after the game's modules are loaded. Return zero to stay
-    /// loaded, non-zero to be treated as failed (and, if it already hooked
-    /// anything, `stop` is still called so it can undo it).
+    /// Called once, after the game's modules are loaded. Return zero to accept
+    /// initialization, non-zero to be treated as failed. A managed plugin may
+    /// still be stopped after successful init if runtime patch planning refuses
+    /// one of its writes or a required provider.
     pub init: unsafe extern "C" fn(api: *const Api) -> i32,
-    /// Called on unload or after a failed `init`. Optional.
+    /// Called on unload, after failed `init`, or after runtime patch planning
+    /// refuses a successfully initialized managed plugin. Optional.
     pub stop: Option<unsafe extern "C" fn()>,
 }
+
+/// A managed plugin's expected writes for the currently loaded game build.
+/// This versioned export is separate from `Plugin` and does not change ABI 5.
+/// The returned object, its entries and all pointed-to data stay valid for the
+/// DLL's lifetime. An empty list declares that `init` must request no writes.
+#[repr(C)]
+pub struct PatchContractV1 {
+    /// Must be 1.
+    pub version: u32,
+    /// Must be at least `size_of::<PatchContractV1>()`.
+    pub size: u32,
+    pub entries: *const PatchContractEntryV1,
+    pub count: usize,
+}
+
+/// One expected loader-owned write, addressed relative to a loaded module.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PatchContractEntryV1 {
+    /// Loaded module basename, such as `logic.dll`.
+    pub module: *const c_char,
+    pub rva: usize,
+    /// One of `PATCH_KIND_ENTRY`, `PATCH_KIND_BYTES` or `PATCH_KIND_CALL`.
+    pub kind: u32,
+    /// Exact bytes `init` must submit as its expected original span.
+    pub before: *const u8,
+    pub before_len: usize,
+    /// Optional exact replacement bytes. Leave null/zero when runtime linking
+    /// determines the branch target or the plugin intentionally uses a hook.
+    pub after: *const u8,
+    pub after_len: usize,
+}
+
+/// Type of the optional `defiance_patch_contract_v1` export.
+pub type PatchContractEntry = unsafe extern "C" fn(api: *const Api) -> *const PatchContractV1;
 
 /// The type of the exported entry point, for a plugin to define. The loader
 /// resolves it by that exact name with `GetProcAddress`, so it must be
@@ -416,8 +592,8 @@ mod tests {
 
     #[test]
     fn layout_is_stable() {
-        // The C header has to agree with these; a change here is a change to
-        // `include/defiance.h` and to ABI_VERSION.
+        // The C header has to agree with these. The Api layout is ABI_VERSION;
+        // the service tables carry their own version and minimum size.
         assert_eq!(align_of::<Api>(), align_of::<*const c_void>());
         // abi_version, padding, name, version, init, stop
         assert_eq!(size_of::<Plugin>(), 8 + 4 * size_of::<*const c_void>());
@@ -439,7 +615,7 @@ mod tests {
         assert_eq!(size_of::<AmmoMenuV1>(), 2 * size_of::<*const c_void>());
         assert_eq!(size_of::<GameAccessV1>(), 7 * size_of::<*const c_void>());
         assert_eq!(size_of::<PatchUnitV1>(), 4 * size_of::<*const c_void>());
-        assert_eq!(size_of::<PatchV1>(), 3 * size_of::<*const c_void>());
+        assert_eq!(size_of::<PatchV1>(), 4 * size_of::<*const c_void>());
         assert_eq!(size_of::<BuildV1>(), size_of::<*const c_void>());
         assert_eq!(
             size_of::<NativeReplacementV1>(),
@@ -447,6 +623,13 @@ mod tests {
         );
         assert_eq!(size_of::<MemberStateV1>(), 24);
         assert_eq!(core::mem::offset_of!(MemberStateV1, selected), 16);
+        assert_eq!(size_of::<TraceFieldV1>(), 32);
+        assert_eq!(size_of::<TraceRequestV1>(), 568);
+        assert_eq!(core::mem::offset_of!(TraceRequestV1, fields), 56);
+        assert_eq!(size_of::<TraceEventV1>(), 432);
+        assert_eq!(core::mem::offset_of!(TraceEventV1, frames), 304);
+        assert_eq!(size_of::<TraceStatsV1>(), 32);
+        assert_eq!(size_of::<TraceCaptureV1>(), 5 * size_of::<*const c_void>());
     }
 }
 
@@ -460,4 +643,16 @@ mod tests {
 pub struct AmmoMenuV1 {
     pub capacity: unsafe extern "C" fn() -> u32,
     pub publish: unsafe extern "C" fn(u32) -> i32,
+}
+
+/// A handler for stepping a displayed ammunition card across selected squads.
+/// Return nonzero when the card is handled, including a step with no eligible
+/// user; the ammunition input hook then consumes the step.
+pub type AmmoStepHandlerV1 = unsafe extern "C" fn(*mut c_void, *mut c_void, i32) -> i32;
+
+/// Optional combined-menu step callback registered by a consumer plugin.
+/// Consumers clear their handler before unloading its code.
+#[repr(C)]
+pub struct AmmoStepV1 {
+    pub set_handler: unsafe extern "C" fn(Option<AmmoStepHandlerV1>),
 }

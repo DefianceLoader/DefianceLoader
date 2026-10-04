@@ -267,6 +267,16 @@ fn find_rc() -> Option<PathBuf> {
 /// `defiance_feature_sdk::units::Embedded` slice expression for `include!`. The crate
 /// rebuilds when any build's units change.
 pub fn embed_units(plugins: &[&str]) {
+    embed_selected_units(Some(plugins));
+}
+
+/// Embed every assembled feature unit, for the external injector. Loader-only
+/// native callbacks and standalone plugins have no unit blobs to embed here.
+pub fn embed_all_units() {
+    embed_selected_units(None);
+}
+
+fn embed_selected_units(plugins: Option<&[&str]>) {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let variants = manifest
         .ancestors()
@@ -300,9 +310,11 @@ pub fn embed_units(plugins: &[&str]) {
                 (path.extension()? == "json").then_some(stem)
             })
             .filter(|stem| {
-                plugins.iter().any(|plugin| {
-                    stem.strip_prefix(plugin)
-                        .is_some_and(|rest| rest.starts_with('-') && !rest[1..].contains('-'))
+                plugins.is_none_or(|plugins| {
+                    plugins.iter().any(|plugin| {
+                        stem.strip_prefix(plugin)
+                            .is_some_and(|rest| rest.starts_with('-') && !rest[1..].contains('-'))
+                    })
                 })
             })
             .collect();

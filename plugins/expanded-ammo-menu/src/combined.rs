@@ -24,6 +24,7 @@ const REFERENCE: Offsets = Offsets {
     pool_get: 0x1b8,
     world_player: 0x700,
     ai_set: 0x3e0,
+    tooltip: 0x238,
 };
 fn offsets() -> Offsets {
     *OFFSETS.get().unwrap_or(&REFERENCE)
@@ -254,7 +255,8 @@ unsafe fn sources(menu: usize) -> Option<Vec<Source>> {
         return None;
     }
     let select = SELECT.get()?;
-    let mut entities = BTreeSet::new();
+    let mut entities = Vec::new();
+    let mut seen = BTreeSet::new();
     for at in vector(manager + 0x40, 8, 100_000)? {
         let mut e = read(at);
         if e == 0 {
@@ -282,8 +284,8 @@ unsafe fn sources(menu: usize) -> Option<Vec<Source>> {
             }
             e = read(weak + 0x10);
         }
-        if e != 0 {
-            entities.insert(e);
+        if e != 0 && seen.insert(e) {
+            entities.push(e);
         }
     }
     let mut result = Vec::new();
@@ -432,6 +434,148 @@ pub unsafe fn render(menu: usize, count: usize) {
         }
     });
 }
+
+unsafe fn card_index(menu: usize, widget: usize, count: usize) -> Option<usize> {
+    (0..count).find(|&index| {
+        let slot = menu + 0x180 + index * 0xb8;
+        [0x18, 0x20, 0x28, 0x30, 0x38]
+            .iter()
+            .any(|&at| read(slot + at) == widget)
+    })
+}
+
+unsafe fn refresh(menu: usize) {
+    std::mem::transmute::<usize, unsafe extern "C" fn(usize, f32)>(read(read(menu) + 0x38))(
+        menu, 0.0,
+    );
+}
+
+/// Step one eligible user for a combined card, using each squad's local pin
+/// index. A nonzero result consumes the input even when every user is there.
+pub unsafe extern "C" fn step(
+    menu: *mut core::ffi::c_void,
+    widget: *mut core::ffi::c_void,
+    direction: i32,
+) -> i32 {
+    let menu = menu as usize;
+    let widget = widget as usize;
+    let cached = VIEW.with(|view| {
+        let view = view.borrow();
+        (view.menu, view.entities.clone(), view.types.clone())
+    });
+    if cached.0 != menu {
+        return 0;
+    }
+    let Some(index) = card_index(menu, widget, cached.2.len()) else {
+        return 0;
+    };
+    let ammo = cached.2[index] as usize;
+    let Some(current) = sources(menu) else {
+        refresh(menu);
+        return 1;
+    };
+    if current
+        .iter()
+        .map(|source| source.entity)
+        .collect::<Vec<_>>()
+        != cached.1
+    {
+        refresh(menu);
+        return 1;
+    }
+    let combined = cards(&current);
+    if combined
+        .get(index)
+        .is_none_or(|card| card.record[0] != ammo as u64 || card.state.total == 0)
+    {
+        refresh(menu);
+        return 1;
+    }
+
+    let mut chosen = None;
+    'sources: for source in &current {
+        let Some((local_index, record)) = source
+            .records
+            .iter()
+            .enumerate()
+            .find(|(_, record)| record[0] == ammo as u64 && field(record, 0x34) > 0)
+        else {
+            continue;
+        };
+        if local_index >= 8 {
+            continue;
+        }
+        let facets = get(source.entity, 0xb0);
+        if facets == 0 {
+            continue;
+        }
+        let parent = read(facets + 0x50);
+        let Some(users) = members(source.ai, parent) else {
+            continue;
+        };
+        for (member_ai, facet) in users {
+            // Slot steps use per-soldier pins, which vehicles do not have.
+            if facet == 0 {
+                continue;
+            }
+            let compatible = guns(member_ai)
+                .into_iter()
+                .any(|gun| indexed(gun, 0x148, ammo) as u8 != 0);
+            if !compatible {
+                continue;
+            }
+            let mut disabled = field(record, 0x3c) != 0;
+            if *((facet + 0x19) as *const u8) == 0xa5
+                && *((facet + 0x1e) as *const u8) & (1 << local_index) != 0
+            {
+                disabled = *((facet + 0x1f) as *const u8) & (1 << local_index) != 0;
+            }
+            if direction > 0 {
+                if disabled {
+                    chosen = Some((member_ai, facet, local_index));
+                    break 'sources;
+                }
+            } else if !disabled {
+                chosen = Some((member_ai, facet, local_index));
+            }
+        }
+    }
+
+    if let Some((member_ai, facet, local_index)) = chosen {
+        let marker = (facet + 0x19) as *mut u8;
+        let valid = (facet + 0x1e) as *mut u8;
+        let disabled = (facet + 0x1f) as *mut u8;
+        let bit = 1u8 << local_index;
+        if *marker != 0xa5 {
+            *valid = 0;
+            *disabled = 0;
+            *marker = 0xa5;
+        }
+        *valid |= bit;
+        if direction > 0 {
+            *disabled &= !bit;
+        } else {
+            *disabled |= bit;
+            release_disabled(member_ai, ammo);
+        }
+    }
+    refresh(menu);
+    1
+}
+
+/// Release loaded rounds for the disabled weapon, returning its reservation.
+unsafe fn release_disabled(ai: usize, ammo: usize) {
+    for gun in guns(ai) {
+        if *((gun + 0xdc) as *const u32) == 0 || read(gun + 0x50) != ammo {
+            continue;
+        }
+        let release = read(read(gun) + 0xf8);
+        if release != 0 {
+            std::mem::transmute::<usize, unsafe extern "C" fn(usize) -> usize>(release)(gun);
+        }
+    }
+}
+
 pub unsafe extern "C" fn click(menu: usize, widget: usize) {
     let cached = VIEW.with(|v| {
         let v = v.borrow();
@@ -441,12 +585,7 @@ pub unsafe extern "C" fn click(menu: usize, widget: usize) {
         std::mem::transmute::<usize, Pair>(CLICK.load(Ordering::Relaxed))(menu, widget);
         return;
     }
-    let index = (0..cached.2.len()).find(|i| {
-        let slot = menu + 0x180 + i * 0xb8;
-        [0x18, 0x20, 0x28, 0x30, 0x38]
-            .iter()
-            .any(|&at| read(slot + at) == widget)
-    });
+    let index = card_index(menu, widget, cached.2.len());
     let Some(index) = index else {
         return;
     };
@@ -477,9 +616,7 @@ pub unsafe extern "C" fn click(menu: usize, widget: usize) {
         std::mem::transmute::<usize, Set>(read(read(ai) + offsets().ai_set))(ai, index, disable);
     }
     // Request the ordinary menu refresh; do not retain record/string pointers.
-    std::mem::transmute::<usize, unsafe extern "C" fn(usize, f32)>(read(read(menu) + 0x38))(
-        menu, 0.0,
-    );
+    refresh(menu);
 }
 #[cfg(test)]
 mod tests {

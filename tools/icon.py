@@ -33,10 +33,10 @@ SUBSET_STATE_OFFSET = BUILDING_STATE_OFFSET + 0x30
 PREVIEW_OFFSET = 0x1a00  # between the building TAB code and the engine-owned state
 SUBSET_OFFSET = 0x1b00   # the preview's selection marks, after the weapon guard
 TRACE_OFFSET = 0x10a0  # squad_of records each hop here for --probe (0x60 bytes)
-# The ammo slot step's settings and wheel remainder (patch/ammo-panel.asm's
-# {scratch}) and the camera wheel's last message, 0x30 bytes just before the
-# engine-owned state
-AMMO_STEP_OFFSET = BUILDING_STATE_OFFSET - 0x30
+# The ammo slot step's settings and wheel state (patch/ammo-panel.asm's
+# {scratch}), the camera wheel's last message, and its combined-menu callback,
+# 0x38 bytes just before the engine-owned state.
+AMMO_STEP_OFFSET = BUILDING_STATE_OFFSET - 0x38
 EXPECT_SOURCE_SHA = "f0184b9fe358172c83261419c8ba3d822a0aa6b06ed3cddb2f7aa3ebb9653db4"
 # Other builds the signatures have been checked against (tools/sigs.py and
 # --scan-check), which the injector then relocates to without --scan. Steam:

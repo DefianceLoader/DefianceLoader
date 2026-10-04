@@ -26,12 +26,14 @@ members = [
     "plugins/posture",
     "plugins/firing",
     "plugins/attack",
+    "plugins/vehicle-special-fire",
     "plugins/garrison",
     "plugins/ammunition",
     "plugins/diagnostics",
     "plugins/preview-weapon",
     "tools/plugin-host",
 ]
+exclude = ["plugins/vehicle-arrival"]
 
 [profile.release]
 opt-level = "s"

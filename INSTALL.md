@@ -13,6 +13,9 @@ https://github.com/DefianceLoader/DefianceLoader/blob/main/docs/features.md
    scrolling** in the game's mod menu. The same download holds **Defiance unit
    inspection colours**; enable it too for relation-coloured reload bars on
    the ammo cards.
+   The companion download also includes generated animation assets for the
+   experimental moving-actions animation plugin, under
+   `mods/defiance_moving_actions`.
 3. Start the game as usual.
 
 When updating, overwrite the files but **keep existing `.ini` files** to keep
@@ -23,6 +26,24 @@ your settings.
 The first launch creates `DefianceLoader/config/*.ini`, with every setting
 described. Close the game before editing and restart it afterwards. Any
 feature can be turned off with `enabled = false` in its section.
+
+These experimental features are included but off by default. To try one, set
+`enabled = true` in its section and restart the game:
+
+| Feature | File | Section |
+| --- | --- | --- |
+| Moving infantry actions | `infantry.ini` | `[defiance.moving-actions]` |
+| Special weapons from passenger vehicles | `weapons.ini` | `[defiance.vehicle-special-fire]` |
+| Legion vehicle hacking | `vehicles.ini` | `[defiance.legion-vehicle-hacking]` |
+| Vehicle arrival braking | `vehicles.ini` | `[defiance.vehicle-arrival]` |
+| Weapon drops | `infantry.ini` | `[defiance.weapon-drops]` |
+
+Moving actions runs on four supported GOG and Steam September 2026 builds. Its
+companions (`defiance.moving-actions-animation`, `defiance.moving-actions-sync`,
+`defiance.moving-actions-render-sync` and `defiance.moving-grenades`, all in
+`infantry.ini`) are off by default too; turn on the ones you want alongside it.
+The animation companion needs the generated `mods/defiance_moving_actions`
+data. See [features and controls](docs/features.md) for details.
 
 **Regroup is included but disabled by default.** It is experimental and
 single-player only. To try it, add to `DefianceLoader/config/infantry.ini`:

@@ -3,4 +3,5 @@ fn main() {
         "exe",
         "Runtime patch injector for Terminator: Dark Fate - Defiance",
     );
+    defiance_build_support::embed_all_units();
 }

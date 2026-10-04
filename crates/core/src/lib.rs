@@ -21,6 +21,9 @@ pub mod rtti;
 pub mod scan;
 pub mod sha256;
 pub mod unit;
+pub mod unit_apply;
+#[cfg(test)]
+mod unit_apply_tests;
 
 pub use apply::{apply, apply_game, module_image, Target};
 pub use descriptor::{GamePatch, Patch};

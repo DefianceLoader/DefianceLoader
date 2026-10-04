@@ -6,16 +6,20 @@ The package is a zip with
     DefianceLoader/plugins/      the plugin DLLs and their manifests — the
                                  built-ins, plus the standalone regroup,
                                  expanded-ammo-menu, squad-management-scroll,
-                                 unit-inspection and ability-groups
+                                 unit-inspection, ability-groups,
+                                 legion-vehicle-hacking, cover-markers,
+                                 vehicle-arrival, weapon-drops and moving actions
     mods/defiance_squad_scroll/  the scrolling companion UI mod, and
     mods/defiance_unit_inspection/  the unit-inspection reload bar mod, when
                                  the game directory is available to derive them
+    mods/defiance_moving_actions/  the generated action-animation sampler data
 
 The ZIP also includes README.md: the player guide (INSTALL.md), the only
-document shipped; the developer and plugin docs stay in the repository. Regroup
-is included disabled by default;
-expanded-ammo-menu and squad-management-scroll are enabled by default, and the
-latter needs its companion UI mod, which is derived from the installed game's
+document shipped; the developer and plugin docs stay in the repository. Regroup,
+moving-actions and its companions, legion-vehicle-hacking, vehicle-arrival,
+weapon-drops and vehicle-special-fire are included disabled by default;
+expanded-ammo-menu, squad-management-scroll and cover-markers are enabled by
+default, and squad-management-scroll needs its companion UI mod, which is derived from the installed game's
 paks. Extract to a
 temporary directory and follow README.md; preserve existing configuration files
 when copying an upgrade into the game. The loader creates configuration on first
@@ -23,14 +27,16 @@ launch; the archive contains no INI files.
 
     python tools/package.py --game "C:\\Games\\...\\Terminator Dark Fate - Defiance"
     python tools/package.py --source target/release --out out/defiance-loader.zip
+    python tools/package.py --startup exe --out out/defiance-loader-exe.zip
     DEFIANCE_GAME_DIR=".../bin" python tools/package.py     # parent is the root
 
 Without a game directory the squad-management-scroll plugin is still packaged,
 but without its companion UI mod; the plugin then logs a warning and leaves the
 stock panel in place until the mod is added. Unit inspection likewise leaves
-the reload bars uncoloured without its mod.
+the reload bars uncoloured without its mod. The moving-actions animation plugin
+refuses to install its hooks until its generated companion data is present.
 
-The companion UI mods alone (data files derived from the installed game's UI;
+The companion mods alone (data files derived from installed UI and animations;
 no code), for releases whose loader package is built without the game:
 
     python tools/package.py --companion-only --game "C:\\Games\\...\\Defiance"
@@ -53,7 +59,18 @@ EXPANDED_AMMO_DLL = "defiance_plugin_expanded_ammo_menu.dll"
 SQUAD_SCROLL_DLL = "defiance_plugin_squad_management_scroll.dll"
 UNIT_INSPECTION_DLL = "defiance_plugin_unit_inspection.dll"
 ABILITY_GROUPS_DLL = "defiance_plugin_ability_groups.dll"
-EXCLUDED = {"defiance_plugin_pickup.dll", "defiance_plugin_example.dll", REGROUP_DLL}
+LEGION_VEHICLE_HACKING_DLL = "defiance_plugin_legion_vehicle_hacking.dll"
+VEHICLE_ARRIVAL_DLL = "defiance_plugin_vehicle_arrival.dll"
+COVER_MARKERS_DLL = "defiance_plugin_cover_markers.dll"
+WEAPON_DROPS_DLL = "defiance_plugin_weapon_drops.dll"
+EXCLUDED = {"defiance_plugin_pickup.dll", "defiance_plugin_example.dll", REGROUP_DLL,
+            *(stem + ".dll" for _, stem in stage.MOVING_ACTIONS)}
+# A plugin whose DLL name or ID contains one of these is a private test aid
+# (cheats, test-only probes) and is never packaged.
+PRIVATE_WORDS = ("testing", "god_mode", "god-mode", "godmode", "cheat")
+# Built-in manifests whose `enabled` default the package enforces; it must
+# agree with `OFF_BY_DEFAULT` in crates/loader/src/config/builtin.rs.
+BUILTIN_DEFAULTS = {"defiance.vehicle-special-fire": "false"}
 
 
 def game_root(path):
@@ -79,10 +96,45 @@ def companion_mods(game):
     return entries
 
 
+def exe_startup_readme(readme):
+    """Keep the player guide accurate for the injector-launched package."""
+    replacements = (
+        ("1. Extract this zip into the game folder (the one containing `bin`), so that\n"
+         "   `bin/dxgi.dll` sits beside `bin/trm.exe` and `DefianceLoader` sits beside\n"
+         "   `bin`.",
+         "1. Extract this zip into the game folder (the one containing `bin`). It\n"
+         "   places `defiance-pickup-inject.exe`, `defiance_loader.dll`, and the\n"
+         "   injector settings file in `bin`, with `DefianceLoader` beside `bin`."),
+        ("3. Start the game as usual.",
+         "3. Start `bin/defiance-pickup-inject.exe`, then start the game as usual.\n"
+         "   The injector loads the full plugin loader from `bin/defiance_loader.dll`."),
+        ("- If the game will not start, remove `bin/dxgi.dll` to play without the loader,\n"
+         "  and report the problem with the log.",
+         "- To play without the loader, start the game normally instead of through\n"
+         "  `bin/defiance-pickup-inject.exe`."),
+        ("## Install\n",
+         "## Install\n\n"
+         "When switching from a proxy install, remove its system-named loader DLL\n"
+         "from `bin` first; retain `DefianceLoader` and its configuration. If you\n"
+         "keep an older injector INI, set `mode = loader` in it.\n"),
+        ("Delete `bin/dxgi.dll`, `bin/defiance-crash-helper.exe` and\n"
+         "`bin/defiance-loader.ini`.",
+         "Delete `bin/defiance-pickup-inject.exe`, `bin/defiance-pickup-inject.ini`,\n"
+         "`bin/defiance_loader.dll`, and `bin/defiance-crash-helper.exe`.")
+    )
+    for old, new in replacements:
+        if old not in readme:
+            raise ValueError("INSTALL.md no longer has the expected proxy startup instructions")
+        readme = readme.replace(old, new, 1)
+    return readme
+
+
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--source", default=str(DEFAULT_SOURCE))
-    parser.add_argument("--out", default=str(ROOT / "out" / "defiance-loader.zip"))
+    parser.add_argument("--out", default=None)
+    parser.add_argument("--startup", choices=("proxy", "exe"), default="proxy",
+                        help="package the default proxy DLL or the injector EXE loader fallback")
     parser.add_argument("--regroup-dll", type=pathlib.Path,
                         default=ROOT / "plugins/regroup/target/release" / REGROUP_DLL)
     parser.add_argument("--expanded-ammo-dll", type=pathlib.Path,
@@ -93,10 +145,21 @@ def main(argv):
                         default=ROOT / "plugins/unit-inspection/target/release" / UNIT_INSPECTION_DLL)
     parser.add_argument("--ability-groups-dll", type=pathlib.Path,
                         default=ROOT / "plugins/ability-groups/target/release" / ABILITY_GROUPS_DLL)
+    parser.add_argument("--legion-vehicle-hacking-dll", type=pathlib.Path,
+                        default=ROOT / "plugins/legion-vehicle-hacking/target/release" / LEGION_VEHICLE_HACKING_DLL)
+    parser.add_argument("--vehicle-arrival-dll", type=pathlib.Path,
+                        default=ROOT / "plugins/vehicle-arrival/target/release" / VEHICLE_ARRIVAL_DLL)
+    parser.add_argument("--cover-markers-dll", type=pathlib.Path,
+                        default=ROOT / "plugins/cover-markers/target/release" / COVER_MARKERS_DLL)
+    parser.add_argument("--weapon-drops-dll", type=pathlib.Path,
+                        default=ROOT / "plugins/weapon-drops/target/release" / WEAPON_DROPS_DLL)
+    for folder, stem in stage.MOVING_ACTIONS:
+        parser.add_argument("--" + pathlib.PurePosixPath(folder).name + "-dll", type=pathlib.Path,
+                            default=ROOT / folder / "target/release" / (stem + ".dll"))
     parser.add_argument("--game", default=os.environ.get("DEFIANCE_GAME_DIR"),
-                        help="game directory (or its bin) for the companion UI mods")
+                        help="game directory (or its bin) for generated companion mods")
     parser.add_argument("--companion-only", action="store_true",
-                        help="package only the companion UI mods (needs --game); "
+                        help="package only generated companion mods (needs --game); "
                              "default --out out/defiance-squad-scroll-ui.zip")
     args = parser.parse_args(argv)
 
@@ -108,20 +171,20 @@ def main(argv):
         try:
             mod = companion_mods(game)
         except ValueError as error:
-            parser.error(f"could not build the companion UI mods: {error}")
-        out = pathlib.Path(args.out if "--out" in (argv or []) else
-                           ROOT / "out" / "defiance-squad-scroll-ui.zip")
+            parser.error(f"could not build companion mods: {error}")
+        out = pathlib.Path(args.out or ROOT / "out" / "defiance-squad-scroll-ui.zip")
         out.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as package:
             for name, data in mod.items():
                 package.writestr(name, data)
-        print(f"packaged the companion UI mods ({len(mod)} files) into {out}")
+        print(f"packaged companion mods ({len(mod)} files) into {out}")
         return 0
 
     source = pathlib.Path(args.source)
     if not source.is_dir():
         parser.error(f"{source} is not a directory")
-    out = pathlib.Path(args.out)
+    out = pathlib.Path(args.out or ROOT / "out" / (
+        "defiance-loader-exe.zip" if args.startup == "exe" else "defiance-loader.zip"))
     out.parent.mkdir(parents=True, exist_ok=True)
 
     plugins = sorted(
@@ -140,8 +203,19 @@ def main(argv):
          ROOT / "plugins/unit-inspection/defiance_plugin_unit_inspection.plugin.json", "true"),
         (pathlib.Path(args.ability_groups_dll),
          ROOT / "plugins/ability-groups/defiance_plugin_ability_groups.plugin.json", "true"),
+        (pathlib.Path(args.legion_vehicle_hacking_dll),
+         ROOT / "plugins/legion-vehicle-hacking/defiance_plugin_legion_vehicle_hacking.plugin.json", "false"),
+        (pathlib.Path(args.vehicle_arrival_dll),
+         ROOT / "plugins/vehicle-arrival/defiance_plugin_vehicle_arrival.plugin.json", "false"),
+        (pathlib.Path(args.cover_markers_dll),
+         ROOT / "plugins/cover-markers/defiance_plugin_cover_markers.plugin.json", "true"),
+        (pathlib.Path(args.weapon_drops_dll),
+         ROOT / "plugins/weapon-drops/defiance_plugin_weapon_drops.plugin.json", "false"),
     ]
     pairs = [(plugin, plugin.with_suffix(".plugin.json")) for plugin in plugins]
+    standalone.extend((getattr(args, pathlib.PurePosixPath(folder).name.replace("-", "_") + "_dll"),
+                       ROOT / folder / (stem + ".plugin.json"), "false")
+                      for folder, stem in stage.MOVING_ACTIONS)
     for dll, manifest, expected in standalone:
         data = json.loads(manifest.read_text(encoding="utf-8"))
         enabled = next(setting["default"] for setting in data["settings"] if setting["key"] == "enabled")
@@ -152,8 +226,11 @@ def main(argv):
         pairs.append((dll, manifest))
 
     proxy = source / stage.PROXY_LIB
+    injector = source / "defiance-pickup-inject.exe"
+    loader = source / "defiance_loader.dll"
     helper = source / "defiance-crash-helper.exe"
-    binaries = [proxy, helper, *(plugin for plugin, _ in pairs)]
+    startup_binaries = ([injector, loader] if args.startup == "exe" else [proxy])
+    binaries = [*startup_binaries, helper, *(plugin for plugin, _ in pairs)]
     symbols = [binary.with_name(binary.stem.replace("-", "_") + ".pdb") for binary in binaries]
 
     game = game_root(args.game)
@@ -164,16 +241,40 @@ def main(argv):
         try:
             mod = companion_mods(game)
         except ValueError as error:
-            parser.error(f"could not build the companion UI mods: {error}")
+            parser.error(f"could not build companion mods: {error}")
 
     for required in [*binaries, *symbols, ROOT / "INSTALL.md",
                      *(path for pair in pairs for path in pair)]:
         if not required.is_file():
             parser.error(f"missing package input: {required}; run mise run loader")
+    for dll, manifest in pairs:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        if any(word in name.lower() for name in (dll.name, data["id"]) for word in PRIVATE_WORDS):
+            parser.error(f"{dll.name} is a private test plugin and is never packaged")
+        expected = BUILTIN_DEFAULTS.get(data["id"])
+        enabled = next((setting["default"] for setting in data.get("settings", [])
+                        if setting["key"] == "enabled"), None)
+        if expected is not None and enabled != expected:
+            parser.error(f"the packaged {data['id']} manifest must default enabled to {expected}")
 
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as package:
-        package.write(ROOT / "INSTALL.md", "README.md")
-        package.write(proxy, f"bin/{stage.proxy_name()}")
+        readme = (ROOT / "INSTALL.md").read_text(encoding="utf-8")
+        if args.startup == "exe":
+            readme = exe_startup_readme(readme)
+        package.writestr("README.md", readme)
+        if args.startup == "exe":
+            package.write(injector, f"bin/{injector.name}")
+            package.write(loader, f"bin/{loader.name}")
+            package.writestr("bin/defiance-pickup-inject.ini",
+                             "; Injector settings. Command-line options override these values.\n"
+                             "builds = known\n"
+                             "game = true\n"
+                             "wait = 180\n"
+                             "pause = auto\n"
+                             "mode = loader\n"
+                             "loader_dll = defiance_loader.dll\n")
+        else:
+            package.write(proxy, f"bin/{stage.proxy_name()}")
         package.write(helper, f"bin/{helper.name}")
         for plugin, sidecar in pairs:
             package.write(plugin, f"DefianceLoader/plugins/{plugin.name}")
@@ -190,8 +291,8 @@ def main(argv):
         archive.writestr("builds.json", json.dumps(manifest, indent=2) + "\n")
         for symbol in symbols:
             archive.write(symbol, symbol.name)
-    companion = f", companion UI mods ({len(mod)} files)" if mod else " (no companion UI mods)"
-    print(f"packaged {len(pairs)} plugin(s){companion} into {out}")
+    companion = f", companion mods ({len(mod)} files)" if mod else " (no companion mods)"
+    print(f"packaged {len(pairs)} plugin(s) with {args.startup} startup{companion} into {out}")
     print(f"matching release symbols: {symbols_out}")
     return 0
 

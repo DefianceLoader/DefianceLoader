@@ -31,6 +31,9 @@ def main():
     host = source / "defiance-plugin-host-test.exe"
     if not host.is_file():
         raise SystemExit(f"{host} missing; run mise run build first")
+    unit_inspection = source
+    if not (unit_inspection / "defiance_plugin_unit_inspection.dll").is_file():
+        unit_inspection = ROOT / "plugins/unit-inspection/target/release"
     # The reference release in each store that is here, the reference first
     # (required). The host's checks use the reference's addresses, so the
     # later builds, whose payloads Core resolves per layout, are not run here.
@@ -40,16 +43,21 @@ def main():
         folder = pathlib.Path(temporary)
         shutil.copy2(host, folder / host.name)
         for name, logic, game in targets:
-            scenarios = ("all", "core-only", "without-ammo", "fail-ammo", "without-attack", "without-garrison", "fail-attack", "fail-garrison", "disabled-ammo-corrupt", "enabled-ammo-corrupt", "shared-helper-corrupt", "without-selection", "without-posture", "without-movement", "without-firing", "without-pickup", "without-diagnostics", "without-preview-weapon", "diagnostics-only", "without-posture-and-ammo", "without-movement-and-ammo", "without-core", "unknown-build")
+            scenarios = ("all", "core-only", "without-ammo", "fail-ammo", "without-attack", "without-garrison", "fail-attack", "fail-garrison", "disabled-ammo-corrupt", "enabled-ammo-corrupt", "shared-helper-corrupt", "without-selection", "without-posture", "without-movement", "without-firing", "without-pickup", "without-diagnostics", "without-preview-weapon", "without-vehicle-special-fire", "diagnostics-only", "without-posture-and-ammo", "without-movement-and-ammo", "without-core", "unknown-build")
             if not args.assembly_pickup:
                 scenarios += ("rust-fail-pickup", "rust-changed-pickup")
             scenarios += ("fail-firing", "fail-selection")
+            if not args.rust_pickup and name == targets[0][0]:
+                if not (unit_inspection / "defiance_plugin_unit_inspection.dll").is_file():
+                    raise SystemExit("unit-inspection DLL missing; run mise run loader first")
+                scenarios += ("unit-inspection-partial-install",)
             for scenario in scenarios:
                 # unknown-build deliberately changes the on-disk module hash.
                 shutil.copy2(logic, folder / "logic.dll")
                 shutil.copy2(game, folder / "game.dll")
                 print(f"== {name}: {scenario}", flush=True)
-                subprocess.run([str(folder / host.name), str(ROOT), str(source), scenario], check=True, env=environment)
+                plugin_dir = unit_inspection if scenario == "unit-inspection-partial-install" else source
+                subprocess.run([str(folder / host.name), str(ROOT), str(plugin_dir), scenario], check=True, env=environment)
 
 
 if __name__ == "__main__":

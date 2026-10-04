@@ -6,9 +6,10 @@
 #   bacon test              its tests
 #   bacon regroup           one standalone plugin workspace; also
 #                           expanded-ammo-menu, squad-management-scroll,
-#                           unit-inspection, ability-groups
+#                           unit-inspection, ability-groups,
+#                           legion-vehicle-hacking
 #
-# In the TUI, `c` switches to clippy, `t` to tests, `g`/`e`/`s`/`i`/`a` to the five
+# In the TUI, `c` switches to clippy, `t` to tests, `g`/`e`/`s`/`i`/`a`/`h` to the six
 # standalone plugins. plugins/core embeds the committed payloads in
 # tools/variants/reference; `mise run assemble` refreshes them after patch edits.
 
@@ -51,6 +52,11 @@ command = ["cargo", "check", "--manifest-path", "plugins/ability-groups/Cargo.to
 need_stdout = false
 watch = ["plugins/ability-groups", "crates"]
 
+[jobs.legion-vehicle-hacking]
+command = ["cargo", "check", "--manifest-path", "plugins/legion-vehicle-hacking/Cargo.toml", "--all-targets", "--color", "always"]
+need_stdout = false
+watch = ["plugins/legion-vehicle-hacking", "crates"]
+
 [keybindings]
 c = "job:clippy"
 t = "job:test"
@@ -59,4 +65,4 @@ e = "job:expanded-ammo-menu"
 s = "job:squad-management-scroll"
 i = "job:unit-inspection"
 a = "job:ability-groups"
-
+h = "job:legion-vehicle-hacking"

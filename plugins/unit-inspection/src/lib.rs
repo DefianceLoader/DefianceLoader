@@ -59,7 +59,10 @@
 //! unit, and the click gate applies to them too. Not multiplayer-safe: the
 //! ally toggles change another player's units.
 use core::ffi::c_void;
-use defiance_api::{Api, Plugin, ABI_VERSION, LOG_INFO, LOG_WARN};
+use defiance_api::{
+    Api, PatchContractV1, Plugin, ABI_VERSION, LOG_DEBUG, LOG_INFO, LOG_WARN, PATCH_KIND_CALL,
+    PATCH_KIND_ENTRY,
+};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 
 const ID: &str = "defiance.unit-inspection";
@@ -433,17 +436,23 @@ fn note_fill(state: u8, size: (u32, u32)) {
     }
     let log: unsafe extern "C" fn(u32, *const core::ffi::c_char) =
         unsafe { core::mem::transmute(log) };
-    let text = if state == 1 {
-        "unit inspection: colouring the ammo cards' reload bars by relation".to_string()
+    let (level, text) = if state == 1 {
+        (
+            LOG_DEBUG,
+            "unit inspection: colouring the ammo cards' reload bars by relation".to_string(),
+        )
     } else {
-        format!(
-            "unit inspection: the reload bar texture is {}x{}, not the companion mod's grey \
-             {}x{}; the bars keep the game's colour (is the unit-inspection mod enabled in MODS?)",
-            size.0, size.1, GREY_BAR.0, GREY_BAR.1
+        (
+            LOG_INFO,
+            format!(
+                "unit inspection: the reload bar texture is {}x{}, not the companion mod's grey \
+                 {}x{}; the bars keep the game's colour (is the unit-inspection mod enabled in MODS?)",
+                size.0, size.1, GREY_BAR.0, GREY_BAR.1
+            ),
         )
     };
     let text = std::ffi::CString::new(text).unwrap_or_default();
-    unsafe { log(LOG_INFO, text.as_ptr()) };
+    unsafe { log(level, text.as_ptr()) };
 }
 
 /// Colour a card's reload fill, when it shows the grey texture.
@@ -530,12 +539,17 @@ fn say(api: &Api, level: u32, text: &str) {
     unsafe { (api.log)(level, text.as_ptr()) };
 }
 
+enum InstallError {
+    UnsupportedBuild(&'static str),
+    Failed(String),
+}
+
 /// The four sites, found and vouched for: (squad call, ammo call, the click
 /// handler's shown-entity call, label function).
-fn sites(api: &Api) -> Result<(usize, usize, usize, usize), String> {
+fn sites(api: &Api) -> Result<(usize, usize, usize, usize), InstallError> {
     let base = unsafe { (api.module_base)(c"game.dll".as_ptr()) };
     if base.is_null() {
-        return Err("game.dll is not loaded".into());
+        return Err(InstallError::Failed("game.dll is not loaded".into()));
     }
     let size = unsafe { (api.module_size)(base) };
     let (squad, ammo, click, label) = (
@@ -545,13 +559,17 @@ fn sites(api: &Api) -> Result<(usize, usize, usize, usize), String> {
         find(api, base, size, LABEL_PATTERN),
     );
     if squad == 0 || ammo == 0 || click == 0 || label == 0 {
-        return Err("not a supported build (the 2026 updates are)".into());
+        return Err(InstallError::UnsupportedBuild(
+            "not a supported build (the 2026 updates are)",
+        ));
     }
     let slots_match = LABEL_SLOTS.iter().all(|(at, bytes)| {
         (0..bytes.len()).all(|i| unsafe { *((label + at + i) as *const u8) } == bytes[i])
     });
     if !slots_match {
-        return Err("the relation queries are laid out differently".into());
+        return Err(InstallError::UnsupportedBuild(
+            "the relation queries are laid out differently",
+        ));
     }
     Ok((
         squad + SQUAD_CALL_AT,
@@ -561,7 +579,7 @@ fn sites(api: &Api) -> Result<(usize, usize, usize, usize), String> {
     ))
 }
 
-fn install(api: &Api) -> Result<(), String> {
+fn install(api: &Api) -> Result<(), InstallError> {
     let (squad, ammo, click_call, label_fn) = sites(api)?;
     SQUAD_RESUME.store(squad + 6, Ordering::Release);
     AMMO_RESUME.store(ammo + 6, Ordering::Release);
@@ -571,9 +589,9 @@ fn install(api: &Api) -> Result<(), String> {
     ] {
         let mut trampoline = core::ptr::null_mut();
         if unsafe { (api.hook_exact)(site as *mut c_void, stub, 6, &mut trampoline) } != 0 {
-            return Err(format!(
+            return Err(InstallError::Failed(format!(
                 "the ownership test at game+{site:#x} could not be hooked"
-            ));
+            )));
         }
     }
     let mut shown = core::ptr::null_mut();
@@ -581,7 +599,9 @@ fn install(api: &Api) -> Result<(), String> {
     if unsafe { (api.hook_call)(click_call as *mut c_void, detour, &mut shown) } != 0
         || shown.is_null()
     {
-        return Err("the ammo grid's click handler could not be redirected".into());
+        return Err(InstallError::Failed(
+            "the ammo grid's click handler could not be redirected".into(),
+        ));
     }
     SHOWN.store(shown as usize, Ordering::Release);
     let mut original = core::ptr::null_mut();
@@ -589,20 +609,26 @@ fn install(api: &Api) -> Result<(), String> {
     if unsafe { (api.hook)(label_fn as *mut c_void, detour, &mut original) } != 0
         || original.is_null()
     {
-        return Err("the relation label could not be hooked".into());
+        return Err(InstallError::Failed(
+            "the relation label could not be hooked".into(),
+        ));
     }
     LABEL_ORIGINAL.store(original as usize, Ordering::Release);
     Ok(())
 }
 
 /// Hook `fillSlot` to colour the reload bars; the rest works without it.
-fn install_colours(api: &Api) -> Result<(), String> {
+fn colour_target(api: &Api) -> Option<usize> {
     let base = unsafe { (api.module_base)(c"game.dll".as_ptr()) };
+    if base.is_null() {
+        return None;
+    }
     let size = unsafe { (api.module_size)(base) };
     let target = find(api, base, size, FILL_PATTERN);
-    if target == 0 {
-        return Err("the ammo card fill was not found".into());
-    }
+    (target != 0).then_some(target)
+}
+
+fn install_colours(api: &Api, target: usize) -> Result<(), String> {
     let mut original = core::ptr::null_mut();
     let detour = fill as Fill as *mut c_void;
     if unsafe { (api.hook)(target as *mut c_void, detour, &mut original) } != 0
@@ -612,6 +638,85 @@ fn install_colours(api: &Api) -> Result<(), String> {
     }
     FILL_ORIGINAL.store(original as usize, Ordering::Release);
     Ok(())
+}
+
+fn original_bytes(base: usize, size: usize, target: usize, len: usize) -> Option<Vec<u8>> {
+    let rva = target.checked_sub(base)?;
+    if rva.checked_add(len)? > size || len == 0 {
+        return None;
+    }
+    let mut bytes = vec![0; len];
+    if let Some(original) = unsafe { defiance_feature_sdk::services::original() } {
+        if unsafe { (original.read)(target, bytes.as_mut_ptr(), bytes.len()) } == 0 {
+            return Some(bytes);
+        }
+    }
+    bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(target as *const u8, len) });
+    Some(bytes)
+}
+
+fn contract_entry(
+    base: usize,
+    size: usize,
+    target: usize,
+    kind: u32,
+    exact_len: Option<usize>,
+) -> Option<defiance_feature_sdk::contract::Patch> {
+    let available = (size.checked_sub(target.checked_sub(base)?)?).min(64);
+    let bytes = original_bytes(base, size, target, available)?;
+    let len = match exact_len {
+        Some(len) => len,
+        None => defiance_core::decode::displaced(&bytes, 5).ok()?,
+    };
+    let before = bytes.get(..len)?.to_vec();
+    Some(defiance_feature_sdk::contract::Patch {
+        module: c"game.dll",
+        rva: target.checked_sub(base)?,
+        kind,
+        before,
+        after: None,
+    })
+}
+
+unsafe extern "C" fn patch_contract(api: *const Api) -> *const PatchContractV1 {
+    let Some(api_ref) = (unsafe { api.as_ref() }) else {
+        return core::ptr::null();
+    };
+    if api_ref.abi_version != ABI_VERSION || api_ref.reserved != 0 {
+        return core::ptr::null();
+    }
+    let (squad, ammo, click_call, label_fn) = match sites(api_ref) {
+        Ok(sites) => sites,
+        Err(InstallError::UnsupportedBuild(_)) => {
+            return unsafe { defiance_feature_sdk::contract::build(api, Vec::new()) };
+        }
+        Err(InstallError::Failed(_)) => return core::ptr::null(),
+    };
+    let base = unsafe { (api_ref.module_base)(c"game.dll".as_ptr()) } as usize;
+    let size = unsafe { (api_ref.module_size)(base as *mut c_void) };
+    let mut patches = Vec::with_capacity(5);
+    for target in [squad, ammo] {
+        let Some(patch) = contract_entry(base, size, target, PATCH_KIND_ENTRY, Some(6)) else {
+            return core::ptr::null();
+        };
+        patches.push(patch);
+    }
+    for (target, kind, exact_len) in [
+        (click_call, PATCH_KIND_CALL, Some(5)),
+        (label_fn, PATCH_KIND_ENTRY, None),
+    ] {
+        let Some(patch) = contract_entry(base, size, target, kind, exact_len) else {
+            return core::ptr::null();
+        };
+        patches.push(patch);
+    }
+    if let Some(target) = colour_target(api_ref) {
+        let Some(patch) = contract_entry(base, size, target, PATCH_KIND_ENTRY, None) else {
+            return core::ptr::null();
+        };
+        patches.push(patch);
+    }
+    unsafe { defiance_feature_sdk::contract::build(api, patches) }
 }
 
 unsafe extern "C" fn init(api: *const Api) -> i32 {
@@ -653,11 +758,20 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
     LOG.store(api.log as usize, Ordering::Relaxed);
     match install(api) {
         Ok(()) => {
-            if let Err(e) = install_colours(api) {
+            if let Some(target) = colour_target(api) {
+                if let Err(e) = install_colours(api, target) {
+                    say(
+                        api,
+                        LOG_WARN,
+                        &format!("unit inspection: {e}; the reload bars keep the game's colour"),
+                    );
+                    return 1;
+                }
+            } else {
                 say(
                     api,
                     LOG_WARN,
-                    &format!("unit inspection: {e}; the reload bars keep the game's colour"),
+                    "unit inspection: the ammo card fill was not found; the reload bars keep the game's colour",
                 );
             }
             let who: Vec<&str> = [(allied, "allied"), (neutral, "neutral"), (enemy, "enemy")]
@@ -684,13 +798,21 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
             );
             0
         }
-        Err(e) => {
+        Err(InstallError::UnsupportedBuild(reason)) => {
+            say(
+                api,
+                LOG_WARN,
+                &format!("unit inspection: {reason}; the game's panel stays"),
+            );
+            0
+        }
+        Err(InstallError::Failed(e)) => {
             say(
                 api,
                 LOG_WARN,
                 &format!("unit inspection: {e}; the game's panel stays"),
             );
-            0
+            1
         }
     }
 }
@@ -704,6 +826,11 @@ pub extern "C" fn defiance_plugin() -> *const Plugin {
         init,
         stop: None,
     })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn defiance_patch_contract_v1(api: *const Api) -> *const PatchContractV1 {
+    unsafe { patch_contract(api) }
 }
 
 defiance_feature_sdk::crash_handshake!();

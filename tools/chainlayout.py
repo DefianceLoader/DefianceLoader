@@ -31,26 +31,41 @@ import hashlib, json, pathlib, sys
 import builds
 sys.path.insert(0, "tools")
 import offsetmap
-from build import SIMPLE_OPERAND
+from build import SIMPLE_OPERAND, source
+from units import UNITS
 
 PATCH = builds.ROOT / "patch"
 
 
-def payload_keys():
-    """Every `mnemonic|reg|disp` a payload operand in `patch/` could be rewritten
-    by, the stack frames aside."""
+def payload_keys(which=None):
+    """Operands assembled for one module, or their union; stack frames aside.
+
+    Unit ownership keeps logic-only object fields out of game.dll inference.
+    The file patch's core and legacy logic routines are outside the unit table.
+    Source expansion includes helpers in the module that assembles them.
+    """
+    if which not in (None, "logic", "game"):
+        raise ValueError(f"unknown payload module: {which}")
+    paths = set()
+    for modules in UNITS.values():
+        for module, (_, _, routines) in modules.items():
+            if which is None or module == which:
+                for sources, _, _ in routines:
+                    paths.update(builds.ROOT / path for path in sources)
+    if which in (None, "logic"):
+        paths.update(PATCH / name for name in
+                     ("select-squad.asm", "selection-filter.asm", "pickup-distinct-item.asm"))
     keys = set()
-    for path in sorted(PATCH.rglob("*.asm")):
-        for raw in path.read_text(encoding="utf-8").splitlines():
-            code = raw.split(";")[0].strip()
-            if not code:
+    for raw in source(*sorted(paths)):
+        code = raw.split(";")[0].strip()
+        if not code:
+            continue
+        mnemonic = code.split(None, 1)[0]
+        for match in SIMPLE_OPERAND.finditer(code):
+            reg, sign, disp = match.groups()
+            if reg in ("rsp", "rbp") or disp is None:
                 continue
-            mnemonic = code.split(None, 1)[0]
-            for match in SIMPLE_OPERAND.finditer(code):
-                reg, sign, disp = match.groups()
-                if reg in ("rsp", "rbp") or disp is None:
-                    continue
-                keys.add(f"{mnemonic}|{reg}|{int(disp, 16) * (-1 if sign == '-' else 1):#x}")
+            keys.add(f"{mnemonic}|{reg}|{int(disp, 16) * (-1 if sign == '-' else 1):#x}")
     return keys
 
 
@@ -96,14 +111,13 @@ def draft(name):
     base = target.base
     if base is None:
         raise SystemExit(f"{name} is the reference; it has no base")
-    keys = payload_keys()
     profile = {"name": name, "base": base.name}
     problems = []
     base_profile, own = profile_of(base), profile_of(target)
     for which in ("logic", "game"):
         dll = target.logic if which == "logic" else target.game
         decided = {k: v for k, v in own.get(f"{which}_decided", {}).items() if v is not None}
-        table, moved, ambiguous, _step = compose(which, base, target, keys, decided)
+        table, moved, ambiguous, _step = compose(which, base, target, payload_keys(which), decided)
         profile[f"{which}_layout"] = table
         profile[f"{which}_sha256"] = hashlib.sha256(dll.read_bytes()).hexdigest()
         profile[f"{which}_symbols"] = dict(base_profile.get(f"{which}_symbols", {}))

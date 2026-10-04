@@ -8,7 +8,7 @@
   "block_bytes": 8192,
   "trace_offset": 4256,
   "tab_modifier_offset": 8168,
-  "ammo_step_offset": 8080,
+  "ammo_step_offset": 8072,
   "anchor_rva": 2048720,
   "anchor": "48895c2408574883ec20488b81180100004c8b8120010000493bc074180f1f00",
   "hooks": [
@@ -321,7 +321,7 @@
       "fixup_feature": 6
     },
     {
-      "offset": 2139,
+      "offset": 2135,
       "target_rva": 264832,
       "what": "the AmmunitionMenu's entity",
       "fixup_feature": 6

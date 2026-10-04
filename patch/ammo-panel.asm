@@ -417,10 +417,10 @@ ammo_step_modifier_done:
 ; the card's slot, or disable the last enabled one, in roster order, through
 ; the per-soldier pin (patch/ammo-mode.asm), so slots 0..7 only. Users are the
 ; ones the card counts (ammo_ui_state): live members, the marked ones of a
-; partial selection, with a gun that takes this ammunition. Only one squad:
-; nothing for a vehicle (no roster) or with other units selected, which
-; expanded-ammo-menu combines into cards this slot does not index. al 1 when
-; it stepped (and refreshed the menu).
+; partial selection, with a gun that takes this ammunition. One squad keeps
+; this local-slot path; a combined menu dispatches to its callback so each
+; source resolves the card's own ammo record. A vehicle has no per-soldier
+; pins. al 1 when it handled the step and refreshed the menu.
 ammo_step:
     push rbx
     push rbp
@@ -433,6 +433,7 @@ ammo_step:
     sub rsp, 0x68
     mov qword ptr [rsp + 0x20], rcx    ; the menu
     mov dword ptr [rsp + 0x28], r8d    ; the direction
+    mov qword ptr [rsp + 0x60], rdx   ; the source widget
     ; The card array ends where the press handler's search does (vt+70, a leaf
     ; that starts `lea rax, [rcx + end]`; expanded-ammo-menu moves the end).
     mov rax, qword ptr [rcx]
@@ -462,8 +463,6 @@ step_card:
     inc esi
     jmp step_card
 step_card_found:
-    cmp esi, 8
-    jae step_done                      ; pins cover slots 0..7
     mov dword ptr [rsp + 0x2c], esi    ; the slot
     mov rcx, qword ptr [rsp + 0x20]
     mov r11, 0xaaaaaaaaaaaaaabd        ; the menu's entity (as its click reads it)
@@ -475,7 +474,22 @@ step_card_found:
     mov rdx, rax
     call ammo_step_alone
     test al, al
+    jnz step_single_squad
+    ; A combined menu card uses each source squad's local slot index. The
+    ; callback resolves the displayed card by weapon identity and owns pins.
+    mov rax, qword ptr [rip + {scratch} + 0x30]
+    test rax, rax
     jz step_done
+    mov rcx, qword ptr [rsp + 0x20]
+    mov rdx, qword ptr [rsp + 0x60]
+    mov r8d, dword ptr [rsp + 0x28]
+    call rax
+    test eax, eax
+    jz step_done
+    jmp step_exit
+step_single_squad:
+    cmp esi, 8
+    jae step_done                      ; pins cover local slots 0..7
     mov rcx, qword ptr [rsp + 0x30]
     mov rax, qword ptr [rcx]
     call qword ptr [rax + 0xb0]

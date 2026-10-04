@@ -8,11 +8,19 @@ import builds
 import capstone, pefile
 
 DLL = str(builds.reference().logic)
+# A rip-relative memory operand in capstone's text, as its sign and displacement.
+_RIP_OPERAND = re.compile(r"\[rip ([+-]) (0x[0-9a-f]+|\d+)\]")
 
 
 class Image:
     def __init__(self, path=DLL):
-        self.pe = pefile.PE(path, fast_load=False)
+        # Every directory but the exception directory: `functions` reads
+        # .pdata directly, and pefile's own parse of it costs seconds.
+        self.pe = pefile.PE(path, fast_load=True)
+        self.pe.parse_data_directories(directories=[
+            pefile.DIRECTORY_ENTRY[name] for name in pefile.DIRECTORY_ENTRY
+            if isinstance(name, str) and name != "IMAGE_DIRECTORY_ENTRY_EXCEPTION"
+        ])
         self.path = path
         self.base = self.pe.OPTIONAL_HEADER.ImageBase
         self.data = self.pe.__data__[:]
@@ -114,19 +122,23 @@ class Image:
     def xref_index(self):
         """{target_rva: [instruction_rva, ...]} for rip-relative operands and
         direct call/jmp. Disassembly follows .pdata function bounds: a single
-        linear sweep of .text stops at the first padding byte."""
+        linear sweep of .text stops at the first padding byte. Operands are
+        read from capstone's text (lite mode): building detail structs for
+        every instruction is nine-tenths of the cost."""
         index = {}
         for start, end in self.functions:
             off = self.rva_to_file(start)
             if off is None:
                 continue
             code = self.data[off:off + (end - start)]
-            for ins in self.md.disasm(code, start):
-                for op in ins.operands:
-                    if op.type == capstone.x86.X86_OP_MEM and op.mem.base == capstone.x86.X86_REG_RIP:
-                        index.setdefault(ins.address + ins.size + op.mem.disp, []).append(ins.address)
-                    elif op.type == capstone.x86.X86_OP_IMM and ins.mnemonic in ("call", "jmp"):
-                        index.setdefault(op.imm, []).append(ins.address)
+            for address, size, mnemonic, op_str in self.md.disasm_lite(code, start):
+                for sign, disp in _RIP_OPERAND.findall(op_str):
+                    disp = int(disp, 0)
+                    index.setdefault(address + size + (disp if sign == "+" else -disp), []).append(address)
+                if mnemonic in ("call", "jmp") and op_str.startswith("0x"):
+                    # the text is unsigned; a target below the image wraps
+                    target = int(op_str, 16)
+                    index.setdefault(target - (1 << 64) if target >> 63 else target, []).append(address)
         return index
 
     def xrefs(self, rva):

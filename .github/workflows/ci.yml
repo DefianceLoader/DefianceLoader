@@ -1,7 +1,7 @@
 # Build and test everything that does not need the game itself.
 #
-# `plugins/core` and `injector` embed the reference payloads committed in
-# `tools/variants/reference`, so every crate builds from a checkout; the game's
+# Built-in plugins and the injector embed committed per-build payloads from
+# `tools/variants`, so every crate builds from a checkout; the game's
 # DLLs are needed only to reassemble those payloads (`mise run assemble`) and
 # for the native tests that run the game's own code.
 name: ci
@@ -38,14 +38,26 @@ jobs:
           cargo doc --workspace --no-deps --document-private-items
           python tools/comment_audit.py --check
       - name: Test the payload-independent crates
-        run: cargo test --workspace --exclude defiance-plugin-core --exclude defiance-pickup-inject
+        run: cargo test --workspace --exclude defiance-plugin-core
       - name: Test standalone plugins
         run: |
           cargo test --manifest-path plugins/regroup/Cargo.toml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cargo test --manifest-path plugins/expanded-ammo-menu/Cargo.toml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cargo test --manifest-path plugins/squad-management-scroll/Cargo.toml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cargo test --manifest-path plugins/unit-inspection/Cargo.toml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cargo test --manifest-path plugins/ability-groups/Cargo.toml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo test --manifest-path plugins/legion-vehicle-hacking/Cargo.toml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo test --manifest-path plugins/vehicle-arrival/Cargo.toml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo test --manifest-path plugins/cover-markers/Cargo.toml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo test --manifest-path plugins/weapon-drops/Cargo.toml
       - name: Test the native hook lifecycle with real thread suspension
         run: cargo test -p defiance-loader --features test-host --test hook_lifecycle --test hook_regressions
       - uses: actions/setup-python@v7
@@ -53,12 +65,23 @@ jobs:
           python-version: '3.12'
       - name: Install the Python test dependencies
         run: python -m pip install -r tools/requirements.txt
+      - name: Check injector coverage and installation for every embedded build
+        run: |
+          python tools/test_stamp.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python tools/test_check_injector.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo build -p defiance-pickup-inject
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python tools/check_injector.py --exe target/debug/defiance-pickup-inject.exe
       - name: Test staging paths and uninstall
         run: |
           python tools/test_stage.py
           python tools/test_package_unit_inspection.py
       - name: Test release metadata enforcement
         run: python tools/test_build_resources.py
+      - name: Build the Legion vehicle hacking plugin for package coverage
+        run: cargo build --release --manifest-path plugins/legion-vehicle-hacking/Cargo.toml
       - name: Test the explicit configuration migration
         run: |
           cargo build -p defiance-loader --bin defiance-config
@@ -66,7 +89,10 @@ jobs:
       - name: Test packaging
         run: |
           python tools/test_package.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python tools/test_package_squad_scroll.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python tools/test_package_weapon_drops.py
       - name: Generate built-in manifests from the authoritative table
         run: cargo run -p defiance-loader --bin manifest-gen -- --out target/manifests
       - name: Build the loader

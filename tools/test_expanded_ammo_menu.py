@@ -44,6 +44,10 @@ def resolve(module,source,at):
 BUILDS=("gog-2025-12-23", "steam-2025-12-23", "gog-2026-09-14", "steam-2026-09-22", "gog-2026-09-25", "steam-2026-09-25")
 PATHS={i:builds.build(n).game for i,n in enumerate(BUILDS)}
 LOGIC={i:builds.build(n).logic for i,n in enumerate(BUILDS)}
+# The GUI-owner store after loading scripts/ui/AmmoTooltip.txt and assigning
+# AmmunitionTooltipWindow's vtable. This is independently audited per build;
+# executing the actual LEA prevents the fixture from inventing the field.
+TOOLTIP_STORE=(0x2462ee,0x24ad1e,0x24762e,0x24c08e,0x24762e,0x24c08e)
 # The AmmunitionMenu constructor slice (reference game.dll+0x3df21..0x3df62),
 # no relative operands, so the same bytes locate it in any build.
 CONSTRUCTOR=("488b9620010000488b820801000048898618010000488b8a18010000"
@@ -63,7 +67,8 @@ def case(build_index,columns,combined=False):
     LOFF=offsets_for(hashlib.sha256(path.read_bytes()).hexdigest())
     base=K.LoadLibraryExW(str(path),None,1) # DONT_RESOLVE_DLL_REFERENCES
     assert base,C.get_last_error()
-    rows=json.loads((ROOT/"out/ammo-menu-sites.json").read_text())[build_index]["sites"]
+    catalog=json.loads((ROOT/"out/ammo-menu-sites.json").read_text())[build_index]
+    rows=catalog["sites"]
     mapped_size=module.pe.OPTIONAL_HEADER.SizeOfImage
     original=C.string_at(base,mapped_size)
     owned={}; calls=0; fail_at=0
@@ -129,8 +134,12 @@ def case(build_index,columns,combined=False):
         if provider==b"defiance.selection":
             assert (name,version,size)==(b"selection",1,8)
             return C.addressof(selection_table)
-        assert (provider,name,version,size)==(b"defiance.core",b"ammo-menu",1,16)
-        return C.addressof(table)
+        if (provider,name)==(b"defiance.core",b"ammo-menu"):
+            assert (version,size)==(1,16)
+            return C.addressof(table)
+        # Optional original-byte and combined-step services are unavailable in
+        # this host. An unknown query returns null, as the loader contract does.
+        return 0
     class Services(C.Structure):
         _fields_=[("version",C.c_uint32),("size",C.c_uint32),("register",C.c_void_p),("query",C.c_void_p)]
     services=Services(1,24,0,query)
@@ -277,6 +286,36 @@ def case(build_index,columns,combined=False):
         pq(slot+0x80,entries); pq(slot+0x88,entries+16)
         pq(slot+0x18,pair[0])
         C.c_int32.from_address(slot+0xc).value=index
+    # The actual redraw detour moves the entire fixed tooltip tree using the
+    # visible cards' rectangles, including sparse entries at the array tail.
+    screen=alloc(0x180); pq(screen,vt)
+    put(screen+0x100,struct.pack("<4i",0,0,1920,1080))
+    tip=alloc(0x180); pq(tip,vt); pq(tip+0x38,screen)
+    put(tip+0x100,struct.pack("<4i",831,848,1232,1060))
+    tip_child=alloc(0x180); pq(tip_child,vt); pq(tip_child+0x38,tip)
+    put(tip_child+0x100,struct.pack("<4i",841,853,1223,877))
+    tip_children=alloc(8); pq(tip_children,tip_child)
+    pq(tip+0x40,tip_children); pq(tip+0x48,tip_children+8)
+    owner=alloc(catalog["tooltip"]+8); controller=alloc(0x98)
+    owner_store=C.string_at(base+TOOLTIP_STORE[build_index],7)
+    assert owner_store==bytes.fromhex("488d86")+struct.pack("<i",catalog["tooltip"])
+    code=bytes.fromhex("564889ce")+owner_store+bytes.fromhex("4889105ec3")
+    initialize_owner=alloc(len(code)); put(initialize_owner,code)
+    C.CFUNCTYPE(None,C.c_void_p,C.c_void_p)(initialize_owner)(owner,controller)
+    assert q(owner+catalog["tooltip"])==controller
+    pq(menu+0x120,owner)
+    pq(controller+0x20,tip); pq(controller+0x38,owner)
+    # This shared implementation has identical copies in game.dll, so its
+    # class's virtual slot identifies it more precisely than a byte signature.
+    image=Image(path)
+    tooltip_classes=Rtti(image).find("AmmunitionTooltipWindow@")
+    assert len(tooltip_classes)==1
+    tooltip_vtables=[v for _,vs in tooltip_classes[0][2] for v in vs]
+    assert len(tooltip_vtables)==1
+    fixed_rva=image.u64(tooltip_vtables[0]+0x30)-image.base
+    assert module.image[fixed_rva:fixed_rva+13]==source.image[0x2cc2a0:0x2cc2a0+13]
+    assert C.c_ubyte.from_address(controller+0x1b).value==0
+    fixed_layout=C.CFUNCTYPE(None,C.c_void_p)(base+fixed_rva)
     for visible_indices in [[],[count-1],[0,2,4,count-1],list(range(count)),[1,3],[]]:
         shown=set(visible_indices)
         pq(vector,records); pq(vector+8,records+count*0x48)
@@ -294,7 +333,33 @@ def case(build_index,columns,combined=False):
                 C.c_uint32.from_address(slot+8).value=0
                 C.CFUNCTYPE(None,C.c_void_p,C.c_void_p)(click)(menu,widgets[index])
                 assert clicked[-1]==(index,1),(index,clicked[-1])
+            if shown:
+                grid_right=647+((len(shown)-1)//3)*90+88
+                grid_top=1062-min(len(shown),3)*70
+                expected_tip=(grid_right+2,1060-212) if grid_right+2+401<=1920 else (647,grid_top-2-212)
+                actual_tip=struct.unpack("<2i",C.string_at(tip+0x100,8))
+                assert actual_tip==expected_tip,(sorted(shown),repeat,actual_tip,expected_tip,catalog["tooltip"])
+                assert struct.unpack("<2i",C.string_at(tip_child+0x100,8))==(expected_tip[0]+10,expected_tip[1]+5)
+                # The fixed AmmoTooltip controller has cursor-follow byte
+                # +0x1b clear. Its actual native placement method leaves the
+                # translated tree alone on a subsequent mouse-move update.
+                before=C.string_at(tip+0x100,16)
+                fixed_layout(controller)
+                assert C.string_at(tip+0x100,16)==before
         assert C.string_at(menu+size,64)==b"G"*64
+
+    # A viewport shrink selects the space above the grid; widening it restores
+    # placement to the right without accumulating a movement delta.
+    shown={0,2,4,count-1}
+    put(screen+0x100,struct.pack("<4i",0,0,1000,1080))
+    redraw(menu,entity)
+    assert struct.unpack("<2i",C.string_at(tip+0x100,8))==(599,638)
+    put(screen+0x100,struct.pack("<4i",0,0,1920,1080))
+    redraw(menu,entity)
+    assert struct.unpack("<2i",C.string_at(tip+0x100,8))==(827,848)
+    # A controller not owned by this GUI must be ignored.
+    pq(controller+0x38,0); positions_by_widget.clear(); redraw(menu,entity)
+    assert tip not in positions_by_widget and tip_child not in positions_by_widget
 
     if combined:
         shown=None
@@ -331,8 +396,8 @@ def case(build_index,columns,combined=False):
         # Execute the real AmmunitionMenu constructor's service-field setup.
         # This is deliberately not pq(menu+128/130, ...): that old fixture
         # mirrored the production bug and masked a mission-load crash.
-        owner=alloc(0x160)
-        owner_shift=0x20 if build_index in (1,3) else 0
+        owner=alloc(max(0x160,catalog["tooltip"]+8))
+        owner_shift=0x20 if build_index in (1,3,5) else 0
         pq(owner+0x100+owner_shift,world)
         pq(owner+0x118+owner_shift,context)
         pq(menu+0x120,owner)
@@ -572,7 +637,7 @@ if __name__=="__main__":
     if len(sys.argv)>1:
         case(int(sys.argv[1]),int(sys.argv[2]),len(sys.argv)>3)
     else:
-        for build in [0,1,2,3]:
+        for build in range(len(BUILDS)):
             if not (ROOT/PATHS[build]).exists():
                 continue
             for columns in [3,4,12,42]:

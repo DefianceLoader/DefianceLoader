@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "id": "defiance.weapon-drops",
+  "dll": "defiance_plugin_weapon_drops.dll",
+  "version": "0.2.0",
+  "abi": 5,
+  "group": "infantry",
+  "hot_reload": false,
+  "patch_contract": true,
+  "multiplayer_safe": false,
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "false",
+      "description": "Experimental: exchange matching primary weapons across a squad when collected, and drop squad weapons on final wipe. GOG and Steam 2026-09 builds only. Restart required."
+    },
+    {
+      "key": "ammo_policy",
+      "type": "choice",
+      "default": "discard",
+      "description": "Outgoing primary ammo on squad replacement: discard removes its shared-ammo share, transfer puts that share on the old-primary pickup, retain keeps it as unused squad reserve. Incoming pickup ammo is imported once independently of this choice. Values: discard, transfer, retain. Restart required."
+    },
+    {
+      "key": "death_ammo",
+      "type": "choice",
+      "default": "discard",
+      "description": "Shared ammo on final squad wipe: discard leaves drops empty; transfer distributes available unreserved shared rounds once across compatible primary drops. Loaded magazine reservations and unused retained reserves are excluded. Values: discard, transfer. Restart required."
+    }
+  ],
+  "depends": [{ "id": "defiance.core", "min": "0.1.0" }],
+  "conflicts": []
+}

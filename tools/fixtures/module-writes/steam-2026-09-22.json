@@ -50,6 +50,7 @@
   {"module": "logic", "plugin": "ammunition", "rva": 1183577, "before": "837a3c010f847c010000", "kind": "jmp", "entry": ["ammo_reader_check2", "reader_check1_end"], "tail": "9090909090"},
   {"module": "logic", "plugin": "ammunition", "rva": 1218048, "before": "4889542410", "kind": "jmp", "entry": ["ammo_set"], "tail": ""},
   {"module": "logic", "plugin": "ammunition", "rva": 1218784, "before": "40534883ec20", "kind": "jmp", "entry": ["ammo_get"], "tail": "90"},
+  {"module": "logic", "plugin": "vehicle-special-fire", "rva": 1887696, "before": "498b5f60488bc3", "kind": "jmp", "entry": ["vehicle_special_fire_dynamic_client"], "tail": "9090"},
   {"module": "logic", "plugin": "selection", "rva": 1990576, "before": "885130c3cc", "kind": "jmp", "entry": ["building_select"], "tail": ""},
   {"module": "logic", "plugin": "selection", "rva": 2167897, "before": "450fb6742420", "kind": "jmp", "entry": ["dim_pose"], "tail": "90"},
   {"module": "logic", "plugin": "selection", "rva": 2168752, "before": "488b4588807820000f8499000000", "kind": "jmp", "entry": ["dim_mode"], "tail": "909090909090909090"},
@@ -69,6 +70,8 @@
   {"module": "logic", "plugin": "ammunition", "rva": 2726061, "before": "ff506085c0", "kind": "call", "entry": ["ammo_gate_body", "gate_from_r15_end"], "tail": ""},
   {"module": "logic", "plugin": "ammunition", "rva": 2730957, "before": "ff506085c0", "kind": "call", "entry": ["effective_end", "gate_from_rbx"], "tail": ""},
   {"module": "logic", "plugin": "ammunition", "rva": 2738965, "before": "ff506085c0", "kind": "call", "entry": ["effective_end", "gate_from_rbx"], "tail": ""},
+  {"module": "logic", "plugin": "vehicle-special-fire", "rva": 2785442, "before": "c783bc0000000000803f", "kind": "jmp", "entry": ["vehicle_special_fire_dynamic_tick"], "tail": "9090909090"},
+  {"module": "logic", "plugin": "vehicle-special-fire", "rva": 2785733, "before": "85f60f88c2000000", "kind": "jmp", "entry": ["vehicle_special_fire_rebind_guard"], "tail": "909090"},
   {"module": "logic", "plugin": "firing", "rva": 2870704, "before": "48895c2408", "kind": "jmp", "entry": ["firing_soldier", "next_end"], "tail": ""},
   {"module": "logic", "plugin": "firing", "rva": 2870892, "before": "48ffa098030000", "kind": "jmp", "entry": ["squad_flag"], "tail": "9090"},
   {"module": "logic", "plugin": "posture", "rva": 2876208, "before": "40534883ec20", "kind": "jmp", "entry": ["lie_down_gate"], "tail": "90"},
@@ -81,7 +84,6 @@
   {"module": "logic", "plugin": "diagnostics", "rva": 4368848, "before": "40534881ecc0000000", "kind": "jmp", "entry": ["select_trace"], "tail": "90909090"},
   {"module": "logic", "plugin": "selection", "rva": 4368890, "before": "488b03ba10000000488bcbff909800000084c00f84b4000000488b03488bcbff90b0000000488b48284885c90f849b000000488b01ff90d00300004885c00f8489000000488b10488bc8ff5268488b104c8b40084c2bc249c1f8034d85c0746d4e8d04c500000000488d4c2420e83ebc2600488b4c2420488b01eb3a", "kind": "edit", "after": "488b034889d9ff90b0000000488b48284885c90f84b4000000488b01ff90d00300004885c00f84a2000000488b104889c1ff5268488b18488b40084889442420483b5c24200f8382000000488b0b4883c3084885c974e9488b01ff90b0000000488b48504885c974d7488b01b201ff5050ebcd909090909090909090"},
   {"module": "logic", "plugin": "selection", "rva": 4369215, "before": "e8dcf1ffff", "kind": "call", "entry": ["region_individual"], "tail": ""},
-  {"module": "logic", "plugin": "selection", "rva": 4369328, "before": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff5050", "kind": "call", "entry": ["marquee_select"], "tail": "909090909090909090909090909090909090909090909090"},
   {"module": "logic", "plugin": "diagnostics", "rva": 4369504, "before": "48895c2408", "kind": "jmp", "entry": ["toggle_trace"], "tail": ""},
   {"module": "logic", "plugin": "selection", "rva": 4369847, "before": "e864efffff", "kind": "call", "entry": ["region_individual"], "tail": ""},
   {"module": "logic", "plugin": "selection", "rva": 4370000, "before": "e8cbeeffff", "kind": "call", "entry": ["region_individual"], "tail": ""},
@@ -101,6 +103,10 @@
   {"module": "logic", "plugin": "posture", "rva": 4524785, "before": "33d2488bcb", "kind": "call", "entry": ["squad_stand_end", "squad_stand_mode"], "tail": ""},
   {"module": "logic", "plugin": "selection", "rva": 4571280, "before": "488bc1488b49284885c97407488b0148ff6050885030c3cccccccc", "kind": "jmp", "entry": ["set_selected"], "tail": "90909090909090909090909090909090909090909090"},
   {"module": "logic", "plugin": "selection", "rva": 4571312, "before": "40534883ec20", "kind": "jmp", "entry": ["is_selected"], "tail": "90"},
-  {"module": "logic", "plugin": "selection", "rva": 4571328, "before": "7410488b01ff505884c0741a807b1800eb0a", "kind": "edit", "after": "7410488b01ff505884c0741a807b1800eb00"}
+  {"module": "logic", "plugin": "selection", "rva": 4571328, "before": "7410488b01ff505884c0741a807b1800eb0a", "kind": "edit", "after": "7410488b01ff505884c0741a807b1800eb00"},
+  {"module": "logic", "plugin": "vehicle-special-fire", "rva": 4697803, "before": "e8c012e4ff", "kind": "call", "entry": ["vehicle_special_fire_source"], "tail": ""},
+  {"module": "logic", "plugin": "vehicle-special-fire", "rva": 4698587, "before": "488b5c2478", "kind": "jmp", "entry": ["vehicle_special_fire_board_tail"], "tail": ""},
+  {"module": "logic", "plugin": "vehicle-special-fire", "rva": 4700336, "before": "e8db08e4ff", "kind": "call", "entry": ["vehicle_special_fire_source"], "tail": ""},
+  {"module": "logic", "plugin": "vehicle-special-fire", "rva": 4701163, "before": "488b742448", "kind": "jmp", "entry": ["vehicle_special_fire_disembark_tail"], "tail": ""}
  ]
 }

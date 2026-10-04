@@ -43,6 +43,9 @@ pub struct Manifest {
     /// runs (development reloads). Absent means true; a plugin that changes
     /// the game only at startup declares false.
     pub hot_reload: bool,
+    /// `patch_contract`: successful init must match the optional v1 expected-
+    /// write export. Absent means false for older manifests.
+    pub patch_contract: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -273,6 +276,17 @@ pub fn parse(text: &str, expected_dll: &str) -> Result<Manifest, String> {
         }
     };
 
+    let patch_contract = match map.get("patch_contract") {
+        None | Some(Value::Bool(false)) => false,
+        Some(Value::Bool(true)) => true,
+        Some(other) => {
+            return Err(format!(
+                "`patch_contract` must be a boolean, not {}",
+                json::kind(other)
+            ))
+        }
+    };
+
     if multiplayer_safe
         && builtin::NOT_MULTIPLAYER_SAFE
             .iter()
@@ -295,6 +309,7 @@ pub fn parse(text: &str, expected_dll: &str) -> Result<Manifest, String> {
         conflicts,
         multiplayer_safe,
         hot_reload,
+        patch_contract,
     })
 }
 
@@ -413,6 +428,7 @@ pub fn render_builtin(builtin: &Builtin) -> String {
             "hot_reload".into(),
             Value::Bool(builtin::hot_reload(builtin)),
         ),
+        ("patch_contract".into(), Value::Bool(builtin.patch_contract)),
     ]);
     json::render(&document)
 }
@@ -435,8 +451,18 @@ pub fn builtin_manifests() -> Vec<(String, String)> {
         .collect()
 }
 
+/// Whether a packaged built-in's version is in the release series the table
+/// names: the same major and minor, any patch. A patch release of one plugin
+/// then loads under a loader built for a neighbouring patch, in either
+/// direction; every field the loader acts on is still checked exactly.
+fn same_series(version: Version, table: &str) -> bool {
+    Version::parse(table)
+        .is_ok_and(|table| (version.major, version.minor) == (table.major, table.minor))
+}
+
 /// Check a packaged built-in manifest against the authoritative table. Any
-/// disagreement is a packaging error rather than a silent downgrade.
+/// disagreement is a packaging error rather than a silent downgrade, except a
+/// patch-level version difference (see [`same_series`]).
 pub fn check_builtin(manifest: &Manifest, builtin: &Builtin) -> Result<(), String> {
     if manifest.abi != ABI_VERSION {
         return Err(format!(
@@ -450,9 +476,9 @@ pub fn check_builtin(manifest: &Manifest, builtin: &Builtin) -> Result<(), Strin
             manifest.id, builtin.id
         ));
     }
-    if manifest.version.to_string() != builtin.version {
+    if !same_series(manifest.version, builtin.version) {
         return Err(format!(
-            "manifest version {} is not {}",
+            "manifest version {} is not in the {} series",
             manifest.version, builtin.version
         ));
     }
@@ -473,6 +499,12 @@ pub fn check_builtin(manifest: &Manifest, builtin: &Builtin) -> Result<(), Strin
             "manifest hot_reload {} is not {}",
             manifest.hot_reload,
             builtin::hot_reload(builtin)
+        ));
+    }
+    if manifest.patch_contract != builtin.patch_contract {
+        return Err(format!(
+            "manifest patch_contract {} is not {}",
+            manifest.patch_contract, builtin.patch_contract
         ));
     }
     if manifest.multiplayer_safe != builtin.multiplayer_safe {
@@ -651,13 +683,19 @@ mod tests {
                 r#"{{"schema":1,"id":"{id}","dll":"x.dll","version":"1.0.0","abi":5,"group":"g","multiplayer_safe":{safe}}}"#
             ))
         };
-        let error = parse(&manifest("defiance.regroup", "true"), "x.dll").unwrap_err();
-        assert!(error.contains("cannot be multiplayer_safe"), "{error}");
-        assert!(
-            !parse(&manifest("defiance.regroup", "false"), "x.dll")
-                .unwrap()
-                .multiplayer_safe
-        );
+        for &id in builtin::NOT_MULTIPLAYER_SAFE {
+            let error = parse(&manifest(id, "true"), "x.dll").unwrap_err();
+            assert!(
+                error.contains("cannot be multiplayer_safe"),
+                "{id}: {error}"
+            );
+            assert!(
+                !parse(&manifest(id, "false"), "x.dll")
+                    .unwrap()
+                    .multiplayer_safe,
+                "{id}"
+            );
+        }
         assert!(
             parse(&manifest("author.display", "true"), "x.dll")
                 .unwrap()
@@ -678,9 +716,56 @@ mod tests {
     }
 
     #[test]
+    fn a_builtin_accepts_any_patch_in_its_series() {
+        let builtin = builtin::find("defiance.selection").unwrap();
+        let table = Version::parse(builtin.version).unwrap();
+        let mut manifest = parse(&render_builtin(builtin), builtin.dll).unwrap();
+        let checked = |manifest: &Manifest| check_builtin(manifest, builtin);
+        for patch in [0, table.patch + 1, table.patch + 20] {
+            manifest.version = Version { patch, ..table };
+            checked(&manifest).unwrap_or_else(|e| panic!("{}: {e}", manifest.version));
+        }
+        for version in [
+            Version {
+                minor: table.minor + 1,
+                ..table
+            },
+            Version {
+                major: table.major + 1,
+                ..table
+            },
+        ] {
+            manifest.version = version;
+            let error = checked(&manifest).unwrap_err();
+            assert!(error.contains("series"), "{version}: {error}");
+        }
+    }
+
+    #[test]
     fn a_dll_that_is_not_a_basename_is_refused() {
         let json = render_builtin(&BUILTINS[1]);
         assert!(parse(&json.replace(BUILTINS[1].dll, "../evil.dll"), "../evil.dll").is_err());
+    }
+
+    #[test]
+    fn moving_action_sidecars_parse_with_the_loader() {
+        let sidecars = [
+            ("defiance_plugin_moving_actions.dll", include_str!("../../../plugins/moving-actions/defiance_plugin_moving_actions.plugin.json")),
+            ("defiance_plugin_moving_actions_animation.dll", include_str!("../../../plugins/moving-actions-animation/defiance_plugin_moving_actions_animation.plugin.json")),
+            ("defiance_plugin_moving_actions_sync.dll", include_str!("../../../plugins/moving-actions-sync/defiance_plugin_moving_actions_sync.plugin.json")),
+            ("defiance_plugin_moving_actions_render_sync.dll", include_str!("../../../plugins/moving-actions-render-sync/defiance_plugin_moving_actions_render_sync.plugin.json")),
+            ("defiance_plugin_moving_grenades.dll", include_str!("../../../plugins/moving-grenades/defiance_plugin_moving_grenades.plugin.json")),
+        ];
+        let movement = parse(sidecars[0].1, sidecars[0].0).unwrap();
+        for (index, (dll, text)) in sidecars.into_iter().enumerate() {
+            let manifest = parse(text, dll).unwrap_or_else(|e| panic!("{dll}: {e}"));
+            assert_eq!(manifest.abi, ABI_VERSION);
+            if index != 0 {
+                assert_eq!(manifest.depends.len(), 1);
+                assert_eq!(manifest.depends[0].id, movement.id);
+                assert!(satisfies(movement.version, &manifest.depends[0]));
+            }
+        }
     }
 
     #[test]

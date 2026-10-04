@@ -53,6 +53,15 @@ perk cards (in the 2026-09 builds, every card after a perk tagged `exclusive`),
 the row is left unscrolled; an `exclusive` perk past the fifth entry is not
 detected.
 
+The available-training window also keeps its cards in one horizontal row.
+Scroll over a training card or use the scrollbar beneath the Trainings header
+to reach the rest.
+This prevents a second row from covering the first row's Train/Confirm buttons
+or extending below the screen. The scrollbar appears only when the cards do
+not fit, and opening the chooser starts at the first card. Training prices,
+eligibility and selection actions still come from the game. This needs the
+updated companion mod's `scripts/ui/TrainingWindow.txt` overlay.
+
 The plugin rebinds the original widgets to real inventory records. It does not
 increase fixed native widget arrays or change inventory/gameplay limits. The
 in-mission ammunition menu is a separate feature.
@@ -69,7 +78,8 @@ Requires the current Defiance Loader (ABI 5). Close the game first.
    `DefianceLoader/config/weapons.ini`.
 3. Enable **Defiance squad inventory scrolling** in the game's MODS menu and
    restart as requested. Give it precedence over other mods that replace
-   `scripts/ui/InfantryInfoPanel.txt` or `scripts/ui/VehicleInfoPanel.txt`.
+   `scripts/ui/InfantryInfoPanel.txt`, `scripts/ui/VehicleInfoPanel.txt`, or
+   `scripts/ui/TrainingWindow.txt`.
 
 No configuration is generated during the build. Default: enabled. If the
 companion controls are missing or have the wrong native type, the plugin leaves

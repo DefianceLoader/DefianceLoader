@@ -2,8 +2,9 @@
   "schema": 1,
   "id": "defiance.expanded-ammo-menu",
   "dll": "defiance_plugin_expanded_ammo_menu.dll",
-  "version": "0.3.2",
+  "version": "0.4.1",
   "abi": 5,
+  "patch_contract": true,
   "group": "weapons",
   "settings": [
     {
@@ -24,7 +25,7 @@
       "key": "all_selected_squads",
       "type": "bool",
       "default": "true",
-      "description": "Show ammunition from all selected infantry squads together, with ammo-level bars, average active reload progress, and enabled/total counts for mixed weapon states. Clicking a mixed or disabled type enables it for all selected users; clicking a fully enabled type disables it. Enabled by default. Experimental. False keeps the focused-squad view while retaining the larger menu. Individual-soldier overrides still cover only the first eight ammo slots; select whole squads for later slots. Requires expanded ammo menu enabled. Restart required."
+      "description": "Show ammunition from all selected infantry squads together, with ammo-level bars, average active reload progress, and enabled/total counts for mixed weapon states. Clicking a mixed or disabled type enables it for all selected users; clicking a fully enabled type disables it. Slot steps also traverse selected squads in selection order, using each squad's local slot. Enabled by default. Experimental. False keeps the focused-squad view while retaining the larger menu. Individual-soldier overrides still cover only each squad's first eight ammo slots; select whole squads for later local slots. Requires expanded ammo menu enabled. Restart required."
     }
   ],
   "depends": [

@@ -31,6 +31,8 @@ PASSWORD_ENV = 'DEFIANCE_PAK_PASSWORD'
 RESOURCE = 'scripts/ui/InfantryInfoPanel.txt'
 VEHICLE_RESOURCE = 'scripts/ui/VehicleInfoPanel.txt'
 AMMO_RESOURCE = 'scripts/ui/AmmoInfo.txt'
+TRAINING_RESOURCE = 'scripts/ui/TrainingWindow.txt'
+TRAINING_SLIDER = (1, 295, 1921, 299)
 # The ammo card's user count: the stock box fits two digits from a fixed left
 # edge, so a fraction ran into the next card. The wider box ends where the
 # stock text did and is right-aligned; the left part is empty card top.
@@ -132,6 +134,21 @@ def vehicle_layout(data):
     return (text.rstrip('\r\n') + '\r\n' + sliders).encode('utf-8')
 
 
+def training_layout(data):
+    """A scrollbar beneath the header, above the available-training cards."""
+    text, rows = rows_of(data)
+    if 'df_trainings' in rows:
+        raise ValueError('layout already contains training scrolling controls')
+    for name, kind, expected in (('items_first_line', 'widget', (1, 309, 1921, 695)),
+                                 ('items_second_line', 'widget', (1, 695, 1921, 1081)),
+                                 ('title_text', 'text', (230, 254, 1691, 290)),
+                                 ('close_button', 'text_button', (226, 250, 442, 294))):
+        row = rows.get(name)
+        if row is None or row[1] != kind or tuple(map(int, row[2].split(','))) != expected:
+            raise ValueError('unsupported training chooser layout; overlay not generated')
+    return (text.rstrip('\r\n') + '\r\n' + slider('df_trainings', TRAINING_SLIDER)).encode('utf-8')
+
+
 def ammo_info_layout(data):
     """The ammo card with its user count right-aligned in a wider box."""
     text = data.decode('utf-8-sig')
@@ -203,7 +220,7 @@ def resources(game, resource, make):
         raise ValueError(f'{resource} not found')
     derived = make(latest)
     return ({layer: derived for layer in sorted(layers)},
-            {layer: dict(source, layout_revision=3) for layer in sorted(layers)})
+            {layer: dict(source, layout_revision=5) for layer in sorted(layers)})
 
 
 def dim_material(data):
@@ -253,7 +270,7 @@ def mod_entries(game):
     entries = {}
     entries[prefix + 'mod.json'] = json.dumps(dict(
         name='Defiance squad inventory scrolling',
-        description='Independent weapon, ammunition, perk and upgrade scrollbars, an ammo '
+        description='Independent weapon, ammunition, perk, upgrade and available-training scrollbars, an ammo '
                     'card count that fits two-digit fractions, and the darker materials the '
                     'squad preview uses for unselected soldiers. The scrollbars require the '
                     'Defiance Loader squad-management-scroll plugin.',
@@ -262,7 +279,8 @@ def mod_entries(game):
     sources = {}
     layers = set()
     for resource, make in ((RESOURCE, layout), (VEHICLE_RESOURCE, vehicle_layout),
-                           (AMMO_RESOURCE, ammo_info_layout)):
+                           (AMMO_RESOURCE, ammo_info_layout),
+                           (TRAINING_RESOURCE, training_layout)):
         panel_layers, panel_sources = resources(game, resource, make)
         sources[resource] = panel_sources
         layers.update(panel_layers)

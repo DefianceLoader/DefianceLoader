@@ -27,6 +27,14 @@ start, and your usual launcher or shortcut keeps working.
   in testing).
 - **Regroup** (experimental, off by default): form new squads from selected
   soldiers.
+- **Vehicle arrival braking** (experimental, off by default): shorten the
+  braking window for wheeled and tracked cars and tanks.
+- **Primary weapon drops** (experimental, off by default, GOG and Steam
+  2026-09 builds): wiped squads drop their primaries, and collecting one
+  re-equips the squad.
+- **Moving infantry actions** (experimental, GOG and Steam 2026-09 builds):
+  movement continues through grenade throws and weapon changes, with companion
+  repairs for weapon rendering and an animation overlay for standing actions.
 
 Every feature can be switched off on its own. See [features](docs/features.md)
 for controls and details.

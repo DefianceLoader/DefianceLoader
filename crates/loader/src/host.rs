@@ -10,9 +10,9 @@
 //! or blocked managed plugin is never loaded. A plugin whose exported identity,
 //! ABI or version disagrees with its manifest is refused before `init`.
 //!
-//! Hooks belong to the plugin that installed them (`hooks::begin_plugin` marks
-//! the one whose `init` is running), so a plugin that fails has its hooks taken
-//! back out, and `unload` — in reverse order — stops them and removes theirs.
+//! Hooks belong to the plugin whose `init` requests them. Managed requests are
+//! staged and preflighted as a transaction before the next legacy initializer;
+//! a manifest dependency can place a legacy plugin between managed groups.
 
 use crate::plan::{Decision, Planned};
 #[cfg(feature = "test-host")]
@@ -20,7 +20,7 @@ use crate::plugin::unload;
 use crate::plugin::{load, LoadFailure};
 use crate::win;
 use defiance_api::Api;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -129,9 +129,7 @@ pub fn run() {
         }
         Err(e) => crate::log::warn(&format!("crash reporting unavailable: {e}")),
     }
-    if let Some(level) = config.text(crate::config::builtin::LOGGING_SECTION, "level") {
-        crate::log::set_level(&level);
-    }
+    crate::log::configure(config);
     if let Some(reason) = config.startup_error() {
         crate::log::error(&reason);
         return;
@@ -159,7 +157,9 @@ pub fn run() {
     ));
     for name in ["logic.dll", "game.dll"] {
         match crate::resolve::wait_for(name, wait) {
-            Some((base, size)) => crate::log::info(&format!("{name} at {base:p}, {size:#x} bytes")),
+            Some((base, size)) => {
+                crate::log::debug(&format!("{name} at {base:p}, {size:#x} bytes"))
+            }
             None => {
                 crate::log::error(&format!(
                     "{name} did not load within {}s; no plugins installed",
@@ -207,7 +207,7 @@ pub fn run() {
                     .as_ref()
                     .map(|manifest| manifest.version.to_string())
                     .unwrap_or_else(|| "legacy".into());
-                crate::log::info(&format!(
+                crate::log::debug(&format!(
                     "{} {version} scheduled{}{}{manifest}{provenance}",
                     node.id,
                     if node.legacy {
@@ -241,7 +241,7 @@ pub fn run() {
     );
     for (node, state) in plan.nodes.iter().zip(&result.states) {
         match state {
-            RunState::Active => crate::log::info(&format!("{} active", node.id)),
+            RunState::Active => crate::log::debug(&format!("{} active", node.id)),
             RunState::Blocked(reason) => {
                 crate::log::error(&format!("{} blocked: {reason}", node.id))
             }
@@ -260,8 +260,10 @@ pub fn run() {
         crate::log::error(&format!(
             "startup degraded: {summary}; rollback incomplete, no further plugins initialized"
         ));
+        crate::startup::DEFIANCE_LOADER_STATE.fail();
     } else {
         crate::log::info(&format!("startup summary: {summary}"));
+        crate::startup::DEFIANCE_LOADER_STATE.ready();
     }
     crate::log::info("loader ready");
     let flag = |key: &str| {
@@ -320,14 +322,16 @@ fn execute_plan(
     run_plan(plan, initialize, || true)
 }
 
-/// Initialize the plan in order. A plugin that is not multiplayer-safe starts
-/// only once `guarded` says the multiplayer guard is installed; the plan
-/// orders every such plugin after Core, which installs it.
+/// Initialize the plan in order, committing staged managed writes before each
+/// legacy plugin and at the end. A plugin that is not multiplayer-safe starts
+/// only once `guarded` says the multiplayer guard is installed; the plan orders
+/// every such plugin after Core, which installs it.
 fn run_plan(
     plan: &crate::plan::Plan,
     mut initialize: impl FnMut(&Planned, usize) -> Result<(), LoadFailure>,
     guarded: impl Fn() -> bool,
 ) -> StartupResult {
+    let _patch_plan = crate::hooks::PatchPlanGuard::begin();
     let mut result = StartupResult {
         states: plan
             .nodes
@@ -344,6 +348,15 @@ fn run_plan(
     let mut active = BTreeSet::new();
     for &index in &plan.order {
         let node = &plan.nodes[index];
+        if node.legacy {
+            finalize_patch_plan(plan, &mut result, &mut active);
+        }
+        if matches!(
+            &result.states[index],
+            RunState::Blocked(reason) if reason != "not initialized"
+        ) {
+            continue;
+        }
         if result.degraded {
             result.states[index] =
                 RunState::Blocked("startup stopped after incomplete rollback".into());
@@ -377,7 +390,192 @@ fn run_plan(
             }
         }
     }
+    finalize_patch_plan(plan, &mut result, &mut active);
     result
+}
+
+/// Resolve the current staged managed writes after their initializers run. The
+/// first owner in plan order wins an overlap; later owners and transitive
+/// dependants are stopped before the surviving transaction is published.
+fn finalize_patch_plan(
+    plan: &crate::plan::Plan,
+    result: &mut StartupResult,
+    active: &mut BTreeSet<String>,
+) {
+    let owners: Vec<usize> = plan
+        .order
+        .iter()
+        .copied()
+        .filter(|&index| !plan.nodes[index].legacy && result.states[index] == RunState::Active)
+        .collect();
+    if result.degraded {
+        let reason = "startup abandoned staged writes after an incomplete plugin rollback";
+        for &owner in owners.iter().rev() {
+            if let Err(error) = crate::lifecycle::discard_started(owner) {
+                crate::log::error(&format!(
+                    "{}: could not discard staged patches: {error}",
+                    plan.nodes[owner].id
+                ));
+            }
+            active.remove(&plan.nodes[owner].id.to_ascii_lowercase());
+            result.states[owner] = RunState::Blocked(reason.into());
+        }
+        crate::hooks::discard_staged(&owners);
+        return;
+    }
+
+    let conflicts = crate::hooks::staged_conflicts();
+    let mut accepted = BTreeSet::new();
+    let mut refused = BTreeMap::new();
+    for &owner in &owners {
+        let matching: Vec<&crate::hooks::PatchConflict> = conflicts
+            .iter()
+            .filter(|conflict| {
+                let other = if conflict.first.owner == owner {
+                    Some(&conflict.second)
+                } else if conflict.second.owner == owner {
+                    Some(&conflict.first)
+                } else {
+                    None
+                };
+                other.is_some_and(|side| {
+                    side.owner != owner && (side.published || accepted.contains(&side.owner))
+                })
+            })
+            .collect();
+        if matching.is_empty() {
+            accepted.insert(owner);
+            continue;
+        }
+        let reason = format!(
+            "unified patch conflict: {}",
+            crate::hooks::describe_conflict(matching[0])
+        );
+        for conflict in matching {
+            crate::log::error(&format!(
+                "unified patch plan: refusing {}: {}",
+                plan.nodes[owner].id,
+                crate::hooks::describe_conflict(conflict)
+            ));
+        }
+        refused.insert(owner, reason);
+    }
+
+    let mut blocked = refused.clone();
+    loop {
+        let mut changed = false;
+        for &owner in &owners {
+            if blocked.contains_key(&owner) {
+                continue;
+            }
+            let dependency = plan.nodes[owner].depends.iter().find(|dependency| {
+                plan.nodes
+                    .iter()
+                    .position(|node| node.id.eq_ignore_ascii_case(dependency))
+                    .is_some_and(|provider| blocked.contains_key(&provider))
+            });
+            if let Some(dependency) = dependency {
+                blocked.insert(
+                    owner,
+                    format!("required `{dependency}` was refused by the unified patch plan"),
+                );
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    for &owner in plan.order.iter().rev() {
+        let Some(reason) = blocked.get(&owner) else {
+            continue;
+        };
+        if result.states[owner] != RunState::Active {
+            continue;
+        }
+        if let Err(error) = crate::lifecycle::discard_started(owner) {
+            result.degraded = true;
+            crate::log::error(&format!(
+                "{}: could not roll back the refused plugin: {error}",
+                plan.nodes[owner].id
+            ));
+        }
+        active.remove(&plan.nodes[owner].id.to_ascii_lowercase());
+        result.states[owner] = if refused.contains_key(&owner) {
+            RunState::Failed(reason.clone())
+        } else {
+            RunState::Blocked(reason.clone())
+        };
+    }
+    accepted.retain(|owner| !blocked.contains_key(owner));
+
+    if result.degraded {
+        for &owner in owners.iter().rev() {
+            if result.states[owner] != RunState::Active {
+                continue;
+            }
+            if let Err(error) = crate::lifecycle::discard_started(owner) {
+                crate::log::error(&format!(
+                    "{}: could not discard the remaining staged plan: {error}",
+                    plan.nodes[owner].id
+                ));
+            }
+            active.remove(&plan.nodes[owner].id.to_ascii_lowercase());
+            result.states[owner] =
+                RunState::Blocked("startup stopped after an incomplete patch-plan rollback".into());
+        }
+        crate::hooks::discard_staged(&owners);
+        return;
+    }
+
+    let mut discarded: BTreeSet<usize> = conflicts
+        .iter()
+        .flat_map(|conflict| [&conflict.first, &conflict.second])
+        .filter(|side| !side.published && !accepted.contains(&side.owner))
+        .map(|side| side.owner)
+        .collect();
+    discarded.extend(
+        owners
+            .iter()
+            .copied()
+            .filter(|owner| !accepted.contains(owner)),
+    );
+    crate::hooks::discard_staged(&discarded.iter().copied().collect::<Vec<_>>());
+
+    let commit_owners: Vec<usize> = accepted.iter().copied().collect();
+    match crate::hooks::commit_staged(&commit_owners) {
+        Ok(()) => crate::lifecycle::commit_pending(&commit_owners),
+        Err(crate::code::CommitError::AfterWrite(error)) => {
+            crate::lifecycle::commit_pending(&commit_owners);
+            result.degraded = true;
+            crate::log::error(&format!(
+                "startup degraded: the unified patch transaction may be partial; ownership and code were retained: {error}"
+            ));
+        }
+        Err(crate::code::CommitError::BeforeWrite(error)) => {
+            crate::log::error(&format!(
+                "unified patch plan was refused before publication: {error}"
+            ));
+            for &owner in owners.iter().rev() {
+                if result.states[owner] != RunState::Active {
+                    continue;
+                }
+                if let Err(cleanup) = crate::lifecycle::discard_started(owner) {
+                    result.degraded = true;
+                    crate::log::error(&format!(
+                        "{}: cleanup after a refused patch plan failed: {cleanup}",
+                        plan.nodes[owner].id
+                    ));
+                }
+                active.remove(&plan.nodes[owner].id.to_ascii_lowercase());
+                result.states[owner] = RunState::Failed(format!(
+                    "unified patch transaction was not published: {error}"
+                ));
+            }
+            crate::hooks::discard_staged(&owners);
+        }
+    }
 }
 
 /// Whether this process's executable is the game.
@@ -417,6 +615,7 @@ pub static TEST_ORDER: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec
 pub fn test_load(exe_dir: &std::path::Path) -> Vec<(String, String)> {
     assert_eq!(exe_dir, crate::config::game_dir());
     let config = crate::config::load();
+    crate::log::configure(config);
     crate::lifecycle::clean_cache(&config.paths.root.join("cache").join("plugins"));
     let plan = crate::plan::plan(config.catalog.entries.clone(), config);
     *TEST_ORDER.lock().unwrap() = plan
@@ -448,6 +647,15 @@ pub fn test_load(exe_dir: &std::path::Path) -> Vec<(String, String)> {
 #[cfg(feature = "test-host")]
 pub fn test_reload(id: &str) -> Result<(), String> {
     crate::reload::reload(TEST_API.get().expect("test_load first"), id)
+}
+
+#[cfg(feature = "test-host")]
+pub fn test_reload_and_config(file_id: &str, config_id: &str) -> Result<(), String> {
+    crate::reload::test_reload_and_config(
+        TEST_API.get().expect("test_load first"),
+        file_id,
+        config_id,
+    )
 }
 
 /// An added plugin loaded, as the watcher does it.
@@ -745,7 +953,7 @@ mod startup_tests {
     }
 
     #[test]
-    fn incomplete_rollback_stops_all_later_loads_and_keeps_earlier_successes() {
+    fn incomplete_rollback_discards_prior_managed_plugins_and_stops_later_loads() {
         let f = Fixture::new();
         for id in ["a", "b", "c"] {
             f.plugin(id, &[], &[], ABI_VERSION);
@@ -765,7 +973,9 @@ mod startup_tests {
         });
         assert_eq!(called, ["a", "b"]);
         assert!(result.degraded);
-        assert!(matches!(state(&plan, &result, "a"), RunState::Active));
+        assert!(
+            matches!(state(&plan, &result, "a"), RunState::Blocked(reason) if reason.contains("abandoned staged writes"))
+        );
         assert!(
             matches!(state(&plan, &result, "b"), RunState::Failed(reason) if reason.contains("restore failed"))
         );

@@ -9,6 +9,13 @@ and other UI mods. The stock widget spacing/visuals are retained. Visible cards 
 three rows, filling upward then adding columns to the right. Hidden ammo entries
 do not leave holes after regroup/restore or when switching squads.
 
+The ammunition tooltip follows the occupied grid: it sits to the right of the
+visible cards, or above them when the right side would extend past the viewport.
+It uses the current widget sizes and GUI viewport, so sparse cards, changing
+squads and UI scaling do not reserve space for unused columns. The text and
+background move together. If neither preferred side fits, it tries the left
+and then the space below; if no side fits, it keeps its current position.
+
 ## Install and enable
 
 Use a current DefianceLoader release with ammunition and selection plugins enabled.

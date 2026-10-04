@@ -11,7 +11,10 @@
 use crate::plan::Planned;
 use crate::win;
 use core::ffi::CStr;
-use defiance_api::{Api, Entry, ABI_VERSION, PLUGIN_ENTRY};
+use defiance_api::{
+    Api, Entry, PatchContractEntry, PatchContractV1, ABI_VERSION, PATCH_CONTRACT_ENTRY,
+    PATCH_KIND_BYTES, PATCH_KIND_CALL, PATCH_KIND_ENTRY, PLUGIN_ENTRY,
+};
 
 /// Why loading a planned plugin did not finish. `degraded` is set when its
 /// spans could not all be restored: the host must then stop installing, since
@@ -37,6 +40,22 @@ fn c_string(text: *const core::ffi::c_char) -> String {
     unsafe { CStr::from_ptr(text) }
         .to_string_lossy()
         .into_owned()
+}
+
+/// A warning when the version a DLL exports differs from its manifest's, or
+/// `None` when they agree. The manifest is the authority: dependency ranges,
+/// the built-in table check and the lifecycle all use its version, so a player
+/// can relabel a plugin by editing the manifest alone. The DLL's own version
+/// is only reported.
+fn version_disagreement(exported: &str, declared: crate::manifest::Version) -> Option<String> {
+    let agrees = crate::manifest::Version::parse(exported)
+        .map(|parsed| parsed == declared)
+        .unwrap_or_else(|_| exported == declared.to_string());
+    (!agrees).then(|| {
+        format!(
+            "exports version `{exported}` but its manifest declares `{declared}`; using {declared}"
+        )
+    })
 }
 
 /// Whether a plugin loads from a shadow copy: only one its manifest allows to
@@ -112,16 +131,22 @@ pub fn load(node: &Planned, api: &'static Api, owner: usize) -> Result<(), LoadF
                 manifest.id
             )));
         }
-        let matches = crate::manifest::Version::parse(&version)
-            .map(|parsed| parsed == manifest.version)
-            .unwrap_or_else(|_| version == manifest.version.to_string());
-        if !matches {
-            return Err(LoadFailure::plain(format!(
-                "exports version `{version}` but its manifest declares `{}`",
-                manifest.version
-            )));
+        if let Some(note) = version_disagreement(&version, manifest.version) {
+            crate::log::warn(&format!("{name}: {note}"));
         }
     }
+    let contract_symbol = unsafe { win::GetProcAddress(module, PATCH_CONTRACT_ENTRY.as_ptr()) };
+    let contract_required = node
+        .manifest
+        .as_ref()
+        .is_some_and(|manifest| manifest.patch_contract);
+    if contract_required && contract_symbol.is_null() {
+        return Err(LoadFailure::plain(
+            "manifest requires `defiance_patch_contract_v1`, but the export is missing",
+        ));
+    }
+    let patch_contract: Option<PatchContractEntry> =
+        (!contract_symbol.is_null()).then(|| unsafe { core::mem::transmute(contract_symbol) });
     crate::log::info(&format!(
         "plugin {name} {version} from {}",
         node.path.display()
@@ -143,7 +168,7 @@ pub fn load(node: &Planned, api: &'static Api, owner: usize) -> Result<(), LoadF
         );
     }
     if let Ok(hash) = defiance_core::sha256::file(&node.path) {
-        crate::log::info(&format!("build sha256={hash} {}", node.path.display()));
+        crate::log::debug(&format!("build sha256={hash} {}", node.path.display()));
     }
     let crash_handshake =
         unsafe { win::GetProcAddress(module, b"defiance_plugin_crash_v1\0".as_ptr()) };
@@ -165,6 +190,7 @@ pub fn load(node: &Planned, api: &'static Api, owner: usize) -> Result<(), LoadF
             return Err(LoadFailure::plain("service extension handshake failed"));
         }
     }
+    let api = crate::plugin_log::bind(api, &node.id).map_err(LoadFailure::plain)?;
     crate::services::begin(
         owner,
         &name,
@@ -173,9 +199,29 @@ pub fn load(node: &Planned, api: &'static Api, owner: usize) -> Result<(), LoadF
             .map(|m| m.depends.iter().map(|d| d.id.clone()).collect())
             .unwrap_or_default(),
     );
-    // Hooks installed during this call are charged to this plugin.
-    crate::hooks::begin_plugin(owner, &name);
-    let code = unsafe { (plugin.init)(api as *const Api) };
+    // Managed plugins stage hooks for the runtime-wide plan. Legacy plugins
+    // keep their immediate, ownership-checked installation path.
+    if node.legacy {
+        crate::hooks::begin_plugin(owner, &name);
+    } else {
+        crate::hooks::begin_managed_plugin(owner, &name);
+    }
+    let mut code = unsafe { (plugin.init)(api as *const Api) };
+    let mut failure_reason = format!("init returned {code}");
+    if code == 0 && !node.legacy {
+        if let Some(contract) = patch_contract {
+            match unsafe { read_patch_contract(api, contract) }
+                .and_then(|expected| crate::hooks::validate_staged_contract(owner, &expected))
+            {
+                Ok(()) => {}
+                Err(reason) => {
+                    code = 1;
+                    failure_reason = format!("patch contract mismatch: {reason}");
+                    crate::log::error(&format!("{name}: {failure_reason}"));
+                }
+            }
+        }
+    }
     crate::hooks::end_plugin();
     crate::services::finish(owner, code == 0);
     if code != 0 {
@@ -194,13 +240,14 @@ pub fn load(node: &Planned, api: &'static Api, owner: usize) -> Result<(), LoadF
             ));
         }
         return Err(LoadFailure {
-            reason: format!("init returned {code}"),
+            reason: failure_reason,
             degraded: failed > 0,
         });
     }
-    crate::lifecycle::record(crate::lifecycle::Loaded {
+    let loaded = crate::lifecycle::Loaded {
         owner,
         id: node.id.clone(),
+        version: node.manifest.as_ref().map(|manifest| manifest.version),
         name,
         path: node.path.clone(),
         reloadable: shadow != node.path && node.manifest.as_ref().is_some_and(|m| m.hot_reload),
@@ -210,8 +257,138 @@ pub fn load(node: &Planned, api: &'static Api, owner: usize) -> Result<(), LoadF
         stop: plugin.stop,
         stamp: crate::lifecycle::stamp(&node.path),
         multiplayer_safe: crate::plan::multiplayer_safe(node),
-    });
+        manifest_settings: node
+            .manifest
+            .as_ref()
+            .map(|manifest| manifest.settings.clone()),
+    };
+    if node.legacy {
+        crate::lifecycle::record(loaded);
+        return Ok(());
+    }
+    crate::lifecycle::stage(loaded);
+    if !crate::hooks::patch_plan_active() {
+        match crate::hooks::commit_staged(&[owner]) {
+            Ok(()) => crate::lifecycle::commit_pending(&[owner]),
+            Err(crate::code::CommitError::BeforeWrite(reason)) => {
+                let cleanup = crate::lifecycle::discard_started(owner);
+                let degraded = cleanup.is_err();
+                let detail = cleanup
+                    .err()
+                    .map(|error| format!("; cleanup was incomplete: {error}"))
+                    .unwrap_or_default();
+                return Err(LoadFailure {
+                    reason: format!("unified patch commit failed: {reason}{detail}"),
+                    degraded,
+                });
+            }
+            Err(crate::code::CommitError::AfterWrite(reason)) => {
+                crate::lifecycle::commit_pending(&[owner]);
+                crate::log::error(&format!(
+                    "{}: unified patch commit may be partial; code and ownership were retained: {reason}",
+                    node.id
+                ));
+                return Err(LoadFailure {
+                    reason: format!("unified patch commit may be partial: {reason}"),
+                    degraded: true,
+                });
+            }
+        }
+    }
     Ok(())
+}
+
+unsafe fn read_patch_contract(
+    api: &Api,
+    entry: PatchContractEntry,
+) -> Result<Vec<crate::hooks::ExpectedPatch>, String> {
+    let contract = unsafe { entry(api as *const Api) };
+    if contract.is_null() {
+        return Err("contract export returned null".into());
+    }
+    let contract = unsafe { &*contract };
+    if contract.version != 1 || contract.size < core::mem::size_of::<PatchContractV1>() as u32 {
+        return Err(format!(
+            "unsupported contract version/size {}/{}",
+            contract.version, contract.size
+        ));
+    }
+    if contract.count > 4096 || (contract.count != 0 && contract.entries.is_null()) {
+        return Err("contract has an invalid entry list".into());
+    }
+    let entries = if contract.count == 0 {
+        &[][..]
+    } else {
+        unsafe { core::slice::from_raw_parts(contract.entries, contract.count) }
+    };
+    let mut expected: Vec<crate::hooks::ExpectedPatch> = Vec::with_capacity(entries.len());
+    for declaration in entries {
+        if declaration.module.is_null()
+            || declaration.before.is_null()
+            || declaration.before_len == 0
+            || declaration.before_len > 4096
+            || (declaration.after_len != 0 && declaration.after.is_null())
+            || (declaration.after_len != 0 && declaration.after_len != declaration.before_len)
+            || (declaration.after_len == 0 && !declaration.after.is_null())
+        {
+            return Err("contract entry has invalid byte spans".into());
+        }
+        if !matches!(
+            declaration.kind,
+            PATCH_KIND_ENTRY | PATCH_KIND_BYTES | PATCH_KIND_CALL
+        ) {
+            return Err(format!(
+                "contract entry has unknown patch kind {}",
+                declaration.kind
+            ));
+        }
+        let module = unsafe { CStr::from_ptr(declaration.module) }
+            .to_str()
+            .map_err(|_| "contract module name is not UTF-8")?;
+        if !crate::manifest::safe_dll(module) {
+            return Err(format!("contract module `{module}` is not a DLL basename"));
+        }
+        let base = unsafe { (api.module_base)(declaration.module) } as usize;
+        if base == 0 {
+            return Err(format!("contract module `{module}` is not loaded"));
+        }
+        let module_size = unsafe { (api.module_size)(base as *mut core::ffi::c_void) };
+        let end = declaration
+            .rva
+            .checked_add(declaration.before_len)
+            .ok_or_else(|| format!("contract range in `{module}` overflows"))?;
+        if end > module_size {
+            return Err(format!(
+                "contract range `{module}+{:#x}` is outside the loaded module",
+                declaration.rva
+            ));
+        }
+        let target = base.checked_add(declaration.rva).ok_or_else(|| {
+            format!(
+                "contract address `{module}+{:#x}` overflows",
+                declaration.rva
+            )
+        })?;
+        if expected.iter().any(|entry| entry.target == target) {
+            return Err(format!(
+                "contract declares `{module}+{:#x}` twice",
+                declaration.rva
+            ));
+        }
+        let before = unsafe {
+            core::slice::from_raw_parts(declaration.before, declaration.before_len).to_vec()
+        };
+        let after = (declaration.after_len != 0).then(|| unsafe {
+            core::slice::from_raw_parts(declaration.after, declaration.after_len).to_vec()
+        });
+        expected.push(crate::hooks::ExpectedPatch {
+            target,
+            kind: declaration.kind,
+            before,
+            after,
+        });
+    }
+    Ok(expected)
 }
 
 /// Stop every plugin, newest first, and take its hooks out. Nothing calls this
@@ -239,5 +416,24 @@ pub fn unload() {
             ));
         }
         crate::lifecycle::forget(plugin.owner);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::Version;
+
+    #[test]
+    fn a_version_that_differs_from_the_manifest_only_warns() {
+        let declared = Version::parse("0.6.0").unwrap();
+        assert_eq!(version_disagreement("0.6.0", declared), None);
+        assert_eq!(version_disagreement("0.6", declared), None);
+        let note = version_disagreement("0.6.1", declared).unwrap();
+        assert!(
+            note.contains("`0.6.1`") && note.ends_with("using 0.6.0"),
+            "{note}"
+        );
+        assert!(version_disagreement("dev", declared).is_some());
     }
 }

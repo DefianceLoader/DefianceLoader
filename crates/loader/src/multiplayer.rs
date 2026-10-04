@@ -74,13 +74,14 @@ pub fn block(id: &str) {
     }
 }
 
-/// Recompute the blockers from the loaded plugins and the retained copies,
-/// logging a change.
+/// Recompute the blockers from loaded, retained and degraded copies, logging
+/// a change. A failed initializer may still own live spans after rollback.
 pub fn refresh() {
     let active = crate::lifecycle::loaded()
         .into_iter()
         .chain(crate::lifecycle::retained())
-        .map(|p| (p.id, p.multiplayer_safe));
+        .map(|p| (p.id, p.multiplayer_safe))
+        .chain(crate::reload::degraded_plugin());
     let now = blocking(active);
     let mut blockers = BLOCKERS.lock().unwrap_or_else(|p| p.into_inner());
     if blockers.as_ref() != Some(&now) {

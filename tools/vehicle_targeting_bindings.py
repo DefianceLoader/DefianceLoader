@@ -1,0 +1,188 @@
+"""Resolve passenger targeting entry hooks from each supported DLL's RTTI."""
+import pathlib
+import sys
+import json
+
+import builds
+from pe import Image
+from rtti import Rtti
+from sigs import Module
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+DEST = ROOT / "plugins/vehicle-special-fire/src/sites.rs"
+METHODS = {
+    "tick": (".?AVGunner@Leonardo@@", 5),
+    "deployment": (".?AVGunner@Leonardo@@", 40),
+    "query": (".?AVGunner@Leonardo@@", 12),
+    "choose": (".?AVGunner@Leonardo@@", 13),
+    "command": (".?AVGunner@Leonardo@@", 7),
+    "setter": (".?AVGun@Leonardo@@", 5),
+    "range": (".?AVGun@Leonardo@@", 60),
+}
+MOVE_ACQUIRE = ".?AVAiMoveState@Leonardo@@"
+MOVE_ACQUIRE_PREFIXES = (
+    bytes.fromhex("48 89 54 24 10 55 53 56 57 41 56 41 57 48 8b ec 48 83 ec 38"),
+)
+# Vehicle-AI helpers that read the entity's AI facet (vf0xb0, +0x28) and walk
+# its Gunners: `candidate_query(out, entity, mode)` writes an enemy handle and
+# `capable(entity, enemy)` reports whether any Gunner can engage. Only their
+# entries are hooked, so a prologue unique among the exception directory's
+# function starts identifies each.
+HELPERS = {
+    "candidate_query": bytes.fromhex(
+        "48 89 5c 24 08 48 89 74 24 18 55 57 41 54 41 56 41 57 "
+        "48 8b ec 48 83 ec 30 45 0f b6 e0 4c 8b f9 "
+        "48 8b 02 48 8b ca ff 90 b0 00 00 00 48 8b 70 28 48 85 f6"
+    ),
+    "capable": bytes.fromhex(
+        "48 89 5c 24 08 48 89 6c 24 10 48 89 74 24 18 57 48 83 ec 20 "
+        "48 8b 01 48 8b ea ff 90 b0 00 00 00 48 8b 70 28 48 85 f6"
+    ),
+}
+
+
+def locate(img, rtti, class_name, slot):
+    tables = {table for name, _, cols in rtti.find(class_name)
+              if name == class_name for _, entries in cols for table in entries}
+    addresses = {methods[slot] for table in tables
+                 if len(methods := rtti.methods(table, slot + 1)) > slot}
+    if len(addresses) != 1:
+        raise SystemExit(f"{class_name} vf{slot}: expected one method, got {addresses}")
+    return addresses.pop()
+
+
+def locate_shared_refresh(img, rtti):
+    """Resolve the native shared-target reset called by Gunner::vfunc_8."""
+    import capstone
+    method = locate(img, rtti, ".?AVGunner@Leonardo@@", 8)
+    # Validate the helper's owner flags and ABI, rather than relying on the
+    # relative-call ordinal or one build's RVA.
+    prefix = bytes.fromhex(
+        "48 89 5c 24 18 48 89 54 24 10 56 57 41 56 48 83 ec 20 "
+        "4c 8b f2 48 8b f9 c6 81 a8 00 00 00 01 c6 81 90 00 00 00 00 "
+        "48 81 c1 98 00 00 00")
+    span = img.function_of(method)
+    if span is None or span[0] != method:
+        raise SystemExit("Gunner::vfunc_8 has no native function boundary")
+    end = span[1]
+    calls = {ins.operands[0].imm for ins in img.md.disasm(img.read(method, end - method), method)
+             if ins.mnemonic == "call" and ins.operands[0].type == capstone.CS_OP_IMM}
+    matches = {target for target in calls if img.read(target, len(prefix)) == prefix}
+    if len(matches) != 1:
+        raise SystemExit(f"Gunner shared-target refresh: expected one helper, got {matches}")
+    return matches.pop()
+
+
+def locate_move_acquire(img, rtti):
+    """Resolve the target-owning helper called by an AiMoveState method."""
+    import capstone
+
+    tables = {table for name, _, cols in rtti.find(MOVE_ACQUIRE)
+              if name == MOVE_ACQUIRE for _, entries in cols for table in entries}
+    callees = set()
+    for table in tables:
+        for method in rtti.methods(table, 33):
+            span = img.function_of(method)
+            if span is None:
+                # Some builds place a short tail jump in the vtable while the
+                # actual body owns the unwind record.
+                first = next(img.md.disasm(img.read(method, 16), method), None)
+                if first is not None and first.mnemonic == "jmp" and first.operands[0].type == capstone.CS_OP_IMM:
+                    span = img.function_of(first.operands[0].imm)
+            if span is None:
+                continue
+            start, end = span
+            for ins in img.md.disasm(img.read(start, end - start), start):
+                if ins.mnemonic == "call" and ins.operands[0].type == capstone.CS_OP_IMM:
+                    callees.add(ins.operands[0].imm)
+    matches = {target for target in callees
+               if any(img.read(target, len(prefix)) == prefix for prefix in MOVE_ACQUIRE_PREFIXES)}
+    if len(matches) != 1:
+        raise SystemExit(f"AiMoveState target-acquire helper: expected one validated callee, got {matches}")
+    return matches.pop()
+
+
+def locate_helper(img, field):
+    """Resolve a Gunner-walking AI helper by its unique function prologue."""
+    prefix = HELPERS[field]
+    matches = [start for start, _ in img.functions
+               if img.read(start, len(prefix)) == prefix]
+    if len(matches) != 1:
+        raise SystemExit(f"{field}: expected one function with the validated prologue, got {matches}")
+    return matches[0]
+
+
+def generate():
+    lines = ["// Generated by tools/vehicle_targeting_bindings.py; do not hand edit.",
+             "use super::{Build, Site};", "pub(super) const BUILDS: &[Build] = &["]
+    for build in sorted(builds.supported(), key=lambda item: item.name):
+        img = Image(build.require().logic)
+        rtti = Rtti(img)
+        name = "reference" if build.name == builds.REFERENCE else build.name
+        lines += ["    Build {", f'        name: "{name}",']
+        addresses = {field: locate(img, rtti, class_name, slot)
+                     for field, (class_name, slot) in METHODS.items()}
+        addresses["shared_refresh"] = locate_shared_refresh(img, rtti)
+        addresses["move_acquire"] = locate_move_acquire(img, rtti)
+        for field in HELPERS:
+            addresses[field] = locate_helper(img, field)
+        for field, rva in addresses.items():
+            before = bytearray()
+            for ins in img.md.disasm(img.read(rva, 32), rva):
+                before.extend(ins.bytes)
+                if len(before) >= 5:
+                    break
+            if len(before) < 5:
+                raise SystemExit(f"{build.name} {field}: incomplete prologue")
+            data = ", ".join(f"0x{byte:02x}" for byte in before)
+            lines += [f"        {field}: Site {{", f"            rva: 0x{rva:x},",
+                      f"            before: &[{data}],", "        },"]
+        folder = "reference" if build.name == builds.REFERENCE else build.name
+        relocate_reference = not (ROOT / "tools/variants" / folder).is_dir()
+        if relocate_reference:
+            folder = "reference"
+        unit = json.loads((ROOT / "tools/variants" / folder / "units/ammunition-game.json").read_text())
+        entry = next(write["entry"] for write in unit["writes"] if write.get("label") == "attack_button")
+        resume = min((fixup for fixup in unit["fixups"] if fixup["kind"] == "abs64"
+                      and fixup["offset"] >= entry), key=lambda item: item["offset"])
+        code = (ROOT / "tools/variants" / folder / "units/ammunition-game.bin").read_bytes()
+        at = resume["offset"]
+        if code[at - 2:at] != b"\x49\xbb" or code[at + 8:at + 11] != b"\x41\xff\xe3":
+            raise SystemExit(f"{build.name}: attack button resume is not the final r11 jump")
+        game = Image(build.game)
+        rva = resume["target"]
+        if relocate_reference:
+            site = next(site for site in unit["sites"] if site["site_name"] == "attack_button")
+            tokens = [site["site_pattern"][at:at + 2] for at in range(0, len(site["site_pattern"]), 2)]
+            pattern = bytes(0 if token == "??" else int(token, 16) for token in tokens)
+            mask = bytes(token != "??" for token in tokens)
+            matches = Module(build.game).matches(pattern, mask)
+            if len(matches) != 1:
+                raise SystemExit(f"{build.name}: attack-button reference signature is ambiguous")
+            rva += matches[0] - site["site_start"]
+        before = bytearray()
+        for ins in game.md.disasm(game.read(rva, 32), rva):
+            before.extend(ins.bytes)
+            if len(before) >= 5:
+                break
+        data = ", ".join(f"0x{byte:02x}" for byte in before)
+        lines += ["        ui: Site {", f"            rva: 0x{rva:x},",
+                  f"            before: &[{data}],", "        },"]
+        symbols = json.loads(build.layout.read_text())["game_symbols"] if build.layout else {
+            "gunner_count": 0x130, "gunner_get": 0x120}
+        lines.append(f'        gunner_count: 0x{symbols["gunner_count"]:x},')
+        lines.append(f'        gunner_get: 0x{symbols["gunner_get"]:x},')
+        lines.append("    },")
+    lines.append("];\n")
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    text = generate()
+    if "--check" in sys.argv:
+        if DEST.read_text(encoding="utf-8") != text:
+            raise SystemExit("passenger targeting bindings need regeneration")
+        print("passenger targeting bindings match all supported DLLs")
+    else:
+        DEST.write_text(text, encoding="utf-8", newline="\n")
+        print("wrote passenger targeting bindings for all supported DLLs")

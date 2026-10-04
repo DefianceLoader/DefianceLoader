@@ -99,6 +99,18 @@ unsafe extern "system" fn lookup(table: *mut c_void, key: *const c_char) -> *con
 }
 
 /// Hook galileo's string lookup so [`MESSAGE_KEY`] reads as [`MESSAGE`].
+pub(super) fn message_target(api: &Api) -> Option<usize> {
+    let name = c"galileo.dll";
+    let base = unsafe { (api.module_base)(name.as_ptr()) };
+    if base.is_null() {
+        return None;
+    }
+    let size = unsafe { (api.module_size)(base) };
+    let pattern = std::ffi::CString::new(LOOKUP_PATTERN).unwrap_or_default();
+    let target = unsafe { (api.find_pattern)(base, size, pattern.as_ptr()) };
+    (!target.is_null()).then_some(target as usize)
+}
+
 fn install_message(api: &Api) {
     let name = c"galileo.dll";
     let base = unsafe { (api.module_base)(name.as_ptr()) };
@@ -110,13 +122,10 @@ fn install_message(api: &Api) {
         );
         return;
     }
-    let size = unsafe { (api.module_size)(base) };
-    let pattern = std::ffi::CString::new(LOOKUP_PATTERN).unwrap_or_default();
-    let target = unsafe { (api.find_pattern)(base, size, pattern.as_ptr()) };
-    if target.is_null() {
+    let Some(target) = message_target(api).map(|target| target as *mut c_void) else {
         say(api, LOG_WARN, "multiplayer: galileo.dll's string lookup was not found; the refusal shows its message key");
         return;
-    }
+    };
     let _ = MESSAGE_STRING.set(std_string(MESSAGE));
     let mut original = core::ptr::null_mut();
     let result = unsafe { (api.hook)(target, lookup as *mut c_void, &mut original) };
@@ -125,6 +134,20 @@ fn install_message(api: &Api) {
         return;
     }
     LOOKUP.store(original as usize, Ordering::Release);
+}
+
+fn game_malloc() -> Option<Malloc> {
+    let ucrt: Vec<u16> = "ucrtbase.dll\0".encode_utf16().collect();
+    let module = unsafe { GetModuleHandleW(ucrt.as_ptr()) };
+    if module.is_null() {
+        return None;
+    }
+    let malloc = unsafe { GetProcAddress(module, b"malloc\0".as_ptr()) };
+    (!malloc.is_null()).then(|| unsafe { core::mem::transmute::<*mut c_void, Malloc>(malloc) })
+}
+
+pub(super) fn guard_available() -> bool {
+    unsafe { defiance_feature_sdk::services::multiplayer() }.is_some() && game_malloc().is_some()
 }
 
 /// The blocking plugins, or `None` when nothing blocks. A service that cannot
@@ -224,22 +247,15 @@ pub fn install(api: &Api, address: usize) {
         return;
     };
     let _ = SERVICE.set(service);
-    let ucrt: Vec<u16> = "ucrtbase.dll\0".encode_utf16().collect();
-    let module = unsafe { GetModuleHandleW(ucrt.as_ptr()) };
-    let malloc = if module.is_null() {
-        core::ptr::null_mut()
-    } else {
-        unsafe { GetProcAddress(module, b"malloc\0".as_ptr()) }
-    };
-    if malloc.is_null() {
+    let Some(malloc) = game_malloc() else {
         say(
             api,
             LOG_WARN,
             "multiplayer: the game's malloc was not found; online play is not guarded",
         );
         return;
-    }
-    let _ = MALLOC.set(unsafe { core::mem::transmute::<*mut c_void, Malloc>(malloc) });
+    };
+    let _ = MALLOC.set(malloc);
     let mut original = core::ptr::null_mut();
     let result = unsafe {
         (api.hook)(

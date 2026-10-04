@@ -5,3 +5,4 @@ license = "MIT OR Apache-2.0"
 edition = "2021"
 [dependencies]
 defiance-api = { path = "../api" }
+defiance-core = { path = "../core" }

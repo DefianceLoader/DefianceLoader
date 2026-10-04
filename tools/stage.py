@@ -7,12 +7,10 @@ bootstrap `root` key (default `../DefianceLoader`, resolved against bin), or the
 legacy unsectioned `plugins` key when present, resolved against bin exactly as
 before. Relative paths are resolved against bin, not the working directory.
 
-It also stages the standalone regroup, expanded-ammo-menu,
-squad-management-scroll, unit-inspection and ability-groups plugins from their
-own workspaces,
+It also stages the standalone plugins from their own workspaces,
 and, when the game directory holds the PAKs, derives and writes the companion
-UI mods (`COMPANION_MODS`: `mods/defiance_squad_scroll`,
-`mods/defiance_unit_inspection`). Uninstall removes them, again only when they
+mods (`COMPANION_MODS`: squad scrolling, unit inspection and moving-action
+animation data). Uninstall removes them, again only when they
 are recognised as ours.
 
 It never writes, moves or deletes configuration or logs.
@@ -39,6 +37,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import package_squad_scroll  # noqa: E402  (the companion UI overlay builder)
 import package_unit_inspection  # noqa: E402  (the reload bar mod builder)
+import package_moving_actions_animation  # noqa: E402  (derived animation data)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 GENERATED = ROOT / "crates" / "loader" / "src" / "proxy_generated.rs"
@@ -60,6 +59,15 @@ COMPANION_MODS = [
     (MOD_DIR, MOD_NAME, package_squad_scroll.mod_entries),
     (package_unit_inspection.MOD_DIR, package_unit_inspection.MOD_NAME,
      package_unit_inspection.mod_entries),
+    (package_moving_actions_animation.MOD_DIR, package_moving_actions_animation.MOD_NAME,
+     package_moving_actions_animation.mod_entries),
+]
+MOVING_ACTIONS = [
+    ("plugins/moving-actions", "defiance_plugin_moving_actions"),
+    ("plugins/moving-actions-animation", "defiance_plugin_moving_actions_animation"),
+    ("plugins/moving-actions-sync", "defiance_plugin_moving_actions_sync"),
+    ("plugins/moving-actions-render-sync", "defiance_plugin_moving_actions_render_sync"),
+    ("plugins/moving-grenades", "defiance_plugin_moving_grenades"),
 ]
 # Standalone plugins built from their own workspaces, staged beside the loader
 # plugins so staging matches the loader package.
@@ -69,6 +77,11 @@ STANDALONE = [
     ("plugins/squad-management-scroll", "defiance_plugin_squad_management_scroll"),
     ("plugins/unit-inspection", "defiance_plugin_unit_inspection"),
     ("plugins/ability-groups", "defiance_plugin_ability_groups"),
+    ("plugins/legion-vehicle-hacking", "defiance_plugin_legion_vehicle_hacking"),
+    ("plugins/vehicle-arrival", "defiance_plugin_vehicle_arrival"),
+    ("plugins/cover-markers", "defiance_plugin_cover_markers"),
+    ("plugins/weapon-drops", "defiance_plugin_weapon_drops"),
+    *MOVING_ACTIONS,
 ]
 
 
@@ -290,7 +303,7 @@ class Staging:
         print(f"done. Start the game; the log is {loader_root(self.game) / 'logs' / 'defiance-loader.log'}")
 
     def write_mod(self):
-        """Write the companion UI mods whose sources are available."""
+        """Write the companion mods whose sources are available."""
         for mod in self.mods:
             if not mod["entries"]:
                 if mod["reason"]:
@@ -313,7 +326,7 @@ class Staging:
         for mod in self.mods:
             if not mod["dir"].exists() or not is_our_mod(mod["dir"], mod["name"]):
                 continue
-            self.act("remove", mod["dir"], " (companion UI mod)")
+            self.act("remove", mod["dir"], " (companion mod)")
             if not self.dry:
                 shutil.rmtree(mod["dir"])
 

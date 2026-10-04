@@ -9,7 +9,8 @@
 use crate::{say, Runtime, RUNTIME};
 use core::ffi::{c_char, c_void, CStr};
 use defiance_api::{
-    Api, NativeReplacementV1, PatchUnitV1, PatchV1, ABI_VERSION, LOG_ERROR, LOG_INFO,
+    Api, NativeReplacementV1, PatchContractEntryV1, PatchContractV1, PatchUnitV1, PatchV1,
+    ABI_VERSION, LOG_DEBUG, LOG_ERROR, PATCH_KIND_BYTES, PATCH_KIND_CALL, PATCH_KIND_ENTRY,
 };
 use defiance_core::apply::resolve_export;
 use defiance_core::unit::{Kind, Placed, Unit};
@@ -42,6 +43,20 @@ pub(crate) struct Linked {
 /// The units one `prepare` call linked, which `install` writes.
 pub(crate) struct Handle {
     pub units: Vec<Arc<Prepared>>,
+    contract_kinds: std::sync::Mutex<Option<Vec<u32>>>,
+}
+
+struct OwnedContractEntry {
+    module: std::ffi::CString,
+    rva: usize,
+    kind: u32,
+    before: Box<[u8]>,
+}
+
+struct ContractStorage {
+    _owned: Box<[OwnedContractEntry]>,
+    _entries: Box<[PatchContractEntryV1]>,
+    contract: PatchContractV1,
 }
 
 impl Handle {
@@ -78,7 +93,7 @@ fn link(runtime: &Runtime, api: &Api, unit: &Unit, code: &[u8]) -> Result<Prepar
     }
     say(
         api,
-        LOG_INFO,
+        LOG_DEBUG,
         &format!(
             "{} at {at:#x}..{:#x}",
             label.to_string_lossy(),
@@ -88,7 +103,7 @@ fn link(runtime: &Runtime, api: &Api, unit: &Unit, code: &[u8]) -> Result<Prepar
     for write in unit.writes.iter().filter(|w| w.kind != Kind::Edit) {
         say(
             api,
-            LOG_INFO,
+            LOG_DEBUG,
             &format!(
                 "payload-entry {} {} address={:#x} site-rva={:#x}",
                 unit.name,
@@ -133,12 +148,16 @@ pub(crate) fn prepare(api: &Api, units: &[(&str, &[u8])]) -> Result<Handle, Stri
         };
         out.push(prepared);
     }
-    Ok(Handle { units: out })
+    Ok(Handle {
+        units: out,
+        contract_kinds: std::sync::Mutex::new(None),
+    })
 }
 
-/// Write every site of `handle` under the calling plugin's ownership, after
-/// checking all of them: 0, or nonzero with the game unchanged by this call
-/// (the host rolls back a partial write). `replacements` take their named
+/// Stage every site of `handle` under the calling plugin's ownership, after
+/// checking all of them: 0 when accepted, or nonzero with no live game writes
+/// from this call. The host publishes managed requests with the runtime plan.
+/// `replacements` take their named
 /// functions instead of the units' jmps; `detour`, when not null, takes the
 /// units' one call write.
 pub(crate) fn install(
@@ -150,6 +169,10 @@ pub(crate) fn install(
     let Some(runtime) = RUNTIME.get() else {
         return 1;
     };
+    *handle
+        .contract_kinds
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     let writes: Vec<&Placed> = handle.units.iter().flat_map(|unit| &unit.writes).collect();
     let mut native = BTreeMap::new();
     for replacement in replacements {
@@ -184,6 +207,22 @@ pub(crate) fn install(
         );
         return 1;
     }
+    let contract_kinds: Vec<u32> = writes
+        .iter()
+        .map(|(address, before, _)| {
+            if native.contains_key(address) {
+                if before.len() >= 14 {
+                    PATCH_KIND_BYTES
+                } else {
+                    PATCH_KIND_ENTRY
+                }
+            } else if detour.is_null() {
+                PATCH_KIND_BYTES
+            } else {
+                PATCH_KIND_CALL
+            }
+        })
+        .collect();
     // Validate every site before changing either module.
     for (address, before, _) in &writes {
         let now = unsafe { core::slice::from_raw_parts(*address as *const u8, before.len()) };
@@ -237,15 +276,20 @@ pub(crate) fn install(
             unsafe { (api.hook_call)(*address as *mut c_void, detour, &mut original) }
         };
         if result != 0 {
-            // The host rolls back everything owned by this failed plugin.
+            // Propagating this failure from init makes the host discard every
+            // staged request owned by this plugin.
             say(
                 api,
                 LOG_ERROR,
-                "patch failed; host will roll back its owned spans",
+                "patch staging failed; return init failure so the host discards owned spans",
             );
             return 1;
         }
     }
+    *handle
+        .contract_kinds
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(contract_kinds);
     // The diagnostics record follows whatever units are linked by now.
     runtime.record();
     let names: Vec<&str> = handle
@@ -255,9 +299,9 @@ pub(crate) fn install(
         .collect();
     say(
         api,
-        LOG_INFO,
+        LOG_DEBUG,
         &format!(
-            "installed {} patch spans from {}{}",
+            "staged {} patch spans from {}{}",
             writes.len(),
             names.join(", "),
             if native.is_empty() {
@@ -358,8 +402,122 @@ unsafe extern "C" fn service_install(
     )
 }
 
+unsafe extern "C" fn service_contract(
+    api: *const Api,
+    prepared: *mut c_void,
+) -> *const PatchContractV1 {
+    let Some(api) = host(api) else {
+        return core::ptr::null();
+    };
+    if prepared.is_null() {
+        return core::ptr::null();
+    }
+    let handle = unsafe { &*prepared.cast::<Handle>() };
+    let Some(kinds) = handle
+        .contract_kinds
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+    else {
+        say(
+            api,
+            LOG_ERROR,
+            "patch contract requested before a successful install",
+        );
+        return core::ptr::null();
+    };
+
+    let mut owned = Vec::new();
+    for unit in &handle.units {
+        if unit.unit.writes.len() != unit.writes.len() {
+            say(
+                api,
+                LOG_ERROR,
+                "patch contract refused: prepared write count changed",
+            );
+            return core::ptr::null();
+        }
+        let Ok(module) = std::ffi::CString::new(unit.unit.module.as_bytes()) else {
+            say(
+                api,
+                LOG_ERROR,
+                "patch contract refused: invalid module name",
+            );
+            return core::ptr::null();
+        };
+        for (write, placed) in unit.unit.writes.iter().zip(&unit.writes) {
+            let (_, before, _) = placed;
+            if before.is_empty() || before.len() > 4096 {
+                say(
+                    api,
+                    LOG_ERROR,
+                    "patch contract refused: invalid prepared write span",
+                );
+                return core::ptr::null();
+            }
+            owned.push(OwnedContractEntry {
+                module: module.clone(),
+                rva: write.rva,
+                kind: 0,
+                before: before.clone().into_boxed_slice(),
+            });
+        }
+    }
+    if owned.len() != kinds.len() || owned.len() > 4096 {
+        say(
+            api,
+            LOG_ERROR,
+            "patch contract refused: prepared write count mismatch",
+        );
+        return core::ptr::null();
+    }
+    for (entry, kind) in owned.iter_mut().zip(kinds) {
+        entry.kind = kind;
+    }
+    for first in 0..owned.len() {
+        if owned[..first]
+            .iter()
+            .any(|entry| entry.module == owned[first].module && entry.rva == owned[first].rva)
+        {
+            say(
+                api,
+                LOG_ERROR,
+                "patch contract refused: duplicate prepared write site",
+            );
+            return core::ptr::null();
+        }
+    }
+    let entries: Box<[PatchContractEntryV1]> = owned
+        .iter()
+        .map(|entry| PatchContractEntryV1 {
+            module: entry.module.as_ptr(),
+            rva: entry.rva,
+            kind: entry.kind,
+            before: entry.before.as_ptr(),
+            before_len: entry.before.len(),
+            after: core::ptr::null(),
+            after_len: 0,
+        })
+        .collect();
+    let contract = PatchContractV1 {
+        version: 1,
+        size: core::mem::size_of::<PatchContractV1>() as u32,
+        entries: entries.as_ptr(),
+        count: entries.len(),
+    };
+    let storage = Box::new(ContractStorage {
+        _owned: owned.into_boxed_slice(),
+        _entries: entries,
+        contract,
+    });
+    let contract = &storage.contract as *const PatchContractV1;
+    let _ = Box::into_raw(storage);
+    contract
+}
+
 pub(crate) static API: PatchV1 = PatchV1 {
     prepare: service_prepare,
     cell: service_cell,
     install: service_install,
+    contract: service_contract,
 };

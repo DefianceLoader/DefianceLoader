@@ -142,6 +142,15 @@ fn restore(regions: &[Protection]) -> Result<(), String> {
     }
 }
 
+/// Classify a pre-write failure by whether its protection changes were
+/// restored. Callers retain patch ownership if protection recovery fails.
+fn prewrite_failure(regions: &[Protection], error: String) -> CommitError {
+    match restore(regions) {
+        Ok(()) => CommitError::BeforeWrite(error),
+        Err(restore_error) => CommitError::AfterWrite(format!("{error}; {restore_error}")),
+    }
+}
+
 /// Make every region in the span writable-executable, saving each one's
 /// original protection. A span may cross pages with different protections; each
 /// region is changed and restored on its own.
@@ -162,16 +171,16 @@ fn protect_span(address: *mut u8, length: usize) -> Result<Vec<Protection>, Comm
             )
         } == 0
         {
-            let _ = restore(&regions);
-            return Err(CommitError::BeforeWrite(format!(
-                "VirtualQuery at {at:#x} failed"
-            )));
+            return Err(prewrite_failure(
+                &regions,
+                format!("VirtualQuery at {at:#x} failed"),
+            ));
         }
         if info.state != win::MEM_COMMIT || info.protect & win::PAGE_GUARD != 0 {
-            let _ = restore(&regions);
-            return Err(CommitError::BeforeWrite(format!(
-                "{at:#x} is not committed readable code"
-            )));
+            return Err(prewrite_failure(
+                &regions,
+                format!("{at:#x} is not committed readable code"),
+            ));
         }
         let region_end = (info.base_address as usize + info.region_size).min(end);
         let size = region_end - at;
@@ -185,11 +194,12 @@ fn protect_span(address: *mut u8, length: usize) -> Result<Vec<Protection>, Comm
             )
         } == 0
         {
-            let _ = restore(&regions);
-            return Err(CommitError::BeforeWrite(format!(
-                "VirtualProtect at {at:#x} failed with error {}",
-                unsafe { win::GetLastError() }
-            )));
+            return Err(prewrite_failure(
+                &regions,
+                format!("VirtualProtect at {at:#x} failed with error {}", unsafe {
+                    win::GetLastError()
+                }),
+            ));
         }
         regions.push(Protection {
             address: at as *mut u8,
@@ -276,4 +286,185 @@ pub fn write(address: *mut u8, bytes: &[u8]) -> Result<(), CommitError> {
 /// at an instruction boundary inside it.
 pub fn publish(address: *mut u8, bytes: &[u8], invariant: usize) -> Result<(), CommitError> {
     commit_span(address, bytes, invariant)
+}
+
+/// One checked write in a multi-plugin patch plan.
+pub struct PlannedWrite<'a> {
+    pub address: *mut u8,
+    pub before: &'a [u8],
+    pub after: &'a [u8],
+    pub invariant: usize,
+}
+
+/// Publish a resolved patch plan at one stop-the-world safe point.
+///
+/// Every expected span is checked again while threads are suspended. If a
+/// write or instruction-cache flush fails, all writes made by this transaction
+/// are restored before threads resume. `AfterWrite` means that restoration or
+/// protection recovery failed and callers must retain every owner's code and
+/// bookkeeping.
+pub fn publish_transaction(writes: &[PlannedWrite<'_>]) -> Result<(), CommitError> {
+    if writes.is_empty() {
+        return Ok(());
+    }
+    if writes.iter().any(|write| {
+        write.before.is_empty()
+            || write.before.len() != write.after.len()
+            || write.invariant > write.after.len()
+    }) {
+        return Err(CommitError::BeforeWrite(
+            "invalid span in the unified patch plan".into(),
+        ));
+    }
+
+    let mut regions = Vec::new();
+    for write in writes {
+        match protect_span(write.address, write.after.len()) {
+            Ok(mut protected) => regions.append(&mut protected),
+            Err(CommitError::BeforeWrite(error)) => {
+                return Err(prewrite_failure(&regions, error));
+            }
+            Err(CommitError::AfterWrite(error)) => {
+                if let Err(restore_error) = restore(&regions) {
+                    return Err(CommitError::AfterWrite(format!("{error}; {restore_error}")));
+                }
+                return Err(CommitError::AfterWrite(error));
+            }
+        }
+    }
+
+    enum Outcome {
+        Written,
+        Refused,
+        Changed,
+        FlushFailed {
+            index: usize,
+            error: u32,
+            rollback_error: Option<u32>,
+        },
+    }
+
+    let outcome = crate::threads::stop_the_world(|ips| {
+        for write in writes {
+            let start = write.address as usize;
+            let end = start.saturating_add(write.invariant);
+            if ips.iter().any(|&rip| rip > start && rip < end) {
+                return Outcome::Refused;
+            }
+            let live = unsafe {
+                core::slice::from_raw_parts(write.address.cast_const(), write.before.len())
+            };
+            if live != write.before {
+                return Outcome::Changed;
+            }
+        }
+
+        for (index, write) in writes.iter().enumerate() {
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    write.after.as_ptr(),
+                    write.address,
+                    write.after.len(),
+                )
+            };
+            if unsafe {
+                win::FlushInstructionCache(
+                    win::GetCurrentProcess(),
+                    write.address.cast(),
+                    write.after.len(),
+                )
+            } == 0
+            {
+                let error = unsafe { win::GetLastError() };
+                let mut rollback_error = None;
+                for rollback in writes[..=index].iter().rev() {
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            rollback.before.as_ptr(),
+                            rollback.address,
+                            rollback.before.len(),
+                        )
+                    };
+                    if unsafe {
+                        win::FlushInstructionCache(
+                            win::GetCurrentProcess(),
+                            rollback.address.cast(),
+                            rollback.before.len(),
+                        )
+                    } == 0
+                    {
+                        rollback_error.get_or_insert_with(|| unsafe { win::GetLastError() });
+                    }
+                }
+                return Outcome::FlushFailed {
+                    index,
+                    error,
+                    rollback_error,
+                };
+            }
+        }
+        Outcome::Written
+    });
+
+    let protection = restore(&regions).err();
+    let protection_failed = protection.is_some();
+    let append_protection = |mut error: String| {
+        if let Some(reason) = &protection {
+            error.push_str(&format!("; {reason}"));
+        }
+        error
+    };
+    match outcome {
+        Ok(Outcome::Written) => match protection.as_ref() {
+            None => Ok(()),
+            Some(error) => Err(CommitError::AfterWrite(error.clone())),
+        },
+        Ok(Outcome::Refused) => {
+            let error = append_protection(
+                "a thread is executing inside a span to be published".into(),
+            );
+            Err(if protection_failed {
+                CommitError::AfterWrite(error)
+            } else {
+                CommitError::BeforeWrite(error)
+            })
+        }
+        Ok(Outcome::Changed) => {
+            let error = append_protection("a patch site's live bytes changed after planning".into());
+            Err(if protection_failed {
+                CommitError::AfterWrite(error)
+            } else {
+                CommitError::BeforeWrite(error)
+            })
+        }
+        Ok(Outcome::FlushFailed {
+            index,
+            error,
+            rollback_error: None,
+        }) => {
+            let error = append_protection(format!(
+                "flushing patch span {index} failed with error {error}; the transaction was restored"
+            ));
+            Err(if protection_failed {
+                CommitError::AfterWrite(error)
+            } else {
+                CommitError::BeforeWrite(error)
+            })
+        }
+        Ok(Outcome::FlushFailed {
+            index,
+            error,
+            rollback_error: Some(rollback_error),
+        }) => Err(CommitError::AfterWrite(append_protection(format!(
+            "flushing patch span {index} failed with error {error}; restoring the transaction also failed with error {rollback_error}"
+        )))),
+        Err(error) => {
+            let error = append_protection(error);
+            Err(if protection_failed {
+                CommitError::AfterWrite(error)
+            } else {
+                CommitError::BeforeWrite(error)
+            })
+        }
+    }
 }

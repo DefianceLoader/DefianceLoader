@@ -19,11 +19,12 @@ name = "defiance-feature-sdk"
 version = "0.1.0"
 dependencies = [
  "defiance-api",
+ "defiance-core",
 ]
 
 [[package]]
 name = "defiance-loader"
-version = "0.6.0"
+version = "0.7.1"
 dependencies = [
  "defiance-api",
  "defiance-build-support",
@@ -36,11 +37,12 @@ version = "0.1.0"
 dependencies = [
  "defiance-build-support",
  "defiance-core",
+ "defiance-feature-sdk",
 ]
 
 [[package]]
 name = "defiance-plugin-ammunition"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "defiance-api",
  "defiance-build-support",
@@ -49,7 +51,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-plugin-attack"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "defiance-api",
  "defiance-build-support",
@@ -58,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-plugin-core"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "defiance-api",
  "defiance-build-support",
@@ -68,10 +70,11 @@ dependencies = [
 
 [[package]]
 name = "defiance-plugin-diagnostics"
-version = "0.4.0"
+version = "0.5.1"
 dependencies = [
  "defiance-api",
  "defiance-build-support",
+ "defiance-core",
  "defiance-feature-sdk",
 ]
 
@@ -85,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-plugin-firing"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "defiance-api",
  "defiance-build-support",
@@ -94,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-plugin-garrison"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "defiance-api",
  "defiance-build-support",
@@ -108,28 +111,11 @@ dependencies = [
  "defiance-api",
  "defiance-core",
  "defiance-loader",
+ "defiance-plugin-core",
 ]
 
 [[package]]
 name = "defiance-plugin-movement"
-version = "0.4.0"
-dependencies = [
- "defiance-api",
- "defiance-build-support",
- "defiance-feature-sdk",
-]
-
-[[package]]
-name = "defiance-plugin-pickup"
-version = "0.4.0"
-dependencies = [
- "defiance-api",
- "defiance-build-support",
- "defiance-feature-sdk",
-]
-
-[[package]]
-name = "defiance-plugin-posture"
 version = "0.4.1"
 dependencies = [
  "defiance-api",
@@ -138,8 +124,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "defiance-plugin-pickup"
+version = "0.4.1"
+dependencies = [
+ "defiance-api",
+ "defiance-build-support",
+ "defiance-feature-sdk",
+]
+
+[[package]]
+name = "defiance-plugin-posture"
+version = "0.4.2"
+dependencies = [
+ "defiance-api",
+ "defiance-build-support",
+ "defiance-feature-sdk",
+]
+
+[[package]]
 name = "defiance-plugin-preview-weapon"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "defiance-api",
  "defiance-build-support",
@@ -148,7 +152,16 @@ dependencies = [
 
 [[package]]
 name = "defiance-plugin-selection"
-version = "0.6.0"
+version = "0.6.1"
+dependencies = [
+ "defiance-api",
+ "defiance-build-support",
+ "defiance-feature-sdk",
+]
+
+[[package]]
+name = "defiance-plugin-vehicle-special-fire"
+version = "0.3.0"
 dependencies = [
  "defiance-api",
  "defiance-build-support",

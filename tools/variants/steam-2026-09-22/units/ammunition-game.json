@@ -4,13 +4,13 @@
  "plugin": "ammunition",
  "module": "game.dll",
  "source_sha256": "d926a213731d73bac8ccc56b50e2b4292fe8613c7a9bb7c8b9fc9132c122ed25",
- "unit_bytes": 3359,
- "code_offset": 48,
+ "unit_bytes": 3422,
+ "code_offset": 64,
  "cells": [
   {
    "name": "step",
    "offset": 0,
-   "bytes": 48
+   "bytes": 56
   }
  ],
  "writes": [
@@ -19,7 +19,7 @@
    "rva": 258571,
    "before": "4c8bc6488bd5488bcfe857010000",
    "tail": "909090909090909090",
-   "entry": 48,
+   "entry": 64,
    "label": "ammo_panel"
   },
   {
@@ -27,7 +27,7 @@
    "rva": 2380737,
    "before": "498b4500498bcd",
    "tail": "9090",
-   "entry": 596,
+   "entry": 612,
    "label": "attack_button"
   },
   {
@@ -35,7 +35,7 @@
    "rva": 2925133,
    "before": "488b0148ffa088000000",
    "tail": "9090909090",
-   "entry": 1019,
+   "entry": 1035,
    "label": "ammo_step_right"
   },
   {
@@ -43,7 +43,7 @@
    "rva": 2925163,
    "before": "488b0148ff6078",
    "tail": "9090",
-   "entry": 1011,
+   "entry": 1027,
    "label": "ammo_step_left"
   },
   {
@@ -51,7 +51,7 @@
    "rva": 2925177,
    "before": "488b0148ffa0d8000000",
    "tail": "9090909090",
-   "entry": 753,
+   "entry": 769,
    "label": "ammo_step_wheel"
   },
   {
@@ -59,7 +59,7 @@
    "rva": 3029453,
    "before": "41807a18007469",
    "tail": "9090",
-   "entry": 945,
+   "entry": 961,
    "label": "ammo_wheel_axis"
   },
   {
@@ -67,7 +67,7 @@
    "rva": 3341203,
    "before": "488b01ff9080030000",
    "tail": "90909090",
-   "entry": 484,
+   "entry": 500,
    "label": "attack_recipient"
   }
  ],
@@ -75,58 +75,58 @@
   {
    "kind": "abs64",
    "target": 258585,
-   "offset": 473
+   "offset": 489
   },
   {
    "kind": "abs64",
    "target": 258928,
-   "offset": 184
+   "offset": 200
   },
   {
    "kind": "abs64",
    "target": 260512,
-   "offset": 453
+   "offset": 469
   },
   {
    "kind": "abs64",
    "target": 2960512,
-   "offset": 432
+   "offset": 448
   },
   {
    "kind": "abs64",
    "target": 2926528,
-   "offset": 261
+   "offset": 277
   },
   {
    "kind": "abs64",
    "target": 3341212,
-   "offset": 585
+   "offset": 601
   },
   {
    "kind": "abs64",
    "target": 2380831,
-   "offset": 742
-  },
-  {
-   "kind": "abs64",
-   "target": 261216,
    "offset": 758
   },
   {
    "kind": "abs64",
    "target": 261216,
-   "offset": 1030
+   "offset": 774
+  },
+  {
+   "kind": "abs64",
+   "target": 261216,
+   "offset": 1046
   },
   {
    "kind": "abs64",
    "target": 265248,
-   "offset": 1379
+   "offset": 1391
   },
   {
    "kind": "export",
    "dll": "user32.dll",
    "name": "GetAsyncKeyState",
-   "offset": 1214
+   "offset": 1230
   }
  ],
  "natives": [],
@@ -226,96 +226,97 @@
  ],
  "verified_sha": "",
  "labels": {
-  "ammo_panel": 48,
-  "ammo_panel_reload_shown": 272,
-  "ammo_panel_slot": 301,
-  "ammo_panel_count": 340,
-  "ammo_panel_total": 384,
-  "ammo_panel_hide": 445,
-  "ammo_panel_done": 464,
-  "attack_recipient": 484,
-  "attack_recipient_yes": 577,
-  "attack_recipient_done": 579,
-  "attack_button": 596,
-  "attack_button_next": 611,
-  "attack_button_none": 728,
-  "attack_button_done": 733,
-  "ammo_step_wheel": 753,
-  "ammo_step_wheel_same": 836,
-  "ammo_step_wheel_step": 868,
-  "ammo_step_wheel_done": 879,
-  "ammo_step_wheel_native": 887,
-  "ammo_step_unzoom": 893,
-  "ammo_step_unzoom_clear": 936,
-  "ammo_step_unzoom_done": 944,
-  "ammo_wheel_axis": 945,
-  "ammo_wheel_axis_done": 1010,
-  "ammo_step_left": 1011,
-  "ammo_step_right": 1019,
-  "ammo_step_click": 1025,
-  "ammo_step_click_held": 1076,
-  "ammo_step_click_done": 1141,
-  "ammo_step_click_release": 1149,
-  "ammo_step_click_native": 1178,
-  "ammo_step_click_native_right": 1186,
-  "ammo_step_modifier": 1192,
-  "ammo_step_modifier_done": 1232,
-  "ammo_step": 1237,
-  "step_card": 1309,
-  "step_card_found": 1359,
-  "step_count": 1606,
-  "step_counted": 1640,
-  "step_subset": 1646,
-  "step_user": 1667,
-  "step_user_guns": 1699,
-  "step_user_state": 1753,
-  "step_user_down": 1776,
-  "step_apply": 1792,
-  "step_pin": 1820,
-  "step_pin_store": 1851,
-  "step_refresh": 1876,
-  "step_done": 1894,
-  "step_exit": 1896,
-  "ammo_step_alone": 1913,
-  "alone_next": 2006,
-  "alone_other": 2129,
-  "alone_done": 2167,
-  "ammo_step_release": 2177,
-  "release_gunner": 2211,
-  "release_gun": 2259,
-  "release_done": 2316,
-  "ammo_ui_number": 2331,
-  "ui_number_digit": 2345,
-  "ui_number_copy": 2362,
-  "ammo_ui_usable": 2389,
-  "ammo_ui_state": 2394,
-  "ui_query": 2400,
-  "ui_query_weapon": 2480,
-  "ui_count_members": 2574,
-  "ui_counted_members": 2608,
-  "ui_have_subset": 2614,
-  "ui_find_user": 2617,
-  "ui_check_guns": 2653,
-  "ui_member_state": 2725,
-  "ui_member_off": 2769,
-  "ui_merge_state": 2774,
-  "ui_single_unit": 2783,
-  "ui_usable_yes": 2825,
-  "ui_usable_native": 2833,
-  "ui_shared_off": 2862,
-  "ui_usable_no": 2869,
-  "ui_share_done": 2898,
-  "ui_usable_done": 2902,
-  "ammo_ui_next": 2935,
-  "ui_next_done": 2999,
-  "ammo_ui_has_weapon": 3004,
-  "ui_next_gunner": 3038,
-  "ui_next_gun": 3086,
-  "ui_has_no": 3140,
-  "ui_has_done": 3142,
-  "ammo_ui_ready": 3157,
-  "ui_ready_gunner": 3199,
-  "ui_ready_gun": 3251,
-  "ui_ready_done": 3338
+  "ammo_panel": 64,
+  "ammo_panel_reload_shown": 288,
+  "ammo_panel_slot": 317,
+  "ammo_panel_count": 356,
+  "ammo_panel_total": 400,
+  "ammo_panel_hide": 461,
+  "ammo_panel_done": 480,
+  "attack_recipient": 500,
+  "attack_recipient_yes": 593,
+  "attack_recipient_done": 595,
+  "attack_button": 612,
+  "attack_button_next": 627,
+  "attack_button_none": 744,
+  "attack_button_done": 749,
+  "ammo_step_wheel": 769,
+  "ammo_step_wheel_same": 852,
+  "ammo_step_wheel_step": 884,
+  "ammo_step_wheel_done": 895,
+  "ammo_step_wheel_native": 903,
+  "ammo_step_unzoom": 909,
+  "ammo_step_unzoom_clear": 952,
+  "ammo_step_unzoom_done": 960,
+  "ammo_wheel_axis": 961,
+  "ammo_wheel_axis_done": 1026,
+  "ammo_step_left": 1027,
+  "ammo_step_right": 1035,
+  "ammo_step_click": 1041,
+  "ammo_step_click_held": 1092,
+  "ammo_step_click_done": 1157,
+  "ammo_step_click_release": 1165,
+  "ammo_step_click_native": 1194,
+  "ammo_step_click_native_right": 1202,
+  "ammo_step_modifier": 1208,
+  "ammo_step_modifier_done": 1248,
+  "ammo_step": 1253,
+  "step_card": 1330,
+  "step_card_found": 1380,
+  "step_single_squad": 1479,
+  "step_count": 1669,
+  "step_counted": 1703,
+  "step_subset": 1709,
+  "step_user": 1730,
+  "step_user_guns": 1762,
+  "step_user_state": 1816,
+  "step_user_down": 1839,
+  "step_apply": 1855,
+  "step_pin": 1883,
+  "step_pin_store": 1914,
+  "step_refresh": 1939,
+  "step_done": 1957,
+  "step_exit": 1959,
+  "ammo_step_alone": 1976,
+  "alone_next": 2069,
+  "alone_other": 2192,
+  "alone_done": 2230,
+  "ammo_step_release": 2240,
+  "release_gunner": 2274,
+  "release_gun": 2322,
+  "release_done": 2379,
+  "ammo_ui_number": 2394,
+  "ui_number_digit": 2408,
+  "ui_number_copy": 2425,
+  "ammo_ui_usable": 2452,
+  "ammo_ui_state": 2457,
+  "ui_query": 2463,
+  "ui_query_weapon": 2543,
+  "ui_count_members": 2637,
+  "ui_counted_members": 2671,
+  "ui_have_subset": 2677,
+  "ui_find_user": 2680,
+  "ui_check_guns": 2716,
+  "ui_member_state": 2788,
+  "ui_member_off": 2832,
+  "ui_merge_state": 2837,
+  "ui_single_unit": 2846,
+  "ui_usable_yes": 2888,
+  "ui_usable_native": 2896,
+  "ui_shared_off": 2925,
+  "ui_usable_no": 2932,
+  "ui_share_done": 2961,
+  "ui_usable_done": 2965,
+  "ammo_ui_next": 2998,
+  "ui_next_done": 3062,
+  "ammo_ui_has_weapon": 3067,
+  "ui_next_gunner": 3101,
+  "ui_next_gun": 3149,
+  "ui_has_no": 3203,
+  "ui_has_done": 3205,
+  "ammo_ui_ready": 3220,
+  "ui_ready_gunner": 3262,
+  "ui_ready_gun": 3314,
+  "ui_ready_done": 3401
  }
 }

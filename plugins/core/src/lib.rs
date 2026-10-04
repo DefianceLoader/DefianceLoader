@@ -11,7 +11,10 @@
 //! sites under the calling plugin's ownership (`Api::patch_bytes`).
 
 use core::ffi::{c_char, c_void, CStr};
-use defiance_api::{Api, Plugin, ABI_VERSION, LOG_ERROR, LOG_INFO, LOG_WARN};
+use defiance_api::{
+    Api, PatchContractV1, Plugin, ABI_VERSION, LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_WARN,
+    PATCH_KIND_CALL, PATCH_KIND_ENTRY,
+};
 use defiance_core::apply::{module_image, Process};
 use defiance_core::install::{needs_relocation, Scan};
 use defiance_core::unit::Unit;
@@ -19,7 +22,10 @@ use defiance_core::Target;
 use defiance_feature_sdk::units::Embedded;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Mutex,
+};
 mod affinity;
 mod ammo_menu;
 mod game;
@@ -31,9 +37,14 @@ mod inverse;
 mod mesh_sort;
 mod multiplayer;
 mod patch;
+#[cfg(feature = "render-profile")]
+mod render_profile;
 mod session;
 mod shadow;
 mod shadow_fit;
+#[cfg(feature = "test-host")]
+pub mod test_host;
+mod tree_sway;
 mod view_sort;
 defiance_feature_sdk::service_handshake!();
 
@@ -180,6 +191,54 @@ fn core_unit(units: &[(Unit, &'static Embedded)], module: &str) -> Result<Unit, 
         .find(|(unit, _)| unit.plugin == "core" && unit.module == module)
         .map(|(unit, _)| unit.clone())
         .ok_or_else(|| format!("no Core unit for {module}"))
+}
+
+/// Resolve Core's optional self-hook sites with the same build pair and
+/// relocation rules used during init, without allocating pools or publishing
+/// services.
+fn native_hook_sites(api: &Api) -> Result<(Option<usize>, Option<(usize, usize)>), String> {
+    let logic_target = module_target(api, "logic.dll").ok_or("logic.dll is not loaded")?;
+    let game_target = module_target(api, "game.dll").ok_or("game.dll is not loaded")?;
+    let logic_sha = defiance_core::sha256::file(&logic_target.path)
+        .map_err(|e| format!("hashing logic.dll: {e}"))?;
+    let game_sha = defiance_core::sha256::file(&game_target.path)
+        .map_err(|e| format!("hashing game.dll: {e}"))?;
+    let scan = if config_flag(api, "", "allow_unknown_build") {
+        Scan::Unknown
+    } else {
+        Scan::Default
+    };
+    let reference = units_of(REFERENCE)?;
+    let choice = choose(
+        &logic_sha,
+        &game_sha,
+        &core_unit(&reference, "logic.dll")?,
+        &core_unit(&reference, "game.dll")?,
+        scan == Scan::Unknown,
+    )
+    .ok_or("logic.dll and game.dll are not a supported build pair")?;
+    let (_, units) = match choice {
+        Choice::Variant(variant) => (variant.build, units_of(variant.build)?),
+        Choice::Reference | Choice::Unknown => (REFERENCE, reference),
+    };
+    let own = core_unit(&units, "game.dll")?;
+    let pristine = needs_relocation(&game_sha, &own.source_sha256, &own.verified, scan)
+        .then(|| module_image(&game_target))
+        .transpose()?;
+    let own = match pristine {
+        Some(image) => own
+            .relocate(&image, &game_sha)
+            .map_err(|e| format!("game.dll: {e}"))?,
+        None => own,
+    };
+    let site = |name: &str| {
+        own.sites
+            .iter()
+            .find(|site| site.name == name)
+            .map(|site| game_target.base as usize + site.start)
+    };
+    let tactical_state = site("tactical_state_ctor").zip(site("tactical_state_dtor"));
+    Ok((site("lobby_connect"), tactical_state))
 }
 
 #[link(name = "kernel32")]
@@ -486,7 +545,7 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
         ] {
             say(
                 api,
-                LOG_INFO,
+                LOG_DEBUG,
                 &format!(
                     "{} at {:#x}..{:#x}",
                     label.to_string_lossy(),
@@ -596,13 +655,11 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
             mesh_sort::install(api, &config_text(api, "loader", "mesh_sort"));
             shadow::install(api, &config_text(api, "loader", "shadow_cascades"));
             shadow_fit::install(api, &config_text(api, "loader", "shadow_fit"));
+            tree_sway::install(api, &config_text(api, "loader", "tree_sway"));
+            #[cfg(feature = "render-profile")]
+            render_profile::install(api);
             #[cfg(feature = "inspect-probe")]
             inspect_probe::install(api);
-            say(
-                api,
-                LOG_INFO,
-                "build recognised; gameplay units belong to feature plugins",
-            );
             0
         }
         Err(e) => {
@@ -618,6 +675,286 @@ unsafe extern "C" fn build_name() -> *const c_char {
         .map_or(core::ptr::null(), |runtime| runtime.build.as_ptr())
 }
 
+type ContractRequest = (usize, defiance_feature_sdk::contract::Patch);
+static CONTRACT_API: AtomicUsize = AtomicUsize::new(0);
+static CONTRACT_REQUESTS: Mutex<Vec<ContractRequest>> = Mutex::new(Vec::new());
+static CONTRACT_EXPORT_LOCK: Mutex<()> = Mutex::new(());
+
+fn contract_location(target: usize) -> Option<(&'static CStr, usize, usize)> {
+    let api = CONTRACT_API.load(Ordering::Acquire) as *const Api;
+    let api = unsafe { api.as_ref() }?;
+    for module in [c"logic.dll", c"game.dll", c"world2.dll", c"galileo.dll"] {
+        let base = unsafe { (api.module_base)(module.as_ptr()) } as usize;
+        if base == 0 {
+            continue;
+        }
+        let size = unsafe { (api.module_size)(base as *mut c_void) };
+        let Some(end) = base.checked_add(size) else {
+            continue;
+        };
+        if (base..end).contains(&target) {
+            return Some((module, base, size));
+        }
+    }
+    None
+}
+
+fn contract_patch(
+    target: usize,
+    kind: u32,
+    before: Vec<u8>,
+    after: Option<Vec<u8>>,
+) -> Option<ContractRequest> {
+    let (module, base, size) = contract_location(target)?;
+    let rva = target.checked_sub(base)?;
+    if before.is_empty()
+        || rva.checked_add(before.len())? > size
+        || after
+            .as_ref()
+            .is_some_and(|replacement| replacement.len() != before.len())
+    {
+        return None;
+    }
+    if kind == PATCH_KIND_CALL && (before.len() != 5 || before[0] != 0xe8) {
+        return None;
+    }
+    if kind == PATCH_KIND_ENTRY && defiance_core::decode::validate_copy(&before).is_err() {
+        return None;
+    }
+    Some((
+        target,
+        defiance_feature_sdk::contract::Patch {
+            module,
+            rva,
+            kind,
+            before,
+            after,
+        },
+    ))
+}
+
+unsafe fn record_contract_hook(
+    target: *mut c_void,
+    kind: u32,
+    exact_len: Option<usize>,
+    original: *mut *mut c_void,
+) -> i32 {
+    if target.is_null() {
+        return -1;
+    }
+    let address = target as usize;
+    let Some((_, base, size)) = contract_location(address) else {
+        return -1;
+    };
+    let Some(rva) = address.checked_sub(base) else {
+        return -1;
+    };
+    let Some(available) = size.checked_sub(rva) else {
+        return -1;
+    };
+    let window = available.min(16);
+    if window == 0 {
+        return -1;
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(target.cast::<u8>(), window) };
+    let len = match exact_len {
+        Some(len) => len,
+        None => match defiance_core::decode::displaced(bytes, 5) {
+            Ok(len) => len,
+            Err(_) => return -1,
+        },
+    };
+    let Some(before) = bytes.get(..len).map(<[u8]>::to_vec) else {
+        return -1;
+    };
+    let Some(request) = contract_patch(address, kind, before, None) else {
+        return -1;
+    };
+    // Contract collection runs after plugin init. A fake call hook must return
+    // the call's original callee just like the real API; returning the site
+    // makes a wrapper recurse through its own detour.
+    let original_target = if kind == PATCH_KIND_CALL {
+        if request.1.before.len() != 5 || request.1.before[0] != 0xe8 {
+            return -1;
+        }
+        let rel = i32::from_le_bytes([
+            request.1.before[1],
+            request.1.before[2],
+            request.1.before[3],
+            request.1.before[4],
+        ]) as isize;
+        (address as isize + 5 + rel) as *mut c_void
+    } else {
+        target
+    };
+    CONTRACT_REQUESTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .push(request);
+    if !original.is_null() {
+        unsafe { original.write(original_target) };
+    }
+    0
+}
+
+unsafe extern "C" fn contract_hook(
+    target: *mut c_void,
+    _detour: *mut c_void,
+    original: *mut *mut c_void,
+) -> i32 {
+    unsafe { record_contract_hook(target, PATCH_KIND_ENTRY, None, original) }
+}
+
+unsafe extern "C" fn contract_hook_exact(
+    target: *mut c_void,
+    _detour: *mut c_void,
+    displaced: usize,
+    original: *mut *mut c_void,
+) -> i32 {
+    unsafe { record_contract_hook(target, PATCH_KIND_ENTRY, Some(displaced), original) }
+}
+
+unsafe extern "C" fn contract_hook_call(
+    target: *mut c_void,
+    _detour: *mut c_void,
+    original: *mut *mut c_void,
+) -> i32 {
+    unsafe { record_contract_hook(target, PATCH_KIND_CALL, Some(5), original) }
+}
+
+unsafe extern "C" fn contract_patch_bytes(
+    target: *mut c_void,
+    before: *const u8,
+    after: *const u8,
+    length: usize,
+) -> i32 {
+    if target.is_null() || before.is_null() || after.is_null() || length == 0 {
+        return -1;
+    }
+    let before = unsafe { core::slice::from_raw_parts(before, length) }.to_vec();
+    let after = unsafe { core::slice::from_raw_parts(after, length) }.to_vec();
+    if unsafe { core::slice::from_raw_parts(target.cast::<u8>(), length) } != before.as_slice() {
+        return -1;
+    }
+    let Some(request) = contract_patch(
+        target as usize,
+        defiance_api::PATCH_KIND_BYTES,
+        before,
+        Some(after),
+    ) else {
+        return -1;
+    };
+    CONTRACT_REQUESTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .push(request);
+    0
+}
+
+unsafe extern "C" fn contract_unhook(target: *mut c_void) -> i32 {
+    CONTRACT_REQUESTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .retain(|(address, _)| *address != target as usize);
+    0
+}
+
+unsafe extern "C" fn quiet_contract_log(_: u32, _: *const c_char) {}
+
+fn collect_core_contract(api: &Api) -> Vec<defiance_feature_sdk::contract::Patch> {
+    let mut fake = unsafe { core::ptr::read(api) };
+    fake.log = quiet_contract_log;
+    fake.hook = contract_hook;
+    fake.hook_exact = contract_hook_exact;
+    fake.hook_call = contract_hook_call;
+    fake.unhook = contract_unhook;
+    fake.patch_bytes = contract_patch_bytes;
+    let fake = &fake;
+
+    let affinity = config_text(fake, "loader", "main_thread_cpus");
+    if affinity != "engine" {
+        let _ = affinity::remove_pin(fake);
+    }
+    grass::install(fake, &config_text(fake, "loader", "grass_sort"));
+    inverse::install(fake, &config_text(fake, "loader", "matrix_inverse"));
+    view_sort::install(fake, &config_text(fake, "loader", "view_sort"));
+    mesh_sort::install(fake, &config_text(fake, "loader", "mesh_sort"));
+    shadow::with_preserved_hook_state(|| {
+        shadow::install(fake, &config_text(fake, "loader", "shadow_cascades"));
+    });
+    shadow_fit::install(fake, &config_text(fake, "loader", "shadow_fit"));
+    tree_sway::contract(fake);
+    #[cfg(feature = "render-profile")]
+    render_profile::contract(fake);
+    #[cfg(feature = "inspect-probe")]
+    inspect_probe::install(fake);
+
+    if let Ok((lobby, tactical_state)) = native_hook_sites(api) {
+        if let Some(lobby) = lobby.filter(|_| multiplayer::guard_available()) {
+            let mut original = core::ptr::null_mut();
+            let result = unsafe {
+                (fake.hook)(
+                    lobby as *mut c_void,
+                    (fake as *const Api).cast_mut().cast(),
+                    &mut original,
+                )
+            };
+            if result == 0 && !original.is_null() {
+                if let Some(message) = multiplayer::message_target(fake) {
+                    let mut message_original = core::ptr::null_mut();
+                    unsafe {
+                        (fake.hook)(
+                            message as *mut c_void,
+                            (fake as *const Api).cast_mut().cast(),
+                            &mut message_original,
+                        )
+                    };
+                }
+            }
+        }
+        if let Some((constructor, destructor)) = tactical_state
+            .filter(|_| unsafe { defiance_feature_sdk::services::session() }.is_some())
+        {
+            for target in [constructor, destructor] {
+                let mut original = core::ptr::null_mut();
+                unsafe {
+                    (fake.hook)(
+                        target as *mut c_void,
+                        (fake as *const Api).cast_mut().cast(),
+                        &mut original,
+                    )
+                };
+            }
+        }
+    }
+    CONTRACT_REQUESTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .drain(..)
+        .map(|(_, patch)| patch)
+        .collect()
+}
+
+unsafe extern "C" fn patch_contract(api: *const Api) -> *const PatchContractV1 {
+    let Some(host) = (unsafe { api.as_ref() }) else {
+        return core::ptr::null();
+    };
+    if host.abi_version != ABI_VERSION || host.reserved != 0 {
+        return core::ptr::null();
+    }
+    let _guard = CONTRACT_EXPORT_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    CONTRACT_API.store(api as usize, Ordering::Release);
+    CONTRACT_REQUESTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clear();
+    let patches = collect_core_contract(host);
+    CONTRACT_API.store(0, Ordering::Release);
+    unsafe { defiance_feature_sdk::contract::build(api, patches) }
+}
+
 /// `defiance.core` / `build`, version 1.
 static BUILD: defiance_api::BuildV1 = defiance_api::BuildV1 { name: build_name };
 
@@ -630,6 +967,11 @@ pub extern "C" fn defiance_plugin() -> *const Plugin {
         init,
         stop: None,
     })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn defiance_patch_contract_v1(api: *const Api) -> *const PatchContractV1 {
+    unsafe { patch_contract(api) }
 }
 
 defiance_feature_sdk::crash_handshake!();

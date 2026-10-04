@@ -11,6 +11,7 @@ defiance_feature_sdk::service_handshake!();
 /// Every supported build's units (`build.rs`): the chooser call and, for the
 /// assembly build, the chooser itself (patch/pickup.asm).
 static UNITS: &[Embedded] = include!(concat!(env!("OUT_DIR"), "/units.rs"));
+defiance_feature_sdk::export_unit_patch_contract!(UNITS, &[], cfg!(feature = "rust-chooser"));
 
 unsafe extern "C" fn init(api: *const Api) -> i32 {
     // The Rust chooser takes the unit's one call; the host owns that hook,

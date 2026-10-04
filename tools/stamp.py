@@ -6,7 +6,7 @@ changed since, or DEFIANCE_NO_STAMP is set. Leaving the outputs untouched when
 nothing changed matters beyond the time saved: cargo rebuilds everything that
 embeds out/payload* whenever those files are rewritten, even byte-identical.
 
-    python tools/stamp.py assemble      the file patch and both payloads
+    python tools/stamp.py assemble      reference payloads and available layouts
     python tools/stamp.py test tools/test_orders.py [args...]
                                         a test, skipped if it passed on these inputs
 
@@ -15,7 +15,8 @@ are copied into the tracked tools/variants/reference/, which is what Core, the
 injector and the test host embed: a checkout builds without the game's DLLs,
 and a patch change shows up as a change to those files. Without the reference
 DLLs (`builds.reference()`, bin/gog/2025-12-23/) assembling is skipped and the
-committed payloads are used as they are.
+committed payloads are used as they are. Available layout variants are refreshed
+in base order as part of assembling, with their own input/output stamps.
 
 A test's inputs ([`test_inputs`]) are the script and the tools/ modules it
 imports (followed through their imports), the arguments that name files or
@@ -24,7 +25,10 @@ folders, everything the native tests load that the build or the game provides
 executables, the game DLLs under bin/), the Python and test packages' versions,
 and DEFIANCE_GAME_DIR. A test that reads something outside those must not be
 run through here: it would pass from the cache after that input changed. Only
-passes are recorded, and a skipped test says so.
+passes are recorded, and a skipped test says so. The input digest names files
+by their path in the checkout and hashes their contents, so a pass holds in any
+worktree with the same inputs: passes are kept in the cache every worktree
+shares (tools/shared_cache.py), and a new worktree skips what another passed.
 
 `digest` and the stamp helpers are also used by tools/test_variant.py.
 """
@@ -34,11 +38,13 @@ import json
 import os
 import pathlib
 import re
+import shared_cache
 import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 STAMPS = ROOT / "out" / "stamps"
+PASSES = shared_cache.directory() / "test-passes"
 # Everything the assembly tooling reads: its own modules (the three scripts
 # and what they import, including variant.py for tools/test_variant.py), the
 # patch sources, the per-build layouts and the reference DLLs. Keep the module
@@ -95,8 +101,8 @@ def file_digest(path):
 
 def save_file_cache():
     if _file_cache is not None:
-        STAMPS.mkdir(parents=True, exist_ok=True)
-        FILE_CACHE.write_text(json.dumps(_file_cache, sort_keys=True) + "\n", encoding="utf-8")
+        # whole-file writes: test-quick runs several stamped tests at once
+        shared_cache.write_text(FILE_CACHE, json.dumps(_file_cache, sort_keys=True) + "\n")
 
 
 def files(patterns):
@@ -167,6 +173,45 @@ def sync_reference():
             print(f"updated {target.relative_to(ROOT).as_posix()}")
 
 
+def refresh_variants(require_all=False):
+    """Refresh layouts whose DLL lineage is available; builds without game
+    files keep committed units. Explicit `variants` requests require all DLLs.
+    A changed output or source invalidates the per-layout cache."""
+    for build in sorted(builds.with_layouts(), key=lambda b: len(b.lineage())):
+        lineage = build.lineage()
+        missing = [path for base in lineage for path in (base.logic, base.game) if not path.is_file()]
+        if missing:
+            if require_all:
+                raise SystemExit(f"variant {build.name}: {', '.join(builds.relative(p) for p in missing)} missing")
+            print(f"variant {build.name}: DLL lineage incomplete; using committed units", flush=True)
+            continue
+        if build.hashes_match_layout() is not True:
+            print(f"variant {build.name}: DLL hashes differ from its layout; refusing", file=sys.stderr)
+            return 1
+        folder = f"tools/variants/{build.name}/units/*"
+        inputs = ASSEMBLY_INPUTS + [builds.relative(path) for base in lineage for path in (base.logic, base.game)]
+        inputs += [f"tools/variants/{base.name}/units/*" for base in lineage]
+        name = f"assemble-variant-{build.name}"
+        key = digest(inputs)
+        if fresh(name, key):
+            print(f"variant {build.name}: inputs and units unchanged; skipped", flush=True)
+            continue
+        for tool in ("tools/payload.py", "tools/icon.py", "tools/units.py"):
+            result = subprocess.run([sys.executable, tool, "--layout", build.name], cwd=ROOT)
+            if result.returncode:
+                return result.returncode
+        result = subprocess.run([sys.executable, "tools/variant.py", str(build.layout), str(build.logic), str(build.game)], cwd=ROOT)
+        if result.returncode:
+            return result.returncode
+        if not files([folder]):
+            print(f"variant {build.name}: assembly produced no units; refusing to cache", file=sys.stderr)
+            return 1
+        # The resolved units are inputs too, so manual edits or missing units
+        # cause a refresh rather than passing through a previous stamp.
+        record(name, digest(inputs), [folder])
+    return 0
+
+
 FROM_IMPORT = re.compile(r"^[ \t]*from[ \t]+(\w+)[ \t]+import\b", re.M)
 PLAIN_IMPORT = re.compile(r"^[ \t]*import[ \t]+([^\n#]+)", re.M)
 
@@ -229,20 +274,19 @@ def passed_before(name, key):
     if os.environ.get("DEFIANCE_NO_STAMP"):
         return False
     try:
-        return key in json.loads((STAMPS / f"{name}.json").read_text(encoding="utf-8")).get("passes", [])
+        return key in json.loads((PASSES / f"{name}.json").read_text(encoding="utf-8")).get("passes", [])
     except (OSError, ValueError):
         return False
 
 
 def record_pass(name, key):
-    path = STAMPS / f"{name}.json"
+    path = PASSES / f"{name}.json"
     try:
         passes = json.loads(path.read_text(encoding="utf-8")).get("passes", [])
     except (OSError, ValueError):
         passes = []
     passes = [key] + [k for k in passes if k != key][:TEST_KEYS_KEPT - 1]
-    STAMPS.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"passes": passes}, indent=2) + "\n", encoding="utf-8")
+    shared_cache.write_text(path, json.dumps({"passes": passes}, indent=2) + "\n")
 
 
 def run_test(script, args):
@@ -266,7 +310,7 @@ def run(name):
         if all((REFERENCE / n).is_file() for n in REFERENCE_COPIES.values()):
             print(f"assemble: {', '.join(missing)} not present; using the committed payloads in "
                   "tools/variants/reference")
-            return 0
+            return refresh_variants()
         print(f"assemble: {', '.join(missing)} not present and no committed payloads", file=sys.stderr)
         return 1
     key = digest(job["inputs"])
@@ -280,6 +324,7 @@ def run(name):
         record(name, key, job["outputs"])
     if name == "assemble":
         sync_reference()
+        return refresh_variants()
     return 0
 
 

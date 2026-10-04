@@ -163,7 +163,7 @@ pub(super) unsafe fn park_if_needed(ai: usize) -> bool {
             origin.parked_select = Some(byte(select, 0x18));
             *((select + 0x18) as *mut u8) = 0;
             log(
-                LOG_INFO,
+                LOG_DEBUG,
                 "parked empty original squad; retaining its entity and metadata",
             );
         }
@@ -172,7 +172,7 @@ pub(super) unsafe fn park_if_needed(ai: usize) -> bool {
             *((select + 0x18) as *mut u8) = enabled;
         }
         log(
-            LOG_INFO,
+            LOG_DEBUG,
             if empty {
                 "released empty original squad: no surviving tracked soldiers"
             } else {
@@ -332,7 +332,7 @@ pub(super) unsafe fn restore(manager: usize) -> Result<(), &'static str> {
         }
         restored += members.len();
         log(
-            LOG_INFO,
+            LOG_DEBUG,
             &format!("restore group completed: {} soldiers", members.len()),
         );
     }

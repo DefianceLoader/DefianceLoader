@@ -31,7 +31,7 @@ reference has none, and its Steam copy's is the reference.
 The two Rust tests that read a DLL (`crates/loader/src/trace.rs`,
 `injector/src/main.rs`'s default) name the same paths directly.
 """
-import dataclasses, hashlib, json, pathlib, subprocess, sys
+import dataclasses, hashlib, json, pathlib, sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BIN = ROOT / "bin"
@@ -162,18 +162,12 @@ def supported() -> list[Build]:
 
 def variants() -> int:
     """Assemble and resolve every layout's payload (the `variants` task)."""
-    python = sys.executable
-    # A base's variant is resolved before the builds derived from it.
-    for b in sorted(with_layouts(), key=lambda b: len(b.lineage())):
-        b.require()
-        for command in ([python, "tools/payload.py", "--layout", b.name],
-                        [python, "tools/icon.py", "--layout", b.name],
-                        [python, "tools/units.py", "--layout", b.name],
-                        [python, "tools/variant.py", str(b.layout), str(b.logic), str(b.game)]):
-            print(f"$ {' '.join(str(c) for c in command[1:])}", flush=True)
-            if subprocess.call(command, cwd=ROOT) != 0:
-                return 1
-    return 0
+    import stamp
+    result = stamp.run("assemble")
+    if result == 0:
+        result = stamp.refresh_variants(require_all=True)
+    stamp.save_file_cache()
+    return result
 
 
 def main(argv):

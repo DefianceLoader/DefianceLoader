@@ -14,6 +14,7 @@ Both read the tracked units in tools/variants/<build>/units/ (tools/units.py),
 so they need no game DLLs. The reference was recorded from the monolithic
 payloads before the units existed; a branch's entry lists every label its
 routine had there.
+Recording refreshed writes preserves the labels already recorded for each branch site.
 """
 import json, pathlib, sys
 
@@ -43,6 +44,20 @@ def unit_writes(build):
         raise SystemExit(f"{build} has no units; run tools/units.py (and mise run variants)")
     out.sort(key=lambda w: (w["module"], w["rva"]))
     return {"build": build, "logic_sha256": shas["logic"], "game_sha256": shas["game"], "writes": out}
+
+
+def preserve_entries(previous, record):
+    """Keep previously recorded labels for each branch site."""
+    entries = {
+        (w["module"], w["rva"]): w["entry"]
+        for w in previous["writes"]
+        if "entry" in w
+    }
+    for write in record["writes"]:
+        if "entry" not in write:
+            continue
+        key = (write["module"], write["rva"])
+        write["entry"] = list(dict.fromkeys(entries.get(key, []) + write["entry"]))
 
 
 def differences(reference, record):
@@ -86,6 +101,8 @@ def main(argv):
                 print(f"{build}: the units make the recorded writes")
             continue
         record = unit_writes(build)
+        if path.exists():
+            preserve_entries(json.loads(path.read_text(encoding="utf-8")), record)
         FIXTURES.mkdir(parents=True, exist_ok=True)
         path.write_text(render(record), encoding="utf-8", newline="\n")
         print(f"{build}: {len(record['writes'])} writes -> {path}")

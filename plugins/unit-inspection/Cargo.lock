@@ -11,17 +11,23 @@ name = "defiance-build-support"
 version = "0.1.0"
 
 [[package]]
+name = "defiance-core"
+version = "0.1.0"
+
+[[package]]
 name = "defiance-feature-sdk"
 version = "0.1.0"
 dependencies = [
  "defiance-api",
+ "defiance-core",
 ]
 
 [[package]]
 name = "defiance-plugin-unit-inspection"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "defiance-api",
  "defiance-build-support",
+ "defiance-core",
  "defiance-feature-sdk",
 ]

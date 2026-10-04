@@ -1,14 +1,26 @@
-// Diagnostics feature: its logic.dll unit (patch/select-trace.asm and
-// behaviour-census.asm), which Core's patch service installs for the build.
+//! Reloadable diagnostic configuration, decoding and output.
+//! Breakpoints and bounded at-hit snapshots belong to the loader.
 use defiance_api::{Api, Plugin, ABI_VERSION};
-use defiance_feature_sdk::units::Embedded;
+
+mod config;
+mod presets;
+mod runtime;
 defiance_feature_sdk::service_handshake!();
 
-/// Every supported build's units (`build.rs`).
-static UNITS: &[Embedded] = include!(concat!(env!("OUT_DIR"), "/units.rs"));
+/// Hardware observation requests no loader-owned code writes.
+#[no_mangle]
+pub unsafe extern "C" fn defiance_patch_contract_v1(
+    api: *const Api,
+) -> *const defiance_api::PatchContractV1 {
+    unsafe { defiance_feature_sdk::contract::build(api, Vec::new()) }
+}
 
 unsafe extern "C" fn init(api: *const Api) -> i32 {
-    unsafe { defiance_feature_sdk::units::install(api, UNITS, |_| {}, &[], core::ptr::null_mut()) }
+    unsafe { runtime::start(api) }
+}
+
+unsafe extern "C" fn stop() {
+    runtime::stop();
 }
 #[no_mangle]
 pub extern "C" fn defiance_plugin() -> *const Plugin {
@@ -17,7 +29,7 @@ pub extern "C" fn defiance_plugin() -> *const Plugin {
         name: b"defiance.diagnostics\0".as_ptr().cast(),
         version: concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast(),
         init,
-        stop: None,
+        stop: Some(stop),
     })
 }
 

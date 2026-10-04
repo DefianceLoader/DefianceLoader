@@ -46,7 +46,33 @@ def main():
             for plugin, state in expected.items():
                 assert states.get(plugin, "").startswith(state), (case, states, result.stdout, result.stderr)
             print(f"PASS {case}: {states}", flush=True)
+    log_filter_cases()
     reload()
+    patch_v1_case()
+
+
+def log_filter_cases():
+    """The real loader gives existing plugin DLLs source-bound log callbacks."""
+    for case, include, exclude, written in [
+        ("all", "", "", True),
+        ("include", " EXAMPLE.COUNTER-USER, ", "", True),
+        ("other-only", "example.counter", "", False),
+        ("exclude", "", "example.counter-user", False),
+        ("both", "example.counter-user", "example.counter-user", False),
+    ]:
+        with tempfile.TemporaryDirectory(prefix="defiance-log-filter-") as tmp:
+            root = pathlib.Path(tmp)
+            exe = host_with(root, {"defiance_example_counter": {}, "defiance_example_counter_user": {}})
+            cfg = root / "DefianceLoader/config/core.ini"
+            cfg.parent.mkdir()
+            cfg.write_text(f"[logging]\nlevel = info\ninclude_plugins = {include}\nexclude_plugins = {exclude}\n")
+            result = subprocess.run([str(exe)], check=True, capture_output=True, text=True)
+            assert "example.counter-user: Active" in result.stdout, (case, result.stdout, result.stderr)
+            message = "[info] [example.counter-user] counter-user: shared state verified (two increments)"
+            log = (root / "DefianceLoader/logs/defiance-loader.log").read_text()
+            assert (message in log) == written, (case, log)
+            assert "plugin example.counter-user" in log, (case, log)
+            print(f"PASS plugin log filter {case}", flush=True)
 
 
 def reload():
@@ -63,6 +89,11 @@ def reload():
     remove_case(fixed=False)
     remove_case(fixed=True)
     toggle_case()
+    live_enable_settings_case()
+    live_enable_reload_case()
+    replacement_permission_case("revoke-target")
+    replacement_permission_case("revoke-consumer")
+    mixed_reload_config_case()
     settings_case()
 
 
@@ -83,6 +114,27 @@ def host_with(root, plugins_json):
         (plugins / (dll + ".plugin.json")).write_text(json.dumps(manifest))
     return exe
 
+
+def patch_v1_case():
+    """Exercise Core's PatchV1 service on allocated module images, without game DLLs."""
+    with tempfile.TemporaryDirectory(prefix="defiance-services-patch-") as tmp:
+        exe = pathlib.Path(tmp) / "bin/service-host.exe"
+        exe.parent.mkdir()
+        shutil.copy2(ROOT / "target/release/service-host.exe", exe)
+        result = subprocess.run([str(exe), "patch-v1"], capture_output=True, text=True)
+        lines = result.stdout.splitlines()
+        assert result.returncode == 0, (lines, result.stderr)
+        for expected in [
+            "relocated unit: installed at synthetic game.dll+0x180",
+            "overlap: refused without changing the existing owner's span",
+            "failed unit: later refusal rolled back its earlier write",
+            "ownership: spans restore under their installing plugin",
+        ]:
+            assert expected in lines, (expected, lines, result.stderr)
+        print(
+            "PASS PatchV1: synthetic module relocation, overlap refusal, rollback, and ownership",
+            flush=True,
+        )
 
 def chain_case():
     """Counter <- counter-user <- counter-watch (startup-only). Reloading the
@@ -124,9 +176,16 @@ def add_case():
         assert "add: Ok(())" in lines, (lines, result.stderr)
         assert "loaded: example.counter, example.counter-user" in lines, lines
         assert "total: 2" in lines, lines
+        assert "resettle added: Ok(())" in lines, lines
+        changed_schema = next(
+            (l for l in lines if l.startswith("resettle changed schema: ")), ""
+        )
+        assert "settings changed; restart the game" in changed_schema, lines
+        schema = lines.index(changed_schema)
+        assert lines[schema + 1] == "loaded: example.counter, example.counter-user", lines
         config = (root / "DefianceLoader/config/examples.ini").read_text()
         assert "[example.counter-user]" in config and "service_version" in config, config
-        print("PASS add: a plugin added while running loads with its settings", flush=True)
+        print("PASS add: late plugin settings reload against its loaded schema", flush=True)
 
 
 def remove_case(fixed):
@@ -183,6 +242,95 @@ def settings_case():
         on = lines.index("on: Ok(())")
         assert lines[on + 1] == "loaded: example.counter, example.counter-user", lines
         print("PASS settings: loaded again with the values its config file says now", flush=True)
+
+
+def live_enable_settings_case():
+    """A plugin enabled live after startup-disabled settings can reload against
+    its current enabled value instead of the startup snapshot."""
+    with tempfile.TemporaryDirectory(prefix="defiance-services-") as tmp:
+        exe = host_with(pathlib.Path(tmp), {"defiance_example_counter": {}})
+        result = subprocess.run([str(exe), "live-enable-settings"], capture_output=True, text=True)
+        lines = result.stdout.splitlines()
+        assert result.returncode == 0, (result.returncode, lines, result.stderr)
+        assert "live enable: Ok(())" in lines, (lines, result.stderr)
+        failed = next(i for i, l in enumerate(lines) if l.startswith("settings after live enable: "))
+        assert "init returned 1" in lines[failed], lines
+        assert lines[failed + 1] == "loaded: ", lines
+        enabled = lines.index("re-enabled: Ok(())")
+        assert lines[enabled + 1] == "loaded: example.counter", lines
+        print("PASS live enable: settings reload uses the enabled live configuration", flush=True)
+
+
+def live_enable_reload_case():
+    """A startup-disabled provider and its enabled consumer can be enabled
+    live, then both reload from their current enabled state."""
+    with tempfile.TemporaryDirectory(prefix="defiance-services-") as tmp:
+        root = pathlib.Path(tmp)
+        exe = host_with(root, {
+            "defiance_example_counter": {},
+            "defiance_example_counter_user": {},
+        })
+        config = root / "DefianceLoader/config/examples.ini"
+        config.parent.mkdir(parents=True)
+        config.write_text(
+            "[example.counter]\nenabled = false\n"
+            "[example.counter-user]\nenabled = true\n"
+        )
+        result = subprocess.run([str(exe), "live-enable-reload"], capture_output=True, text=True)
+        lines = result.stdout.splitlines()
+        assert result.returncode == 0, (result.returncode, lines, result.stderr)
+        assert "live enable provider: Ok(())" in lines, (lines, result.stderr)
+        assert "live enable consumer: Ok(())" in lines, (lines, result.stderr)
+        assert "reload: Ok(())" in lines, (lines, result.stderr)
+        assert "loaded example.counter: new" in lines, lines
+        assert "loaded example.counter-user: new" in lines, lines
+        assert "total after reload: 2" in lines, lines
+        print("PASS live enable: provider and consumer reload after startup enablement", flush=True)
+
+
+def replacement_permission_case(command):
+    """Revoking hot reload on the replacement provider or its reloadable
+    consumer refuses the group before owners or service tables change."""
+    with tempfile.TemporaryDirectory(prefix="defiance-services-") as tmp:
+        exe = host_with(pathlib.Path(tmp), {
+            "defiance_example_counter": {},
+            "defiance_example_counter_user": {},
+        })
+        result = subprocess.run([str(exe), command], capture_output=True, text=True)
+        lines = result.stdout.splitlines()
+        assert result.returncode == 0, (result.returncode, lines, result.stderr)
+        reload_line = next((line for line in lines if line.startswith("reload: ")), "")
+        assert "Err(" in reload_line and "restart" in reload_line.lower(), (lines, result.stderr)
+        assert "loaded: example.counter, example.counter-user" in lines, lines
+        assert "total before: 2" in lines and "total after: 2" in lines, lines
+        assert "provider service unchanged: true" in lines, lines
+        assert "consumer service unchanged: true" in lines, lines
+        assert "loaded example.counter: same" in lines, lines
+        assert "loaded example.counter-user: same" in lines, lines
+        print(f"PASS {command}: replacement reload permission preserves owners and services", flush=True)
+
+
+def mixed_reload_config_case():
+    """A queued provider DLL reload and consumer settings edit must attempt
+    the new setting; a failed init must not publish it as accepted."""
+    with tempfile.TemporaryDirectory(prefix="defiance-services-") as tmp:
+        root = pathlib.Path(tmp)
+        exe = host_with(root, {
+            "defiance_example_counter": {},
+            "defiance_example_counter_user": {},
+        })
+        config = root / "DefianceLoader/config/examples.ini"
+        config.parent.mkdir(parents=True)
+        config.write_text("[example.counter-user]\nservice_version = 1\n")
+        result = subprocess.run([str(exe), "mixed-reload-config"], capture_output=True, text=True)
+        lines = result.stdout.splitlines()
+        assert result.returncode == 0, (result.returncode, lines, result.stderr)
+        outcome = next((line for line in lines if line.startswith("apply mixed: ")), "")
+        assert "Err(" in outcome and "example.counter-user" in outcome, (lines, result.stderr)
+        assert "loaded example.counter: new" in lines, lines
+        assert "loaded: example.counter" in lines, lines
+        assert "service version after failed config: Some(\"1\")" in lines, lines
+        print("PASS mixed reload/config: failed candidate leaves the accepted consumer settings", flush=True)
 
 
 def multiplayer_case():

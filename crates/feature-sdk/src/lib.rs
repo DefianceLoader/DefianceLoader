@@ -6,7 +6,8 @@
 //! plugin uses these accessors to get a validated value or an explicit error
 //! instead of a nullable string it has to parse itself.
 use core::ffi::CStr;
-use defiance_api::Api;
+pub use defiance_api::{Api, PatchContractV1};
+pub mod contract;
 pub mod crash;
 pub mod services;
 pub mod units;

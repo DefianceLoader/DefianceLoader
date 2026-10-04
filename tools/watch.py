@@ -26,14 +26,20 @@ OUT = ROOT / "out" / "watch"
 PARITY = ("defiance-plugin-core/parity-test,defiance-plugin-firing/parity-test,"
           "defiance-plugin-selection/parity-test,defiance-plugin-pickup/parity-test")
 STANDALONE = ["plugins/regroup", "plugins/expanded-ammo-menu", "plugins/squad-management-scroll",
-              "plugins/unit-inspection", "plugins/ability-groups"]
+              "plugins/unit-inspection", "plugins/ability-groups",
+              "plugins/legion-vehicle-hacking", "plugins/vehicle-arrival", "plugins/cover-markers"]
 STEPS = [
     ("assemble", [sys.executable, "tools/stamp.py", "assemble"]),
     ("build", ["cargo", "build", "--release"]),
+    ("injector check", [sys.executable, "tools/check_injector.py"]),
     ("parity build", ["cargo", "build", "--release", "--target-dir", "out/controls-parity",
                       "-p", "defiance-plugin-core", "-p", "defiance-plugin-firing",
                       "-p", "defiance-plugin-selection", "-p", "defiance-plugin-pickup",
                       "--features", PARITY]),
+    ("vehicle arrival parity build", ["cargo", "build", "--release",
+                                     "--manifest-path", "plugins/vehicle-arrival/Cargo.toml",
+                                     "--features", "parity-test",
+                                     "--target-dir", "out/vehicle-arrival-parity"]),
     ("crash-test build", ["cargo", "build", "--release", "--target-dir", "out/crash-tests",
                           "-p", "defiance-loader", "--features", "test-host"]),
     ("crash plugin build", ["cargo", "build", "--release", "--target-dir", "out/crash-tests",

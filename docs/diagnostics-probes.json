@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "probes": [
+    {
+      "name": "selection-select",
+      "preset": "selection-select",
+      "enabled": false
+    },
+    {
+      "name": "selection-toggle",
+      "preset": "selection-toggle",
+      "enabled": false
+    },
+    {
+      "name": "selection-deselect",
+      "preset": "selection-deselect",
+      "enabled": false
+    },
+    {
+      "name": "selection-clear",
+      "preset": "selection-clear",
+      "enabled": false
+    },
+    {
+      "name": "behaviour-census",
+      "preset": "behaviour-census",
+      "enabled": false
+    },
+    {
+      "name": "selection-select-custom",
+      "module": "logic.dll",
+      "signature": "40 53 48 81 EC C0 00 00 00 48 8B DA 48 85 D2 0F 84 ?? ?? ?? ?? 48 8B 02",
+      "enabled": false,
+      "mode": "events",
+      "hits": 1000,
+      "every": 1,
+      "interval_ms": 100,
+      "stack_frames": 8,
+      "fields": [
+        { "name": "caller", "register": "rsp", "type": "u64", "path": [0] },
+        { "name": "entity", "register": "rdx", "type": "u64" }
+      ]
+    }
+  ]
+}

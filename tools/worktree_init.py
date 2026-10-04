@@ -1,5 +1,6 @@
 """Give a new git worktree the untracked files the main checkout has: every
-path `.worktreeinclude` lists (the game DLLs in bin/, mise.local.toml) is
+path `.worktreeinclude` lists (the game DLLs in bin/, mise.local.toml, the
+assembly stamps in out/stamps/) is
 copied from the main worktree unless the worktree already has it. Lines are
 literal paths relative to the repository root; `#` starts a comment. When the
 main checkout has a graft graph and graft is installed, it also builds the

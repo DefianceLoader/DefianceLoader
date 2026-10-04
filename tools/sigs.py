@@ -18,7 +18,6 @@ matches exactly once in the module's code.
 import re, sys
 import builds
 import capstone
-import pefile
 sys.path.insert(0, "tools")
 from pe import Image
 
@@ -30,9 +29,9 @@ MIN_BYTES = 24
 
 class Module:
     def __init__(self, path):
-        self.pe = pefile.PE(path)
-        self.image = self.pe.get_memory_mapped_image()   # indexed by rva
         self.functions = Image(path)                       # for .pdata bounds
+        self.pe = self.functions.pe
+        self.image = self.pe.get_memory_mapped_image()   # indexed by rva
         self.md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
         self.md.detail = True
         self.code = [(s.VirtualAddress, s.VirtualAddress + s.Misc_VirtualSize)
@@ -52,12 +51,17 @@ class Module:
     def matches(self, pattern, mask):
         """Every rva in the module's code where the masked pattern occurs,
         overlapping occurrences included, as the injector's scan finds them."""
-        regex = re.compile(b"(?=" + b"".join(re.escape(bytes([b])) if m else b"."
-                                             for b, m in zip(pattern, mask)) + b")", re.DOTALL)
+        # A search restarted one byte past each hit finds overlapping ones; a
+        # lookahead would too, but it hides the literal prefix that lets the
+        # engine skip ahead, and is about twenty times slower.
+        regex = re.compile(b"".join(re.escape(bytes([b])) if m else b"."
+                                    for b, m in zip(pattern, mask)), re.DOTALL)
         out = []
         for start, end in self.code:
-            blob = self.image[start:end]
-            out += [start + m.start() for m in regex.finditer(blob)]
+            pos = start
+            while (m := regex.search(self.image, pos, end)) is not None:
+                out.append(m.start())
+                pos = m.start() + 1
         return out
 
     def bounds(self, rva):
@@ -83,11 +87,14 @@ class Module:
             parts = [self.masked(ins) for ins in insns[a:b + 1]]
             pattern = b"".join(p for p, _ in parts)
             mask = b"".join(m for _, m in parts)
-            found = self.matches(pattern, mask)
-            if found == [insns[a].address] and len(pattern) >= MIN_BYTES:
-                return insns[a].address, pattern, mask
-            if insns[a].address not in found:
-                raise SystemExit(f"the signature for {rva:#x} does not match its own site")
+            # A window too short to return is not searched: a few bytes match
+            # all over the module, and listing every hit is most of the cost.
+            if len(pattern) >= MIN_BYTES:
+                found = self.matches(pattern, mask)
+                if found == [insns[a].address]:
+                    return insns[a].address, pattern, mask
+                if insns[a].address not in found:
+                    raise SystemExit(f"the signature for {rva:#x} does not match its own site")
             if len(pattern) > MAX_BYTES:
                 raise SystemExit(f"no unique signature for {rva:#x} within {MAX_BYTES} bytes")
             if b + 1 < len(insns):

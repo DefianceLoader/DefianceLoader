@@ -134,6 +134,14 @@ pub unsafe fn trace() -> Option<&'static defiance_api::TraceV1> {
     unsafe { query(defiance_api::LOADER_PROVIDER, c"trace", 1) }
 }
 
+/// Resolve the loader's buffered at-hit capture service. No plugin dependency
+/// is needed. Open during init; configure and poll from a worker, then close.
+/// # Safety
+/// Same lifecycle requirements as [`query`].
+pub unsafe fn trace_capture() -> Option<&'static defiance_api::TraceCaptureV1> {
+    unsafe { query(defiance_api::LOADER_PROVIDER, c"trace-capture", 1) }
+}
+
 /// Resolve the loader's multiplayer-v1 table: which active plugins block
 /// multiplayer. Needs no manifest dependency; None from a loader that
 /// predates it.

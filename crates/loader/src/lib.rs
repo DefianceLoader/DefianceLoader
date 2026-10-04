@@ -1,9 +1,11 @@
 //! The loader: a mod host that runs inside the game.
 //!
-//! This is the native answer to BepInEx's two halves. The bootstrap is a proxy
-//! DLL (see `bootstrap.rs` and `proxy.rs`): it is named after a system DLL the
-//! game already imports, so the game loads it for us, forwards that DLL's
-//! exports to the real one, and starts the host on a thread. The host
+//! This is the native answer to BepInEx's two halves. The bootstrap can be a
+//! proxy DLL (see `bootstrap.rs` and `proxy.rs`): it is named after a system
+//! DLL the game already imports, so the game loads it for us, forwards that
+//! DLL's exports to the real one, and starts the host on a thread. An EXE can
+//! also load the neutral DLL directly and inspect `DEFIANCE_LOADER_STATE` to
+//! learn when the host finishes startup. The host
 //! (`host.rs`) waits for the game's own modules, builds the plugin API
 //! (`resolve.rs`, `hooks.rs`, `rtti.rs`) and loads every plugin in `plugins/`.
 //!
@@ -34,6 +36,7 @@ mod multiplayer;
 mod original;
 mod plan;
 mod plugin;
+mod plugin_log;
 mod proxy;
 mod proxy_generated;
 mod reload;
@@ -41,6 +44,7 @@ mod resolve;
 mod rtti;
 mod services;
 mod session;
+mod startup;
 mod threads;
 mod trace;
 mod win;
@@ -80,6 +84,10 @@ pub mod test_host {
     /// Hot-reload one loaded plugin (and its dependants).
     pub fn reload_plugin(id: &str) -> Result<(), String> {
         crate::host::test_reload(id)
+    }
+    /// Apply simultaneous settled DLL and config changes through the watcher queue.
+    pub fn apply_reload_and_config(file_id: &str, config_id: &str) -> Result<(), String> {
+        crate::host::test_reload_and_config(file_id, config_id)
     }
     /// Load a plugin added to the plugins directory after startup.
     pub fn add_plugin(id: &str) -> Result<(), String> {

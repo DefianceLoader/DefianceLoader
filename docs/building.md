@@ -40,6 +40,15 @@ cargo build --release --manifest-path plugins/expanded-ammo-menu/Cargo.toml
 cargo build --release --manifest-path plugins/squad-management-scroll/Cargo.toml
 cargo build --release --manifest-path plugins/unit-inspection/Cargo.toml
 cargo build --release --manifest-path plugins/ability-groups/Cargo.toml
+cargo build --release --manifest-path plugins/legion-vehicle-hacking/Cargo.toml
+cargo build --release --manifest-path plugins/vehicle-arrival/Cargo.toml
+cargo build --release --manifest-path plugins/cover-markers/Cargo.toml
+cargo build --release --manifest-path plugins/weapon-drops/Cargo.toml
+cargo build --release --manifest-path plugins/moving-actions/Cargo.toml
+cargo build --release --manifest-path plugins/moving-actions-animation/Cargo.toml
+cargo build --release --manifest-path plugins/moving-actions-sync/Cargo.toml
+cargo build --release --manifest-path plugins/moving-actions-render-sync/Cargo.toml
+cargo build --release --manifest-path plugins/moving-grenades/Cargo.toml
 target\release\manifest-gen.exe --out target\release
 python tools/package.py --out out/defiance-loader.zip
 python tools/checksums.py out/defiance-loader.zip --out out/SHA256SUMS.txt
@@ -54,18 +63,25 @@ Builds on another machine or toolchain version are not guaranteed to be
 byte-identical to the release; compare behaviour and the source tag, or use
 the attestation above to check the released files themselves.
 
-## The companion UI mods
+## Companion game-data mods
 
 The squad-management-scroll plugin needs a small UI mod that adds scrollbars to
 the game's unit panels; the same mod right-aligns the in-mission ammo card's
 user count so two-digit fractions fit, and carries darker copies of the game's
 standard materials for the squad preview's unselected soldiers. Unit
 inspection's mod holds a greyscale copy of the ammo card's reload bar texture,
-which the plugin colours (`tools/package_unit_inspection.py`). Both are plain
-text and DDS textures, derived from the game's own UI and material definitions,
-so they can only be built on a machine with the game installed, and they are
-distributed as a separate download (`defiance-squad-scroll-ui.zip`). The game's
+which the plugin colours (`tools/package_unit_inspection.py`). These mods are
+derived from the installed game's UI, materials and animation assets, so they
+can only be built on a machine with the game installed. The companion archive
+also contains `mods/defiance_moving_actions/assets`, generated from the game
+PAKs; those files do not replace native animation resources. The game's
 archives are encrypted; set `DEFIANCE_PAK_PASSWORD` to their password first.
+
+The moving-actions runtime crates build without game animation assets. With
+`DEFIANCE_GAME_DIR` configured, `mise run moving-actions-animation-mod` derives
+the animation companion archive; normal loader staging and packaging include
+the same generated data. Track the builder and recipes, and keep generated
+game assets under the ignored `out/` directory.
 
 ```bat
 python tools/package.py --companion-only --game "C:\Games\...\Terminator Dark Fate - Defiance"

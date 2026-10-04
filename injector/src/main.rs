@@ -1,19 +1,21 @@
-//! Applies the patches to a running game, so nothing in the game directory is
-//! modified. Two modules: logic.dll for the simulation and game.dll for the
-//! squad panel.
+//! Starts the complete plugin host without a proxy DLL, or applies assembled
+//! patches directly to logic.dll and game.dll for standalone diagnostics.
 //!
 //! Start this, then start the game normally. It waits for trm.exe to appear,
-//! waits for logic.dll to be loaded, checks that the DLL on disk is the build
-//! the patch was written for, and then applies the patch. The patch itself —
+//! waits for both game DLLs. Loader mode starts the shared host with its normal
+//! configuration; direct patch mode selects payloads from the DLL hash pair.
+//! The standalone patch implementation —
 //! the descriptor, the signature relocation and the writes — lives in
 //! `defiance-core`, shared with the loader; this file is the process discovery
 //! and the command line around it.
 //!
 //! The block is committed executable and writable near the module, because the
 //! one call that reaches it is a rel32 and so must land within 2GB. The
-//! rotation cursor sits at a fixed offset inside the same block, addressed
-//! rip-relative, which is what lets the payload be position independent.
+//! rotation cursor is addressed rip-relative within its allocated payload.
+//! Layout variants link their units and shared trace ring near each module.
 
+mod builds;
+mod host_mode;
 mod settings;
 
 use defiance_core::apply::Process;
@@ -193,11 +195,14 @@ fn wait_for_game(timeout: Duration) -> Result<Target, String> {
     let mut announced = false;
     loop {
         if let Some(process_id) = find_process("trm.exe") {
-            if let Some(target) = find_module(process_id, "logic.dll") {
+            if let (Some(target), Some(_game)) = (
+                find_module(process_id, "logic.dll"),
+                find_module(process_id, "game.dll"),
+            ) {
                 return Ok(target);
             }
             if !announced {
-                println!("the game is starting; waiting for logic.dll");
+                println!("the game is starting; waiting for logic.dll and game.dll");
                 announced = true;
             }
         } else if !announced {
@@ -212,6 +217,22 @@ fn wait_for_game(timeout: Duration) -> Result<Target, String> {
         }
         std::thread::sleep(Duration::from_millis(400));
     }
+}
+
+/// Translate the resolved export through its owning module, including a
+/// forwarded export: the target's DLL base need not equal this process's.
+fn remote_export(pid: u32, dll: &str, name: &str) -> Result<usize, String> {
+    let local = defiance_core::apply::resolve_export(dll, name)? as usize;
+    let (owner, base, _) = all_modules(std::process::id())
+        .into_iter()
+        .find(|(_, base, size)| local >= *base && local - base < *size)
+        .ok_or_else(|| format!("cannot locate the module owning {dll}!{name}"))?;
+    let offset = local - base;
+    all_modules(pid)
+        .into_iter()
+        .find(|(module, _, size)| module.eq_ignore_ascii_case(&owner) && offset < *size)
+        .map(|(_, base, _)| base + offset)
+        .ok_or_else(|| format!("the game has not loaded the module owning {dll}!{name}"))
 }
 
 // --- the probes -------------------------------------------------------------
@@ -764,9 +785,20 @@ fn main() {
     let mut timeout: Option<u64> = None;
     let mut with_game: Option<bool> = None;
     let mut scan: Option<Scan> = None;
+    let mut mode: Option<settings::Mode> = None;
+    let mut loader_dll: Option<PathBuf> = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--loader" => mode = Some(settings::Mode::Loader),
+            "--patches" => mode = Some(settings::Mode::Patches),
+            "--loader-dll" => {
+                loader_dll = Some(args.next().map(PathBuf::from).unwrap_or_else(|| {
+                    eprintln!("--loader-dll needs the host DLL path");
+                    std::process::exit(2);
+                }));
+                mode = Some(settings::Mode::Loader);
+            }
             "--wait" => {
                 let seconds = args
                     .next()
@@ -779,16 +811,20 @@ fn main() {
             }
             "--probe" => {
                 let patch = game_patch();
-                if let Err(message) = wait_for_game(Duration::from_secs(10)) {
+                let logic = wait_for_game(Duration::from_secs(10)).unwrap_or_else(|message| {
                     eprintln!("{message}");
                     std::process::exit(1);
-                }
-                let game = find_process("trm.exe").and_then(|pid| find_module(pid, "game.dll"));
+                });
+                let game = find_module(logic.process_id, "game.dll");
                 let Some(game) = game else {
                     eprintln!("game.dll is not loaded");
                     std::process::exit(1);
                 };
-                if let Err(message) = probe(&patch, &game) {
+                let result = builds::for_targets(&logic, &game).and_then(|build| match build {
+                    Some(build) => builds::probe(&game, build, true),
+                    None => probe(&patch, &game),
+                });
+                if let Err(message) = result {
                     eprintln!("{message}");
                     std::process::exit(1);
                 }
@@ -803,7 +839,14 @@ fn main() {
                         std::process::exit(1);
                     }
                 };
-                if let Err(message) = select_probe(&patch, &target) {
+                let result = find_module(target.process_id, "game.dll")
+                    .ok_or_else(|| "game.dll is not loaded".to_string())
+                    .and_then(|game| builds::for_targets(&target, &game))
+                    .and_then(|build| match build {
+                        Some(build) => builds::probe(&target, build, false),
+                        None => select_probe(&patch, &target),
+                    });
+                if let Err(message) = result {
                     eprintln!("{message}");
                     std::process::exit(1);
                 }
@@ -850,7 +893,10 @@ fn main() {
                     std::process::exit(2);
                 });
                 let found =
-                    relocate::check_dir(&logic_patch(), &game_patch(), std::path::Path::new(&dir));
+                    builds::check_dir(std::path::Path::new(&dir)).unwrap_or_else(|message| {
+                        eprintln!("{message}");
+                        false
+                    });
                 std::process::exit(if found { 0 } else { 1 });
             }
             // RTTI of a DLL on disk, for cross-checking the loader's runtime walk
@@ -901,7 +947,8 @@ fn main() {
                 let game = game_patch();
                 let result = defiance_core::apply::self_test(&patch, PAYLOAD)
                     .and_then(|()| defiance_core::apply::self_test_game(&game, GAME_PAYLOAD))
-                    .and_then(|()| relocate::self_test(&patch, &game, PAYLOAD, GAME_PAYLOAD));
+                    .and_then(|()| relocate::self_test(&patch, &game, PAYLOAD, GAME_PAYLOAD))
+                    .and_then(|()| builds::self_test());
                 match result {
                     Ok(()) => println!("the write path works"),
                     Err(message) => {
@@ -927,19 +974,28 @@ fn main() {
             }
             "-h" | "--help" => {
                 println!(
-                    "defiance-pickup-inject [--wait SECONDS] [--sha FILE] [--scan] \
+                    "defiance-pickup-inject [--loader|--patches] [--loader-dll DLL] [--wait SECONDS] [--sha FILE] [--scan] \
                      [--game|--no-game] [--probe] [--select-probe]\n\n\
                      Settings live in defiance-pickup-inject.ini beside this program,\n\
                      written with its defaults on the first run; the options below\n\
                      override it for one run.\n\n\
+                     --loader loads defiance_loader.dll beside this EXE into the game\n\
+                     without a proxy DLL. It uses the complete plugin host and the\n\
+                     gameplay settings in DefianceLoader/config/*.ini. Start this,\n\
+                     then start a fresh game. --loader-dll selects another host DLL.\n\
+                     --patches installs only the embedded assembled patches, with\n\
+                     their default feature values. builds/game and the scan flags\n\
+                     apply to this mode; they do not override the host's INIs.\n\n\
                      --scan patches a build this was not written for, by finding each\n\
                      patch site from its signature, and falls back to that for any\n\
                      build the patch as built does not fit; it refuses if a site is\n\
                      missing, ambiguous, or has moved apart from the rest of its function.\n\
-                     --force-scan does that even for the build this was written for,\n\
-                     to try the signature path in game.\n\
+                     --force-scan tests signature relocation on the December 2025\n\
+                     layouts. Supported newer layouts always use their DLL hash pair.\n\
                      --scan-check DIR only reports whether that would work for the\n\
                      logic.dll and game.dll in DIR, and writes nothing.\n\
+                     Supported September 2026 builds use their own assembled class\n\
+                     layouts, selected automatically by the pair of DLL hashes.\n\
                      --rtti CLASS [DLL] prints a class's RTTI vtable and methods from a\n\
                      DLL on disk (default bin/gog/2025-12-23/logic.dll), to cross-check the\n\
                      loader's runtime walk against tools/rtti.py. CLASS of * lists every\n\
@@ -953,9 +1009,10 @@ fn main() {
                      --slot-address DATA SLOT prints the exact address of a slot's enabled\n\
                      dword and nothing else, for an external debugger to watch. Safe: it\n\
                      installs no handler and touches no page.\n\n\
-                     Patches the weapon-pickup chooser in a running game. Start this,\n\
-                     then start the game; nothing in the game directory is touched, so\n\
-                     the patch is gone as soon as the game exits.\n\n\
+                     In --patches mode, start this before the game; game files are\n\
+                     unchanged and the patches disappear when the game exits. Loader\n\
+                     mode writes its normal configuration and logs and runs the\n\
+                     plugins selected by their INIs.\n\n\
                      The patch: in a squad whose members hold the same kind of weapon,\n\
                      clicking a weapon on the ground dispatches each member in turn\n\
                      instead of always the first one."
@@ -969,26 +1026,77 @@ fn main() {
         }
     }
 
-    let settings = settings::load();
+    let mut settings = settings::load();
+    if let Some(path) = loader_dll {
+        settings.loader_dll = std::fs::canonicalize(&path).unwrap_or(path);
+    }
+    let wants_patches = with_game.is_some() || scan.is_some();
+    if mode == Some(settings::Mode::Loader) && wants_patches {
+        eprintln!(
+            "--game/--no-game and scan flags apply to --patches; loader mode uses the plugin INIs"
+        );
+        std::process::exit(2);
+    }
     let (wait, with_game, scan) = (
         timeout.unwrap_or(settings.wait),
         with_game.unwrap_or(settings.game),
         scan.unwrap_or(settings.builds),
     );
-    println!(
-        "settings: builds {}, game.dll {}, wait {wait} s{}",
-        match scan {
-            Scan::Default => "known",
-            Scan::Unknown => "scan",
-            Scan::Always => "force",
-        },
-        if with_game { "on" } else { "off" },
-        settings
-            .path
-            .map(|p| format!(" ({}; options given here override it)", p.display()))
-            .unwrap_or_default()
-    );
-    let code = inject(Duration::from_secs(wait), with_game, scan);
+    let selected = mode.unwrap_or_else(|| {
+        if wants_patches {
+            settings::Mode::Patches
+        } else {
+            settings.mode
+        }
+    });
+    if selected == settings::Mode::Patches {
+        println!(
+            "settings: builds {}, game.dll {}, wait {wait} s{}",
+            match scan {
+                Scan::Default => "known",
+                Scan::Unknown => "scan",
+                Scan::Always => "force",
+            },
+            if with_game { "on" } else { "off" },
+            settings
+                .path
+                .as_ref()
+                .map(|p| format!(" ({}; options given here override it)", p.display()))
+                .unwrap_or_default()
+        );
+    }
+    let code = if selected == settings::Mode::Loader {
+        let dll = settings.loader_path();
+        println!("loader mode: gameplay settings come from the game's DefianceLoader/config INIs");
+        let result = std::fs::canonicalize(&dll)
+            .map_err(|error| {
+                format!(
+                    "{}: {error}; install the EXE package or use --patches",
+                    dll.display()
+                )
+            })
+            .and_then(|dll| {
+                wait_for_game(Duration::from_secs(wait)).and_then(|game| {
+                    host_mode::start(game.process_id, &dll, Duration::from_secs(wait))
+                })
+            });
+        match result {
+            Ok(true) => {
+                println!("plugin host started; configuration and enabled plugins are reported in DefianceLoader/logs/defiance-loader.log");
+                0
+            }
+            Ok(false) => {
+                println!("plugin host is already running; its gameplay configuration is active");
+                0
+            }
+            Err(error) => {
+                eprintln!("loader startup failed: {error}");
+                1
+            }
+        }
+    } else {
+        inject(Duration::from_secs(wait), with_game, scan)
+    };
     if settings.pause.keep_open() {
         println!();
         println!("Press Enter to close this window.");
@@ -1002,20 +1110,7 @@ fn main() {
 fn inject(timeout: Duration, with_game: bool, scan: Scan) -> i32 {
     let patch = logic_patch();
     let game_patch = if with_game { Some(game_patch()) } else { None };
-    println!(
-        "defiance-pickup-inject: {} bytes of chooser, into a {:#x}-byte block \
-         allocated near the module{}",
-        PAYLOAD.len(),
-        patch.block_bytes,
-        if with_game {
-            format!(
-                ", and {} bytes for the game.dll squad panel",
-                GAME_PAYLOAD.len()
-            )
-        } else {
-            String::new()
-        }
-    );
+    println!("defiance-pickup-inject: waiting for the game's DLLs");
 
     let target = match wait_for_game(timeout) {
         Ok(target) => target,
@@ -1024,6 +1119,40 @@ fn inject(timeout: Duration, with_game: bool, scan: Scan) -> i32 {
             return 1;
         }
     };
+    let game = match find_module(target.process_id, "game.dll") {
+        Some(game) => game,
+        None => {
+            eprintln!("game.dll is not loaded; no writes made");
+            return 1;
+        }
+    };
+    match builds::for_targets(&target, &game) {
+        Ok(Some(build)) => {
+            println!("both modules match {build}; using its assembled class layout");
+            return match builds::install(&target, &game, build, with_game) {
+                Ok(message) => {
+                    println!(
+                        "{}: {message}",
+                        if with_game {
+                            "logic.dll and game.dll"
+                        } else {
+                            "logic.dll"
+                        }
+                    );
+                    0
+                }
+                Err(message) => {
+                    eprintln!("{message}");
+                    1
+                }
+            };
+        }
+        Ok(None) => {}
+        Err(message) => {
+            eprintln!("{message}");
+            return 1;
+        }
+    }
     println!(
         "  logic.dll at {:p}, {} bytes, pid {}",
         target.base, target.size, target.process_id

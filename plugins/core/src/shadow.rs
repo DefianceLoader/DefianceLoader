@@ -42,6 +42,10 @@ use core::ffi::c_void;
 use defiance_api::{Api, LOG_INFO, LOG_WARN};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
+/// Diagnostic, never shipped: measure the stock pass without changing its cascades.
+#[cfg(feature = "shadow-timing")]
+mod timing;
+
 /// `mov rcx, rsi; call <main-view culling>; mov rcx, rsi; call <shadow pass>;
 /// cmp byte ptr [rsi + 0x438], 0`, in the scene render.
 pub const SITE_PATTERN: &str =
@@ -434,6 +438,37 @@ static LATCH: AtomicUsize = AtomicUsize::new(0);
 static CLEAR_TRAMPOLINE: AtomicUsize = AtomicUsize::new(0);
 static CLEAR_RESUME: AtomicUsize = AtomicUsize::new(0);
 
+/// Contract collection reruns `install` with fake hooks after runtime
+/// initialization. Preserve the callable continuations from the live hooks.
+#[derive(Clone, Copy)]
+pub(crate) struct HookState {
+    pass: usize,
+    head: usize,
+    clear: usize,
+}
+
+pub(crate) fn save_hook_state() -> HookState {
+    HookState {
+        pass: ORIGINAL.load(Ordering::Acquire),
+        head: HEAD_TRAMPOLINE.load(Ordering::Acquire),
+        clear: CLEAR_TRAMPOLINE.load(Ordering::Acquire),
+    }
+}
+
+pub(crate) fn restore_hook_state(state: HookState) {
+    ORIGINAL.store(state.pass, Ordering::Release);
+    HEAD_TRAMPOLINE.store(state.head, Ordering::Release);
+    CLEAR_TRAMPOLINE.store(state.clear, Ordering::Release);
+}
+
+/// Keep fake contract hooks from replacing the continuations used by live stubs.
+pub(crate) fn with_preserved_hook_state<T>(operation: impl FnOnce() -> T) -> T {
+    let state = save_hook_state();
+    let result = operation();
+    restore_hook_state(state);
+    result
+}
+
 /// What a view's shadow map looked like on its last frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Seen {
@@ -532,14 +567,20 @@ unsafe extern "C" fn clear_layers(view: *mut c_void) -> u8 {
 /// cascade when [`cascade_due`] says so, else stores the next index where the
 /// loop keeps it and jumps to the loop's test. The volatile registers and
 /// flags are dead here; `rsp` is 16-aligned in the loop.
+/// Inline hook sites do not promise Windows x64 call alignment. The stubs save
+/// and restore the game stack around each Rust callback.
 #[unsafe(naked)]
 unsafe extern "C" fn head_stub() {
     core::arch::naked_asm!(
+        "push rbx",
+        "mov rbx, rsp",
+        "and rsp, -16",
         "sub rsp, 0x20",
         "mov rcx, rsi",
         "mov edx, r15d",
         "call {due}",
-        "add rsp, 0x20",
+        "mov rsp, rbx",
+        "pop rbx",
         "test al, al",
         "jnz 2f",
         "lea eax, [r15 + 1]",
@@ -556,14 +597,19 @@ unsafe extern "C" fn head_stub() {
 
 /// At the pass's clear (in place of its first instruction): [`clear_layers`]
 /// clears the due layers and the pass resumes after its clear, or the pass
-/// clears them all itself. Volatile registers and flags are dead here too.
+/// clears them all itself. Volatile registers and flags are dead here too; the
+/// inline hook site does not promise call-aligned `rsp`.
 #[unsafe(naked)]
 unsafe extern "C" fn clear_stub() {
     core::arch::naked_asm!(
+        "push rbx",
+        "mov rbx, rsp",
+        "and rsp, -16",
         "sub rsp, 0x20",
         "mov rcx, rsi",
         "call {clear}",
-        "add rsp, 0x20",
+        "mov rsp, rbx",
+        "pop rbx",
         "test al, al",
         "jnz 2f",
         "jmp qword ptr [rip + {original}]",
@@ -577,6 +623,23 @@ unsafe extern "C" fn clear_stub() {
 
 thread_local! {
     static ROTATIONS: RefCell<Rotations> = const { RefCell::new(Rotations::new()) };
+}
+
+/// The world2 call can arrive with a misaligned stack; this adapter restores
+/// the Windows x64 alignment before Rust enters [`pass`].
+#[unsafe(naked)]
+unsafe extern "C" fn pass_stub() {
+    core::arch::naked_asm!(
+        "push rbx",
+        "mov rbx, rsp",
+        "and rsp, -16",
+        "sub rsp, 0x20",
+        "call {pass}",
+        "mov rsp, rbx",
+        "pop rbx",
+        "ret",
+        pass = sym pass,
+    );
 }
 
 /// The function in slot `offset` of the vtable of the object at `object`.
@@ -593,8 +656,31 @@ unsafe extern "C" fn pass(view: *mut c_void) {
     if ROTATION.load(Ordering::Relaxed) != 0 {
         toggle::poll();
     }
+    #[cfg(all(feature = "shadow-timing", feature = "render-profile-toggle"))]
+    let timing = if crate::render_profile::gpu_enabled() {
+        timing::begin(view)
+    } else {
+        None
+    };
+    #[cfg(all(feature = "shadow-timing", not(feature = "render-profile-toggle")))]
+    let timing = timing::begin(view);
     if !ROTATING.load(Ordering::Relaxed) {
+        #[cfg(feature = "render-profile")]
+        let mask = if view.is_null() {
+            0
+        } else {
+            let count = unsafe { *(view.cast::<u8>().add(VIEW_CASCADE_COUNT) as *const u32) };
+            Cascades::All.due(0, count)
+        };
+        #[cfg(feature = "render-profile")]
+        let started = crate::render_profile::shadow_begin(view);
         unsafe { original(view) };
+        #[cfg(feature = "render-profile")]
+        crate::render_profile::shadow_end(view, mask, started);
+        #[cfg(feature = "shadow-timing")]
+        timing::end(timing);
+        #[cfg(feature = "render-profile")]
+        crate::render_profile::flush();
         return;
     }
     let bytes = view as *const u8;
@@ -614,12 +700,31 @@ unsafe extern "C" fn pass(view: *mut c_void) {
         Err(_) => Cascades::All.due(0, now.count),
     });
     let all = Cascades::All.due(0, now.count);
-    if mask != all && unsafe { layer_views_ready(view, now.count) } {
+    let effective_mask = if mask != all && unsafe { layer_views_ready(view, now.count) } {
         PARTIAL_MASK.store(mask, Ordering::Relaxed);
         PARTIAL_VIEW.store(view as usize, Ordering::Relaxed);
-    }
+        mask
+    } else {
+        all
+    };
+    #[cfg(not(feature = "render-profile"))]
+    let _ = effective_mask;
+    #[cfg(feature = "render-profile")]
+    let started = crate::render_profile::shadow_begin(view);
     unsafe { original(view) };
+    #[cfg(feature = "render-profile")]
+    crate::render_profile::shadow_end(view, effective_mask, started);
+    #[cfg(feature = "shadow-timing")]
+    timing::end(timing);
     PARTIAL_VIEW.store(0, Ordering::Relaxed);
+    #[cfg(feature = "render-profile")]
+    crate::render_profile::flush();
+}
+
+/// Discards samples from the prior diagnostic mode before a new GPU window.
+#[cfg(feature = "render-profile-toggle")]
+pub(crate) fn reset_profile_timing() {
+    timing::reset();
 }
 
 fn find(api: &Api, base: *mut c_void, size: usize, pattern: &str) -> *mut u8 {
@@ -631,6 +736,25 @@ fn find(api: &Api, base: *mut c_void, size: usize, pattern: &str) -> *mut u8 {
 unsafe fn call_target(site: *const u8) -> usize {
     let rel = unsafe { core::ptr::read_unaligned(site.add(1) as *const i32) };
     (site as isize + 5 + rel as isize) as usize
+}
+
+/// Resolve the D3D11 methods used to validate the game's private view fields.
+fn set_d3d_signatures(api: &Api) -> Result<(), String> {
+    let base = unsafe { (api.module_base)(c"world2.dll".as_ptr()) };
+    if base.is_null() {
+        return Err("world2.dll is not loaded".into());
+    }
+    let size = unsafe { (api.module_size)(base) };
+    let (context_at, resource_at) = (
+        find(api, base, size, DEVICE_CONTEXT_PATTERN) as usize,
+        find(api, base, size, TEXTURE_RESOURCE_PATTERN) as usize,
+    );
+    if context_at == 0 || resource_at == 0 {
+        return Err("the device's context or the texture's resource was not found".into());
+    }
+    DEVICE_CLEAR_FN.store(context_at - DEVICE_CONTEXT_AT, Ordering::Relaxed);
+    TEXTURE_DEPTH_VIEW_FN.store(resource_at - TEXTURE_RESOURCE_AT, Ordering::Relaxed);
+    Ok(())
 }
 
 /// The addresses the redirections need, each vouched for by its pattern and
@@ -658,7 +782,7 @@ fn redirect(api: &Api) -> Result<Sites, String> {
     }
     let casters = unsafe { call_target(pass_fn.add(PASS_CASTERS_CALL_AT)) };
     let mut original = core::ptr::null_mut();
-    let detour = pass as unsafe extern "C" fn(_) as *mut c_void;
+    let detour = pass_stub as unsafe extern "C" fn() as *mut c_void;
     if unsafe { (api.hook_call)(call as *mut c_void, detour, &mut original) } != 0
         || original.is_null()
     {
@@ -682,15 +806,7 @@ fn rotate(api: &Api, sites: &Sites) -> Result<(), String> {
         find(api, base, size, RANGE_PATTERN) as usize,
         find(api, base, size, CLEAR_PATTERN) as usize,
     );
-    let (context_at, resource_at) = (
-        find(api, base, size, DEVICE_CONTEXT_PATTERN) as usize,
-        find(api, base, size, TEXTURE_RESOURCE_PATTERN) as usize,
-    );
-    if context_at == 0 || resource_at == 0 {
-        return Err("the device's context or the texture's resource was not found".into());
-    }
-    DEVICE_CLEAR_FN.store(context_at - DEVICE_CONTEXT_AT, Ordering::Relaxed);
-    TEXTURE_DEPTH_VIEW_FN.store(resource_at - TEXTURE_RESOURCE_AT, Ordering::Relaxed);
+    set_d3d_signatures(api)?;
     let inside = |at: usize| at > sites.casters && at < sites.casters + CASTERS_SIZE;
     let _ = sites.call;
     if !(inside(head) && inside(latch) && inside(range))
@@ -740,8 +856,23 @@ unsafe fn call_target_jb(site: *const u8) -> usize {
 /// `cascades` is `shadow_cascades`; `all` leaves the pass alone.
 pub fn install(api: &Api, cascades: &str) {
     let mode = Cascades::parse(cascades);
+    #[cfg(feature = "shadow-timing")]
+    timing::install(api.log, mode);
+    #[cfg(not(feature = "shadow-timing"))]
     if mode == Cascades::All {
         return;
+    }
+    #[cfg(feature = "shadow-timing")]
+    if mode == Cascades::All {
+        if let Err(e) = set_d3d_signatures(api) {
+            super::say(
+                api,
+                LOG_WARN,
+                &format!("shadow timing: {e}; GPU timestamps are unavailable"),
+            );
+            #[cfg(not(feature = "render-profile-toggle"))]
+            return;
+        }
     }
     let sites = match redirect(api) {
         Ok(sites) => sites,
@@ -754,6 +885,15 @@ pub fn install(api: &Api, cascades: &str) {
             return;
         }
     };
+    if mode == Cascades::All {
+        #[cfg(feature = "shadow-timing")]
+        super::say(
+            api,
+            LOG_INFO,
+            "shadow timing: measuring the stock all-cascade pass",
+        );
+        return;
+    }
     match rotate(api, &sites) {
         Ok(()) => {
             let (code, what) = match mode {
@@ -785,6 +925,35 @@ pub fn install(api: &Api, cascades: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static HOOK_STATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn contract_shadow_install_preserves_live_hook_continuations() {
+        let _guard = HOOK_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let original = save_hook_state();
+        let live = HookState {
+            pass: 0x1010,
+            head: 0x2020,
+            clear: 0x3030,
+        };
+        let fake = HookState {
+            pass: 0x4040,
+            head: 0x5050,
+            clear: 0x6060,
+        };
+
+        restore_hook_state(live);
+        with_preserved_hook_state(|| restore_hook_state(fake));
+        let restored = save_hook_state();
+        restore_hook_state(original);
+
+        assert_eq!(restored.pass, live.pass);
+        assert_eq!(restored.head, live.head);
+        assert_eq!(restored.clear, live.clear);
+    }
 
     #[test]
     fn cascades_due_each_frame() {
@@ -1039,6 +1208,9 @@ mod tests {
 
     #[test]
     fn the_stubs_skip_cascades_and_clear_only_their_layers() {
+        let _guard = HOOK_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut scene = fake_scene();
         let v = scene.view.as_mut_ptr();
 

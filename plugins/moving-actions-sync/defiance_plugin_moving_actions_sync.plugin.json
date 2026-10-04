@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "id": "defiance.moving-actions-sync",
+  "dll": "defiance_plugin_moving_actions_sync.dll",
+  "version": "0.2.0",
+  "abi": 5,
+  "group": "infantry",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "false",
+      "description": "Completes the displayed weapon handoff when the weapon-change timer finishes with an outdated weapon model. Verified Steam and GOG September 2026 builds."
+    }
+  ],
+  "depends": [{ "id": "defiance.moving-actions" }],
+  "conflicts": []
+}

@@ -1,5 +1,6 @@
 //! Configuration: where the loader's files live, what the settings are, and
-//! the one immutable snapshot every reader shares.
+//! immutable snapshots, with each plugin reading the settings from its last
+//! successful load.
 //!
 //! `defiance-loader.ini` beside the executable is bootstrap only (`root`, and
 //! the legacy `plugins` override). Everything else lives under `root`:
@@ -20,7 +21,7 @@ pub use snapshot::{Declared, GroupInput, Snapshot};
 
 use super::manifest;
 use crate::config::schema::{Restart, SettingDecl, ValueType};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -480,15 +481,13 @@ pub fn current() -> Option<&'static Snapshot> {
     SNAPSHOT.get()
 }
 
-/// The configuration as the files are now, for plugins added after startup
-/// (hot reload): their settings were not declared then. Set by [`refresh_later`].
+/// The latest candidate snapshot. It supplies settings for plugins that were
+/// added after startup; existing plugins use their last committed snapshot.
 static LATER: std::sync::Mutex<Option<&'static Snapshot>> = std::sync::Mutex::new(None);
 
-/// Read the configuration again, as startup does (missing sections and keys
-/// written with their defaults, so an added plugin's settings appear in its
-/// group file), and keep it for [`get`]. It answers a setting the startup
-/// snapshot does not have, and every setting of a plugin put [`go_live`]; any
-/// other plugin keeps its startup values.
+/// Read the configuration again, including defaults for newly added plugins,
+/// and keep it as a candidate for [`get`]. A reload stages it for the plugin
+/// being loaded and commits it only after that load succeeds.
 pub fn refresh_later() -> &'static Snapshot {
     let Discovered {
         paths,
@@ -512,23 +511,117 @@ fn later() -> Option<&'static Snapshot> {
     *LATER.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-/// The sections (lowercase plugin IDs) [`get`] answers from the later read
-/// first: plugins loaded again for changed settings (`live_toggle`), whose
-/// startup values are stale.
-static LIVE: std::sync::Mutex<BTreeSet<String>> = std::sync::Mutex::new(BTreeSet::new());
-
-/// Answer `plugin_id`'s settings from the latest [`refresh_later`] read from
-/// now on, before the plugin is loaded again to pick them up.
-pub fn go_live(plugin_id: &str) {
-    LIVE.lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .insert(plugin_id.to_ascii_lowercase());
+#[derive(Default)]
+struct PluginSettings {
+    /// Snapshot each plugin's last successful load committed.
+    committed: BTreeMap<String, &'static Snapshot>,
+    /// Candidate exposed while that plugin initializes.
+    pending: BTreeMap<String, &'static Snapshot>,
 }
 
-fn is_live(section: &str) -> bool {
-    LIVE.lock()
+impl PluginSettings {
+    fn planning_snapshot(&self, startup: &Snapshot) -> Snapshot {
+        let mut snapshot = startup.clone();
+        for (id, accepted) in &self.committed {
+            snapshot.use_plugin_config(id, accepted);
+        }
+        snapshot
+    }
+}
+
+static PLUGIN_SETTINGS: std::sync::Mutex<PluginSettings> = std::sync::Mutex::new(PluginSettings {
+    committed: BTreeMap::new(),
+    pending: BTreeMap::new(),
+});
+
+/// A candidate view visible only while a plugin initializes; drop discards it.
+pub(crate) struct ReloadSettings {
+    plugin_id: String,
+    snapshot: &'static Snapshot,
+    previous_pending: Option<&'static Snapshot>,
+    settled: bool,
+}
+
+pub(crate) fn stage_reload(plugin_id: &str, snapshot: &'static Snapshot) -> ReloadSettings {
+    let plugin_id = plugin_id.to_ascii_lowercase();
+    let previous_pending = PLUGIN_SETTINGS
+        .lock()
         .unwrap_or_else(|p| p.into_inner())
-        .contains(&section.to_ascii_lowercase())
+        .pending
+        .insert(plugin_id.clone(), snapshot);
+    ReloadSettings {
+        plugin_id,
+        snapshot,
+        previous_pending,
+        settled: false,
+    }
+}
+
+impl ReloadSettings {
+    pub(crate) fn commit(mut self) {
+        let mut settings = PLUGIN_SETTINGS.lock().unwrap_or_else(|p| p.into_inner());
+        let staged = settings
+            .pending
+            .get(&self.plugin_id)
+            .is_some_and(|current| std::ptr::eq(*current, self.snapshot));
+        if staged {
+            settings.pending.remove(&self.plugin_id);
+            settings
+                .committed
+                .insert(self.plugin_id.clone(), self.snapshot);
+        }
+        self.settled = true;
+    }
+}
+
+impl Drop for ReloadSettings {
+    fn drop(&mut self) {
+        if self.settled {
+            return;
+        }
+        let mut settings = PLUGIN_SETTINGS.lock().unwrap_or_else(|p| p.into_inner());
+        let staged = settings
+            .pending
+            .get(&self.plugin_id)
+            .is_some_and(|current| std::ptr::eq(*current, self.snapshot));
+        if staged {
+            if let Some(previous) = self.previous_pending.take() {
+                settings.pending.insert(self.plugin_id.clone(), previous);
+            } else {
+                settings.pending.remove(&self.plugin_id);
+            }
+        }
+    }
+}
+
+fn selected_settings(section: &str) -> Option<&'static Snapshot> {
+    let section_id = section.to_ascii_lowercase();
+    let settings = PLUGIN_SETTINGS.lock().unwrap_or_else(|p| p.into_inner());
+    settings
+        .pending
+        .get(&section_id)
+        .or_else(|| settings.committed.get(&section_id))
+        .copied()
+}
+
+/// Plan DLL reloads with each plugin's last successful configuration, without
+/// publishing a pending candidate or an unrelated edit from the config files.
+pub(crate) fn reload_snapshot() -> Option<Snapshot> {
+    let startup = current()?;
+    let settings = PLUGIN_SETTINGS.lock().unwrap_or_else(|p| p.into_inner());
+    Some(settings.planning_snapshot(startup))
+}
+
+/// The complete settings map a running copy last accepted, excluding enabled.
+pub(crate) fn accepted_settings(id: &str) -> Option<BTreeMap<String, String>> {
+    let startup = current()?;
+    let settings = PLUGIN_SETTINGS.lock().unwrap_or_else(|p| p.into_inner());
+    let accepted = settings
+        .committed
+        .get(&id.to_ascii_lowercase())
+        .copied()
+        .unwrap_or(startup);
+    Some(accepted.settings(id))
 }
 
 /// The compatibility adapter: a value from the configuration by `(section,
@@ -536,12 +629,23 @@ fn is_live(section: &str) -> bool {
 /// canonical string; a section that is not declared falls back to the legacy
 /// bootstrap file's own sections, keeping ABI 5 third-party plugins working.
 pub fn get(section: &str, key: &str) -> Option<String> {
-    let snapshot = SNAPSHOT.get()?;
-    if is_live(section) {
-        if let Some(resolved) = later().and_then(|later| later.get(section, key)) {
-            return Some(resolved.canonical());
-        }
-    }
+    value_from(
+        SNAPSHOT.get()?,
+        selected_settings(section),
+        later(),
+        section,
+        key,
+    )
+}
+
+fn value_from(
+    startup: &Snapshot,
+    selected: Option<&Snapshot>,
+    later: Option<&Snapshot>,
+    section: &str,
+    key: &str,
+) -> Option<String> {
+    let snapshot = selected.unwrap_or(startup);
     // The old loader keys were unsectioned; accept both spellings.
     if section.is_empty() {
         if let Some(value) = snapshot.text(builtin::LOADER_SECTION, key) {
@@ -549,15 +653,51 @@ pub fn get(section: &str, key: &str) -> Option<String> {
         }
     }
     if let Some(resolved) = snapshot.get(section, key) {
-        return Some(resolved.canonical());
+        return Some(api_setting(snapshot, section, key, resolved.canonical()));
     }
     if let Some(value) = snapshot.legacy(section, key) {
         return Some(value.to_string());
     }
-    // A plugin added after startup: its settings come from the later read.
-    later()
-        .and_then(|later| later.get(section, key))
-        .map(|resolved| resolved.canonical())
+    // A plugin absent from the startup catalog can only have settings in the
+    // later candidate. Startup plugins never inherit another plugin's edits.
+    if selected.is_none()
+        && !startup
+            .catalog
+            .entries
+            .iter()
+            .any(|entry| entry.id().eq_ignore_ascii_case(section))
+    {
+        let later = later?;
+        if later
+            .catalog
+            .entries
+            .iter()
+            .any(|entry| entry.id().eq_ignore_ascii_case(section))
+        {
+            return later
+                .get(section, key)
+                .map(|resolved| api_setting(later, section, key, resolved.canonical()));
+        }
+    }
+    None
+}
+
+/// Probe filenames belong to the accepted loader config tree, including a
+/// bootstrap root override. Invalid relative paths remain intact so the
+/// diagnostics plugin can refuse them rather than losing their meaning.
+fn api_setting(snapshot: &Snapshot, section: &str, key: &str, value: String) -> String {
+    if section.eq_ignore_ascii_case("defiance.diagnostics")
+        && key.eq_ignore_ascii_case("probe_file")
+        && !value.is_empty()
+        && std::path::Path::new(&value)
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)))
+    {
+        return paths::resolve_against(&snapshot.paths.config_dir, &value)
+            .to_string_lossy()
+            .into_owned();
+    }
+    value
 }
 
 #[cfg(test)]
@@ -608,6 +748,68 @@ mod tests {
         assert!(snapshot.problems.is_empty(), "{:?}", snapshot.problems);
         assert_eq!(snapshot.integer(builtin::LOADER_SECTION, "wait"), Some(60));
         assert_eq!(snapshot.enabled("defiance.selection"), Some(true));
+    }
+
+    #[test]
+    fn diagnostics_probe_files_use_the_resolved_config_tree() {
+        let base = unique_dir("diagnostics-path").canonicalize().unwrap();
+        let exe = base.join("bin");
+        std::fs::create_dir_all(&exe).unwrap();
+        std::fs::write(exe.join(paths::GAME_EXE), b"").unwrap();
+        for root in ["../DefianceLoader", "../custom-loader-root"] {
+            std::fs::write(exe.join(paths::BOOTSTRAP_FILE), format!("root = {root}\n")).unwrap();
+            let config = paths::resolve_against(&exe, root).join("config");
+            std::fs::create_dir_all(&config).unwrap();
+            std::fs::write(
+                config.join("diagnostics.ini"),
+                "[defiance.diagnostics]\nprobe_file = selection.json\n",
+            )
+            .unwrap();
+            let expected = config.join("selection.json");
+            std::fs::write(&expected, br#"{"version":1,"probes":[]}"#).unwrap();
+            let snapshot = inspect(&exe);
+            assert_eq!(
+                value_from(&snapshot, None, None, "DEFIANCE.DIAGNOSTICS", "PROBE_FILE"),
+                Some(expected.to_string_lossy().into_owned())
+            );
+            assert_eq!(
+                snapshot
+                    .text("defiance.diagnostics", "probe_file")
+                    .as_deref(),
+                Some("selection.json")
+            );
+            for unchanged in ["", "../outside.json", "C:relative.json"] {
+                assert_eq!(
+                    api_setting(
+                        &snapshot,
+                        "defiance.diagnostics",
+                        "probe_file",
+                        unchanged.into()
+                    ),
+                    unchanged
+                );
+            }
+            let absolute = base.join("absolute.json").to_string_lossy().into_owned();
+            assert_eq!(
+                api_setting(
+                    &snapshot,
+                    "defiance.diagnostics",
+                    "probe_file",
+                    absolute.clone()
+                ),
+                absolute
+            );
+            assert_eq!(
+                api_setting(
+                    &snapshot,
+                    "another.plugin",
+                    "probe_file",
+                    "selection.json".into()
+                ),
+                "selection.json"
+            );
+        }
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
@@ -821,10 +1023,55 @@ mod startup_regressions {
                 pending,
             )
         }
+
+        fn plugin(&self, id: &str) {
+            let directory = self.0.join("DefianceLoader/plugins");
+            std::fs::create_dir_all(&directory).unwrap();
+            let stem = id.replace('.', "_");
+            let dll = format!("{stem}.dll");
+            std::fs::write(directory.join(&dll), b"fixture; never loaded here").unwrap();
+            let manifest = format!(
+                r#"{{"schema":1,"id":"{id}","dll":"{dll}","version":"1.0.0","abi":{},"group":"test","settings":[{{"key":"enabled","type":"bool","default":"true","description":"Config view test."}},{{"key":"label","type":"text","default":"default","description":"Config view test."}},{{"key":"fail_init","type":"bool","default":"false","description":"Config view test."}}],"depends":[],"conflicts":[]}}"#,
+                defiance_api::ABI_VERSION
+            );
+            std::fs::write(directory.join(format!("{stem}.plugin.json")), manifest).unwrap();
+        }
+
+        fn snapshot(&self, config: &str) -> &'static Snapshot {
+            let directory = self.0.join("DefianceLoader/config");
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join("test.ini"), config).unwrap();
+            Box::leak(Box::new(self.load().0))
+        }
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn plugin_snapshot(ids: &[&str], config: &str) -> &'static Snapshot {
+        let fixture = Fixture::new();
+        for id in ids {
+            fixture.plugin(id);
+        }
+        fixture.snapshot(config)
+    }
+
+    fn clear_plugin_settings(ids: &[&str]) {
+        let mut settings = PLUGIN_SETTINGS.lock().unwrap_or_else(|p| p.into_inner());
+        for id in ids {
+            let id = id.to_ascii_lowercase();
+            settings.pending.remove(&id);
+            settings.committed.remove(&id);
+        }
+    }
+
+    struct ClearPluginSettings(&'static [&'static str]);
+
+    impl Drop for ClearPluginSettings {
+        fn drop(&mut self) {
+            clear_plugin_settings(self.0);
         }
     }
 
@@ -999,5 +1246,144 @@ mod startup_regressions {
             assert_eq!(std::fs::read(&meta).unwrap(), bytes);
             assert!(inspect(&f.0.join("bin")).startup_error().is_some());
         }
+    }
+
+    #[test]
+    fn a_failed_reload_restores_settings_after_init_reads_the_candidate() {
+        const ID: &str = "test.failed-reload";
+        clear_plugin_settings(&[ID]);
+        let _cleanup = ClearPluginSettings(&[ID]);
+        let startup = plugin_snapshot(
+            &[ID],
+            "[test.failed-reload]\nlabel = startup\nfail_init = false\n",
+        );
+        let committed = plugin_snapshot(
+            &[ID],
+            "[test.failed-reload]\nlabel = committed\nfail_init = false\n",
+        );
+        let candidate = plugin_snapshot(
+            &[ID],
+            "[test.failed-reload]\nlabel = candidate\nfail_init = false\n",
+        );
+        stage_reload(ID, committed).commit();
+
+        let pending = stage_reload(ID, candidate);
+        assert_eq!(
+            value_from(startup, selected_settings(ID), Some(candidate), ID, "label").as_deref(),
+            Some("candidate")
+        );
+        drop(pending);
+
+        assert_eq!(
+            value_from(startup, selected_settings(ID), Some(candidate), ID, "label").as_deref(),
+            Some("committed")
+        );
+    }
+
+    #[test]
+    fn dll_reload_planning_uses_accepted_values_and_ignores_pending_candidates() {
+        let ids = &["test.reload-plan", "test.unchanged-plan"];
+        let startup = plugin_snapshot(
+            ids,
+            "[test.reload-plan]\nenabled=false\nlabel=startup\n\
+             [test.unchanged-plan]\nenabled=false\nlabel=unchanged\n",
+        );
+        let accepted = plugin_snapshot(
+            ids,
+            "[test.reload-plan]\nenabled=true\nlabel=accepted\n\
+             [test.unchanged-plan]\nenabled=true\nlabel=unrelated-edit\n",
+        );
+        let candidate = plugin_snapshot(ids, "[test.reload-plan]\nenabled=false\nlabel=pending\n");
+        let settings = PluginSettings {
+            committed: [("test.reload-plan".to_string(), accepted)].into(),
+            pending: [("test.reload-plan".to_string(), candidate)].into(),
+        };
+        let planning = settings.planning_snapshot(startup);
+        assert_eq!(planning.enabled("test.reload-plan"), Some(true));
+        assert_eq!(
+            planning.text("test.reload-plan", "label").as_deref(),
+            Some("accepted")
+        );
+        assert_eq!(planning.enabled("test.unchanged-plan"), Some(false));
+        assert_eq!(
+            planning.text("test.unchanged-plan", "label").as_deref(),
+            Some("unchanged")
+        );
+        assert_eq!(startup.enabled("test.reload-plan"), Some(false));
+    }
+
+    #[test]
+    fn refreshing_one_plugin_does_not_publish_settings_to_another() {
+        const A: &str = "test.a";
+        const B: &str = "test.b";
+        const C: &str = "test.c";
+        let ids = &[A, B, C];
+        clear_plugin_settings(ids);
+        let _cleanup = ClearPluginSettings(&[A, B, C]);
+        let startup = plugin_snapshot(
+            ids,
+            "[test.a]\nlabel = startup-a\nfail_init = false\n\
+             [test.b]\nlabel = startup-b\nfail_init = false\n\
+             [test.c]\nlabel = startup-c\nfail_init = false\n",
+        );
+        let accepted_a = plugin_snapshot(
+            ids,
+            "[test.a]\nlabel = accepted-a\nfail_init = false\n\
+             [test.b]\nlabel = startup-b\nfail_init = false\n\
+             [test.c]\nlabel = startup-c\nfail_init = false\n",
+        );
+        let candidate_b = plugin_snapshot(
+            ids,
+            "[test.a]\nlabel = unapplied-a\nfail_init = false\n\
+             [test.b]\nlabel = changed-b\nfail_init = false\n\
+             [test.c]\nlabel = unapplied-c\nfail_init = false\n",
+        );
+        stage_reload(A, accepted_a).commit();
+
+        let pending_b = stage_reload(B, candidate_b);
+        assert_eq!(
+            value_from(startup, selected_settings(A), Some(candidate_b), A, "label").as_deref(),
+            Some("accepted-a")
+        );
+        assert_eq!(
+            value_from(startup, selected_settings(B), Some(candidate_b), B, "label").as_deref(),
+            Some("changed-b")
+        );
+        assert_eq!(
+            value_from(startup, selected_settings(C), Some(candidate_b), C, "label").as_deref(),
+            Some("startup-c")
+        );
+        pending_b.commit();
+
+        assert_eq!(
+            value_from(startup, selected_settings(A), Some(candidate_b), A, "label").as_deref(),
+            Some("accepted-a")
+        );
+    }
+
+    #[test]
+    fn invalid_refresh_leaves_the_last_successful_settings_published() {
+        const ID: &str = "test.invalid-refresh";
+        clear_plugin_settings(&[ID]);
+        let _cleanup = ClearPluginSettings(&[ID]);
+        let startup = plugin_snapshot(
+            &[ID],
+            "[test.invalid-refresh]\nlabel = startup\nfail_init = false\n",
+        );
+        let committed = plugin_snapshot(
+            &[ID],
+            "[test.invalid-refresh]\nlabel = committed\nfail_init = false\n",
+        );
+        let rejected = plugin_snapshot(
+            &[ID],
+            "[test.invalid-refresh]\nlabel = rejected\nfail_init = maybe\n",
+        );
+        assert!(rejected.is_blocked(ID));
+        stage_reload(ID, committed).commit();
+
+        assert_eq!(
+            value_from(startup, selected_settings(ID), Some(rejected), ID, "label").as_deref(),
+            Some("committed")
+        );
     }
 }

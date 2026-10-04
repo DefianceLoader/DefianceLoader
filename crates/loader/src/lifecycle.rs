@@ -22,6 +22,8 @@ use std::sync::Mutex;
 pub struct Loaded {
     pub owner: usize,
     pub id: String,
+    /// The manifest's version; `None` for a legacy plugin, which declares none.
+    pub version: Option<crate::manifest::Version>,
     pub name: String,
     /// The DLL in the plugins directory, as discovered.
     pub path: PathBuf,
@@ -38,17 +40,19 @@ pub struct Loaded {
     pub stamp: Option<(u64, std::time::SystemTime)>,
     /// Whether its manifest declares it multiplayer-safe.
     pub multiplayer_safe: bool,
+    /// The settings schema this copy loaded with; reloads check the current manifest against it.
+    pub manifest_settings: Option<Vec<crate::manifest::ManifestSetting>>,
 }
 
 static LOADED: Mutex<Vec<Loaded>> = Mutex::new(Vec::new());
-/// Old copies unloaded with `retain`: stopped and unhooked, but mapped until
-/// exit because a startup-only plugin still calls a service table of theirs.
-/// Their code still runs through those tables, so they still hold the tables
-/// they took from others (`services::withdraw` keeps those records) and still
-/// count for multiplayer.
+/// Plugins whose init succeeded but whose managed patch plan has not committed.
+static PENDING: Mutex<Vec<Loaded>> = Mutex::new(Vec::new());
+/// Old copies kept mapped after a retain request or a busy unload. Their code
+/// can still use tables it holds (`services::withdraw` keeps those records)
+/// and still counts for multiplayer.
 static RETAINED: Mutex<Vec<Loaded>> = Mutex::new(Vec::new());
 
-/// The old copies kept mapped for a startup-only plugin.
+/// Stopped copies kept mapped by request or because a thread may still enter.
 pub fn retained() -> Vec<Loaded> {
     RETAINED.lock().unwrap_or_else(|p| p.into_inner()).clone()
 }
@@ -66,6 +70,46 @@ pub fn record(loaded: Loaded) {
     LOADED.lock().unwrap().push(loaded);
 }
 
+/// Keep a successful managed initializer available for conflict rollback
+/// without reporting it as loaded before its writes are published.
+pub fn stage(loaded: Loaded) {
+    PENDING.lock().unwrap().push(loaded);
+}
+
+/// Record only candidates whose complete managed patch plan was committed.
+pub fn commit_pending(owners: &[usize]) {
+    let mut pending = PENDING.lock().unwrap_or_else(|p| p.into_inner());
+    let mut keep = Vec::with_capacity(pending.len());
+    let mut committed = Vec::new();
+    for plugin in std::mem::take(&mut *pending) {
+        if owners.contains(&plugin.owner) {
+            committed.push(plugin);
+        } else {
+            keep.push(plugin);
+        }
+    }
+    *pending = keep;
+    drop(pending);
+    LOADED
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .extend(committed);
+}
+
+fn candidate(owner: usize) -> Option<Loaded> {
+    loaded()
+        .into_iter()
+        .find(|plugin| plugin.owner == owner)
+        .or_else(|| {
+            PENDING
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .iter()
+                .find(|plugin| plugin.owner == owner)
+                .cloned()
+        })
+}
+
 /// The recorded plugins, in load order.
 pub fn loaded() -> Vec<Loaded> {
     LOADED.lock().unwrap().clone()
@@ -76,6 +120,21 @@ pub fn forget(owner: usize) {
         .lock()
         .unwrap()
         .retain(|plugin| plugin.owner != owner);
+    PENDING
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .retain(|plugin| plugin.owner != owner);
+}
+
+/// Move a stopped module out of the active set while keeping its mapped copy
+/// visible to reload planning and multiplayer checks.
+fn retain_mapped(plugin: Loaded) {
+    let mut loaded = LOADED.lock().unwrap();
+    let mut retained = RETAINED.lock().unwrap_or_else(|p| p.into_inner());
+    loaded.retain(|active| active.owner != plugin.owner);
+    if !retained.iter().any(|old| old.owner == plugin.owner) {
+        retained.push(plugin);
+    }
 }
 
 /// A file's size and modification time.
@@ -218,8 +277,7 @@ pub enum UnloadError {
     NotReloadable,
     /// Some patch spans could not be restored; everything is retained.
     Degraded(usize),
-    /// Stopped and unhooked, but a thread was still in its code: the module
-    /// stays mapped, inert.
+    /// A thread is still in or can enter its code, so the module stays mapped.
     Busy,
 }
 
@@ -262,13 +320,9 @@ pub fn unload(owner: usize, retain: bool) -> Result<Loaded, UnloadError> {
         // Code reachable from a live span must not be freed or reloaded.
         return Err(UnloadError::Degraded(failed));
     }
-    if retain {
-        // Its code keeps running for whoever holds its tables, calling the
-        // tables it holds: those records stay, so what it calls is kept too.
-        crate::services::withdraw(owner);
-    } else {
-        crate::services::remove(owner);
-    }
+    // The module no longer publishes tables, but keep its service-use records
+    // until its code is known to be idle or retained for a thread still in it.
+    crate::services::withdraw(owner);
     // A thread paused in one of its hooks' relays or stubs has no address of
     // the module anywhere, yet jumps into it next.
     let mut code = plugin.code.clone();
@@ -277,23 +331,91 @@ pub fn unload(owner: usize, retain: bool) -> Result<Loaded, UnloadError> {
         "{} ({}): stopped, {removed} hook(s) and patch span(s) restored",
         plugin.id, plugin.name
     ));
-    forget(owner);
     if retain {
-        RETAINED
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .push(plugin.clone());
+        retain_mapped(plugin.clone());
         return Ok(plugin);
     }
     if !wait_quiet(&code) {
+        // A thread paused in a removed hook stub can still enter this module.
+        retain_mapped(plugin.clone());
         return Err(UnloadError::Busy);
     }
+    crate::services::remove(owner);
+    forget(owner);
     crate::crash::unmap(plugin.module);
     unsafe { win::FreeLibrary(plugin.module as win::Handle) };
     if plugin.shadow != plugin.path {
         let _ = std::fs::remove_file(&plugin.shadow);
     }
     Ok(plugin)
+}
+
+/// Stop and discard a plugin that initialized successfully but lost runtime
+/// patch-plan preflight. Unlike hot reload, this also handles plugins whose
+/// manifests do not allow an ordinary live unload.
+pub fn discard_started(owner: usize) -> Result<(), UnloadError> {
+    let Some(plugin) = candidate(owner) else {
+        return Err(UnloadError::Unknown);
+    };
+    if let Some(stop) = plugin.stop {
+        unsafe { stop() };
+    }
+    let (removed, failed) = crate::hooks::remove_owned_report(owner);
+    if failed > 0 {
+        commit_pending(&[owner]);
+        return Err(UnloadError::Degraded(failed));
+    }
+    let consumers = crate::services::consumers(&plugin.id);
+    let active_consumers: Vec<usize> = loaded()
+        .into_iter()
+        .filter(|consumer| consumer.owner != owner)
+        .map(|consumer| consumer.owner)
+        .chain(
+            PENDING
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .iter()
+                .filter(|consumer| consumer.owner != owner)
+                .map(|consumer| consumer.owner),
+        )
+        .collect();
+    let retained_consumers: Vec<usize> = RETAINED
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .map(|consumer| consumer.owner)
+        .collect();
+    let held_by_consumer = consumers.iter().any(|consumer| {
+        *consumer != owner
+            && (active_consumers.contains(consumer) || retained_consumers.contains(consumer))
+    });
+    let mut code = plugin.code.clone();
+    code.extend(crate::hooks::owned_code(owner));
+    if held_by_consumer || !wait_quiet(&code) {
+        crate::services::withdraw(owner);
+        forget(owner);
+        RETAINED
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(plugin.clone());
+        crate::log::warn(&format!(
+            "{} ({}): refused by patch planning, stopped and unhooked, but kept mapped for a service consumer or running thread",
+            plugin.id, plugin.name
+        ));
+        return Ok(());
+    }
+    crate::services::remove(owner);
+    forget(owner);
+    crate::crash::unmap(plugin.module);
+    unsafe { win::FreeLibrary(plugin.module as win::Handle) };
+    if plugin.shadow != plugin.path {
+        let _ = std::fs::remove_file(&plugin.shadow);
+    }
+    crate::log::info(&format!(
+        "{} ({}): refused by patch planning, stopped and removed {removed} staged span(s)",
+        plugin.id, plugin.name
+    ));
+    Ok(())
 }
 
 /// The recorded plugins that hold a service table from `id`, directly or
@@ -365,10 +487,38 @@ mod tests {
     }
 
     #[test]
-    fn a_thread_paused_on_a_hook_stub_keeps_its_owner_loaded() {
-        // A plugin (owner 0x7707) whose one hook redirects `call <ret>` on a
-        // code page.
+    fn a_busy_consumer_keeps_its_provider_when_paused_in_a_hook_stub() {
+        // A consumer whose hook redirects `call <ret>` on a code page.
         let owner = 0x7707;
+        let provider_owner = 0x7706;
+        static TABLE: u64 = 7;
+        crate::services::begin(provider_owner, "stub-provider", vec![]);
+        assert_eq!(
+            unsafe {
+                (crate::services::API.register)(
+                    c"fixture".as_ptr(),
+                    1,
+                    &TABLE as *const u64 as *const c_void,
+                    core::mem::size_of::<u64>(),
+                )
+            },
+            0
+        );
+        crate::services::finish(provider_owner, true);
+        record(plugin(provider_owner, "stub-provider"));
+        crate::services::begin(owner, "stub-test", vec!["stub-provider".into()]);
+        assert_eq!(
+            unsafe {
+                (crate::services::API.query)(
+                    c"stub-provider".as_ptr(),
+                    c"fixture".as_ptr(),
+                    1,
+                    core::mem::size_of::<u64>(),
+                )
+            },
+            &TABLE as *const u64 as *const c_void
+        );
+        crate::services::finish(owner, true);
         let page = crate::code::alloc_near(
             idle as unsafe extern "system" fn(*mut c_void) -> u32 as usize,
             0x1000,
@@ -409,13 +559,47 @@ mod tests {
             unsafe { win::SetThreadContext(thread, context.0.as_ptr().cast()) },
             0
         );
-        // Unhooked, but not freed: the removed hook's stub stays charged to it.
+        // The thread can still enter the consumer through the removed stub.
         assert_eq!(unload(owner, false).err(), Some(UnloadError::Busy));
         assert_eq!(crate::hooks::owned_code(owner), owned);
+        let active = loaded();
+        assert!(active.iter().any(|plugin| plugin.owner == provider_owner));
+        assert!(active.iter().all(|plugin| plugin.owner != owner));
+        let retained = retained();
+        assert_eq!(
+            retained
+                .iter()
+                .filter(|plugin| plugin.owner == owner)
+                .count(),
+            1
+        );
+        assert!(crate::services::consumers("stub-provider").contains(&owner));
+        let provider = active
+            .iter()
+            .find(|plugin| plugin.owner == provider_owner)
+            .unwrap();
+        let staying_owners: Vec<usize> = retained.iter().map(|plugin| plugin.owner).collect();
+        // This is the provider-reload decision: keep the old provider copy
+        // mapped because the retained consumer still holds its table.
+        assert_eq!(
+            crate::reload::retained_closure(
+                &[provider],
+                &staying_owners,
+                crate::services::consumers,
+            ),
+            [provider_owner]
+        );
         unsafe {
             win::TerminateThread(thread, 0);
             win::CloseHandle(thread);
         }
+        RETAINED
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .retain(|plugin| plugin.owner != owner);
+        crate::services::remove(owner);
+        crate::services::remove(provider_owner);
+        forget(provider_owner);
     }
 
     #[test]
@@ -462,6 +646,7 @@ mod tests {
         Loaded {
             owner,
             id: id.into(),
+            version: None,
             name: id.into(),
             path: PathBuf::new(),
             shadow: PathBuf::new(),
@@ -471,6 +656,7 @@ mod tests {
             reloadable: true,
             stamp: None,
             multiplayer_safe: true,
+            manifest_settings: None,
         }
     }
 

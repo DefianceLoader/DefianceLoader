@@ -25,7 +25,7 @@ def main():
         "expanded-ammo-menu DLL and manifest in DefianceLoader/plugins.\n"
         "Keep your existing Core, regroup, and config files. Restart the game.\n"
         "This requires the expanded menu to be enabled in config/weapons.ini.\n"
-        "The startup log should include: menu context fix v3\n"
+        "The startup log should include: tooltip beside visible grid v1\n"
         "The all-selected-squads view defaults on; set all_selected_squads = false\n"
         "under [defiance.expanded-ammo-menu] in DefianceLoader/config/weapons.ini to\n"
         "show only the focused squad. See README for experimental limitations.\n"

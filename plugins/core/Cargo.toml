@@ -1,11 +1,11 @@
 [package]
 name = "defiance-plugin-core"
-version = "0.4.1"
+version = "0.4.2"
 license = "MPL-2.0"
 edition = "2021"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 defiance-api = { path = "../../crates/api" }
@@ -13,11 +13,29 @@ defiance-core = { path = "../../crates/core" }
 defiance-feature-sdk = { path = "../../crates/feature-sdk" }
 
 [features]
+# The normal loader build ships Core without timing or input probes.
+default = []
+# Synthetic PatchV1 host used only by services-test.
+test-host = []
 parity-test = []
 # Diagnostic, never shipped: alternate and time the two grass sorts.
 grass-compare = []
 # Diagnostic, never shipped: F11 switches the shadow cascade rotation.
 shadow-toggle = []
+# Diagnostic, never shipped: report CPU and D3D11 timestamp intervals for the shadow pass.
+shadow-timing = []
+# Diagnostic, never shipped: pair shadow passes with main-view batches and dirty transforms.
+render-profile = []
+# Diagnostic, never shipped: pair coarse intervals without hooking every dirty transform.
+render-profile-light = ["render-profile"]
+# Diagnostic, never shipped: cycle light timings off, CPU, and CPU plus GPU in game.
+render-profile-toggle = ["render-profile-light", "shadow-timing"]
+# Diagnostic, never shipped: time the verified Steam shadow-caster cull once per pass.
+shadow-cull-profile = ["render-profile-toggle"]
+# Diagnostic, never shipped: compare exact-time half and third living-tree sway in game.
+tree-rate-probe = ["render-profile-toggle"]
+# Diagnostic, never shipped: skip active tree facet work on omitted half-rate ticks.
+facet-half-probe = ["tree-rate-probe"]
 # Diagnostic, never shipped: every squad's info panel shows its full details.
 inspect-probe = []
 

@@ -7,6 +7,10 @@ name = "defiance-api"
 version = "0.1.0"
 
 [[package]]
+name = "defiance-core"
+version = "0.1.0"
+
+[[package]]
 name = "defiance-crash-test-plugin"
 version = "0.1.0"
 dependencies = [
@@ -18,4 +22,5 @@ name = "defiance-feature-sdk"
 version = "0.1.0"
 dependencies = [
  "defiance-api",
+ "defiance-core",
 ]

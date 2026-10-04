@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "id": "defiance.legion-vehicle-hacking",
+  "dll": "defiance_plugin_legion_vehicle_hacking.dll",
+  "version": "0.1.0",
+  "abi": 5,
+  "group": "vehicles",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "false",
+      "description": "Allow hacking Legion vehicles while they are repairing themselves. Restart required."
+    }
+  ],
+  "depends": [],
+  "conflicts": []
+}

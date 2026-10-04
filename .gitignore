@@ -8,3 +8,9 @@ target/
 bin/steam/
 bin/gog/
 mise.local.toml
+
+# Local-only archives; not source or release inputs.
+/_local/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

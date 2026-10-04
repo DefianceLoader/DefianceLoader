@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "defiance.moving-grenades",
+  "dll": "defiance_plugin_moving_grenades.dll",
+  "version": "0.1.20",
+  "abi": 5,
+  "group": "infantry",
+  "settings": [{
+    "key": "enabled", "type": "bool", "default": "false",
+    "description": "Experimental: preserves moving infantry routes while body aim tracks the live grenade target during throws."
+  }],
+  "depends": [{ "id": "defiance.moving-actions" }],
+  "conflicts": ["defiance.moving-grenade-probe"],
+  "hot_reload": false
+}

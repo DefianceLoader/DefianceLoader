@@ -38,6 +38,26 @@ class VersionTests(unittest.TestCase):
     def test_the_repository_agrees(self):
         self.assertEqual(bump.problems(ROOT), [])
 
+    def test_moving_suite_plugins_are_cataloged_and_versioned(self):
+        expected = {
+            "moving-actions",
+            "moving-actions-animation",
+            "moving-actions-sync",
+            "moving-actions-render-sync",
+            "moving-grenades",
+        }
+        discovered = {component.name: component for component in bump.components(ROOT)}
+        self.assertTrue(expected <= discovered.keys(), f"missing components: {expected - discovered.keys()}")
+        for name in sorted(expected):
+            component = discovered[name]
+            self.assertIsNotNone(component.sidecar, f"{name} must use its standalone plugin manifest")
+            self.assertEqual(bump.manifest_version(ROOT, component), bump.crate_version(component), name)
+            self.assertEqual(bump.lock_version(component), bump.crate_version(component), name)
+            build_script = component.crate_dir / "build.rs"
+            self.assertTrue(build_script.is_file(), f"{name} must embed version resources")
+            self.assertIn("defiance-build-support", (component.crate_dir / "Cargo.toml").read_text())
+            self.assertIn("windows_resources(", build_script.read_text())
+
     def test_a_bump_changes_every_copy_together(self):
         loader, core = self.version("loader"), self.version("core")
         major, minor, patch = bump.parse(loader)
@@ -60,6 +80,13 @@ class VersionTests(unittest.TestCase):
         self.assertEqual(json.loads(regroup.sidecar.read_text(encoding="utf-8"))["version"],
                          bump.crate_version(regroup))
         self.assertEqual(bump.lock_version(regroup), bump.crate_version(regroup))
+
+        vehicle_arrival = next(c for c in bump.components(self.root) if c.name == "vehicle-arrival")
+        arrival_version = bump.parse(bump.crate_version(vehicle_arrival))
+        bump.bump("patch", ["vehicle-arrival"], self.root)
+        self.assertEqual(bump.manifest_version(self.root, vehicle_arrival),
+                         f"{arrival_version[0]}.{arrival_version[1]}.{arrival_version[2] + 1}")
+        self.assertEqual(bump.lock_version(vehicle_arrival), bump.crate_version(vehicle_arrival))
         self.assertEqual(bump.problems(self.root), [])
 
     def test_a_bump_backwards_is_refused(self):

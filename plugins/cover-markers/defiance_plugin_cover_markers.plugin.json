@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "id": "defiance.cover-markers",
+  "dll": "defiance_plugin_cover_markers.dll",
+  "version": "0.2.0",
+  "abi": 5,
+  "group": "infantry",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Show individual soldier move positions while aiming and after the order. Restart required."
+    }
+  ],
+  "depends": [{"id": "defiance.core"}],
+  "conflicts": []
+}

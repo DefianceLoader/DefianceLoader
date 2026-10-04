@@ -17,6 +17,7 @@
 
 use crate::config::paths::Paths;
 use crate::win;
+use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -33,6 +34,61 @@ pub const LIMIT: u64 = 8 << 20;
 
 static SINK: OnceLock<Mutex<Sink>> = OnceLock::new();
 static LEVEL: AtomicU8 = AtomicU8::new(LEVEL_INFO);
+static PLUGIN_FILTER: OnceLock<PluginFilter> = OnceLock::new();
+
+#[derive(Default)]
+struct PluginFilter {
+    include: HashSet<String>,
+    exclude: HashSet<String>,
+}
+
+impl PluginFilter {
+    fn parse(include: &str, exclude: &str) -> Self {
+        let ids = |text: &str| {
+            text.split(',')
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(str::to_ascii_lowercase)
+                .collect()
+        };
+        Self {
+            include: ids(include),
+            exclude: ids(exclude),
+        }
+    }
+
+    fn allows(&self, source: &str) -> bool {
+        (self.include.is_empty() || self.include.contains(source)) && !self.exclude.contains(source)
+    }
+}
+
+/// Configure exact plugin ID filters once, before plugins initialize.
+pub fn set_plugin_filter(include: &str, exclude: &str) {
+    let _ = PLUGIN_FILTER.set(PluginFilter::parse(include, exclude));
+}
+
+/// Apply the startup logging settings before handing APIs to plugins.
+pub fn configure(config: &crate::config::Snapshot) {
+    let section = crate::config::builtin::LOGGING_SECTION;
+    if let Some(level) = config.text(section, "level") {
+        set_level(&level);
+    }
+    set_plugin_filter(
+        &config.text(section, "include_plugins").unwrap_or_default(),
+        &config.text(section, "exclude_plugins").unwrap_or_default(),
+    );
+}
+
+/// Log a plugin's message using the source bound to its API table.
+pub fn plugin(level: u32, source: &str, message: &str) {
+    let (level, label) = match level {
+        defiance_api::LOG_ERROR => (LEVEL_ERROR, "error"),
+        defiance_api::LOG_WARN => (LEVEL_WARN, "warn"),
+        defiance_api::LOG_DEBUG => (LEVEL_DEBUG, "debug"),
+        _ => (LEVEL_INFO, "info"),
+    };
+    sourced_line(level, label, Some(source), message);
+}
 
 struct Sink {
     file: std::fs::File,
@@ -151,11 +207,20 @@ fn stamp(time: &win::SystemTime) -> String {
 }
 
 fn line(level: u8, label: &str, message: &str) {
+    sourced_line(level, label, None, message);
+}
+
+fn sourced_line(level: u8, label: &str, source: Option<&str>, message: &str) {
     let mut now = win::SystemTime::default();
     unsafe { win::GetLocalTime(&mut now) };
-    let text = format!("[{}] [{label}] {message}\n", stamp(&now));
+    let text = match source {
+        Some(id) => format!("[{}] [{label}] [{id}] {message}\n", stamp(&now)),
+        None => format!("[{}] [{label}] {message}\n", stamp(&now)),
+    };
     crate::crash::note(&text);
-    if level > LEVEL.load(Ordering::Relaxed) {
+    if level > LEVEL.load(Ordering::Relaxed)
+        || source.is_some_and(|id| PLUGIN_FILTER.get().is_some_and(|filter| !filter.allows(id)))
+    {
         return;
     }
     match SINK.get() {

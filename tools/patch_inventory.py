@@ -44,6 +44,8 @@ MODULES = ("logic.dll", "game.dll", "world2.dll", "galileo.dll")
 # player can turn on is inventoried.
 SETTINGS = {
     "defiance.regroup": {"enabled": "true"},
+    "defiance.vehicle-arrival": {"enabled": "true", "braking_window_percent": "50"},
+    "defiance.weapon-drops": {"enabled": "true"},
 }
 
 # (earlier, later): `later` depends on bytes `earlier` checks before it
@@ -115,6 +117,10 @@ def run(build, found, ids, reverse=False):
             raise SystemExit(f"{build.name}: the test host failed ({result.returncode}):\n{result.stdout}"
                              f"{result.stderr}{log.read_text(errors='replace') if log.is_file() else ''}")
         out = json.loads(lines[-1])
+        log = root / "DefianceLoader/logs/defiance-loader.log"
+        if log.is_file():
+            out["errors"] = [line for line in log.read_text(errors="replace").splitlines()
+                             if "[error]" in line]
         out["states"] = {id: state.split("(")[0] for id, state in out["states"].items()}
         return out
 

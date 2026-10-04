@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "id": "defiance.moving-actions-render-sync",
+  "dll": "defiance_plugin_moving_actions_render_sync.dll",
+  "version": "0.1.6",
+  "abi": 5,
+  "group": "infantry",
+  "settings": [{
+    "key": "enabled",
+    "type": "bool",
+    "default": "false",
+    "description": "Checks actual weapon-node bindings at infantry firing events across the supported 2026 Steam and GOG builds; repairs stale bindings with the stock model handoff."
+  }],
+  "depends": [{ "id": "defiance.moving-actions" }],
+  "conflicts": []
+}

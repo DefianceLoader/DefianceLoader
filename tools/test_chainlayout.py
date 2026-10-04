@@ -19,6 +19,14 @@ class ChainTests(unittest.TestCase):
         self.assertTrue(any(k.startswith("call|rax|") for k in keys))
         self.assertFalse(any(k.split("|")[1] in ("rsp", "rbp") for k in keys))
 
+    def test_passenger_logic_fields_do_not_require_game_layout_decisions(self):
+        logic = chainlayout.payload_keys("logic")
+        game = chainlayout.payload_keys("game")
+        for key in ("mov|rcx|0x118", "mov|rcx|0x208"):
+            self.assertIn(key, logic)
+            self.assertNotIn(key, game)
+        self.assertEqual(chainlayout.payload_keys(), logic | game)
+
     def test_derived_layouts_re_derive_from_their_base(self):
         for b in derived():
             with self.subTest(build=b.name):

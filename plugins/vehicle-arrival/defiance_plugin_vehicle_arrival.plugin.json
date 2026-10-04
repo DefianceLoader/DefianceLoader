@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "defiance.vehicle-arrival",
+  "dll": "defiance_plugin_vehicle_arrival.dll",
+  "version": "0.1.0",
+  "abi": 5,
+  "group": "vehicles",
+  "hot_reload": false,
+  "patch_contract": true,
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "false",
+      "description": "Experimental: shorten wheeled and tracked vehicles' destination slowdown. Restart required."
+    },
+    {
+      "key": "braking_window_percent",
+      "type": "int",
+      "default": "50",
+      "description": "Destination slowdown window as a percentage of the stock window (50 to 100). 50 halves the window; 100 leaves stock behavior. Restart required."
+    }
+  ],
+  "depends": [],
+  "conflicts": []
+}

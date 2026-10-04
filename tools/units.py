@@ -70,7 +70,7 @@ UNITS = {
     "ammunition": {
         LOGIC: (6, [("scratch", 0x70)], [
             (["patch/ammo-mode.asm"], {"cursor": "@trace_ring", "scratch": "scratch"}, None)]),
-        GAME: (6, [("step", 0x30)], [(["patch/ammo-panel.asm"], {"scratch": "step"}, None)]),
+        GAME: (6, [("step", 0x38)], [(["patch/ammo-panel.asm"], {"scratch": "step"}, None)]),
     },
     "diagnostics": {LOGIC: (7, [("census", 0x200)], [
         (["patch/select-trace.asm"], {"cursor": "@trace_ring"}, None),
@@ -78,6 +78,9 @@ UNITS = {
     "attack": {LOGIC: (8, [], [(["patch/order-attack.asm", "patch/order-selected.asm"], {}, None)])},
     "garrison": {LOGIC: (9, [], [(["patch/order-garrison.asm"], {}, None)])},
     "preview-weapon": {GAME: (10, [], [(["patch/preview-weapon.asm"], {}, None)])},
+    "vehicle-special-fire": {LOGIC: (11, [], [
+        (["patch/vehicle-special-fire.asm", "patch/vehicle-priority-fire.asm",
+          "patch/vehicle-dynamic-fire.asm"], {}, None)])},
 }
 
 # The selection state cell holds the squad TAB modifier's key at +0x28
@@ -105,7 +108,7 @@ def cell_address(spec, cells):
     return UNIT_BASE + cells[name][0] + (int(extra, 16) if extra else 0)
 
 
-def assemble_unit(plugin, module, spec):
+def assemble_unit(plugin, module, spec, symbol_overrides=None):
     """(blob, labels by unit offset, cells {name: (offset, bytes)}, code start)."""
     feature, cell_list, routines = spec
     cells, at = {}, 0
@@ -114,7 +117,8 @@ def assemble_unit(plugin, module, spec):
         at = align(at + size)
     code_start = at
     layout = b.LAYOUT if module == LOGIC else b.GAME_LAYOUT
-    symbols = b.SYMBOLS if module == LOGIC else b.GAME_SYMBOLS
+    symbols = dict(b.SYMBOLS if module == LOGIC else b.GAME_SYMBOLS)
+    symbols.update(symbol_overrides or {})
     blob, labels, shared = bytearray(code_start), {}, set()
     for sources, tokens, entry in routines:
         lines = ([f"{entry}:"] if entry else []) + b.source(*sources)
@@ -219,10 +223,70 @@ def covering(sites, addresses):
     return out
 
 
+def vehicle_special_fire_symbol_overrides(descriptor, feature):
+    """Resolve the passenger chooser, AI helpers, and hook continuations."""
+    calls = [call for call in descriptor["pose_calls"] if call["pose_feature"] == feature]
+    if len(calls) != 2 or len({call["pose_site"] for call in calls}) != 2:
+        raise SystemExit(f"vehicle-special-fire-logic: expected two passenger selector calls, found {len(calls)}")
+    targets = set()
+    for call in calls:
+        before = bytes.fromhex(call["pose_before"])
+        if len(before) != 5 or before[0] != 0xe8:
+            raise SystemExit("vehicle-special-fire-logic: the passenger selector is not a rel32 call")
+        targets.add(call["pose_site"] + 5 + int.from_bytes(before[1:5], "little", signed=True))
+    if len(targets) != 1:
+        raise SystemExit("vehicle-special-fire-logic: passenger selectors have different native targets")
+    guards = [hook for hook in descriptor["detours"] if hook["hook_feature"] == feature
+              and bytes.fromhex(hook["hook_displaced"]).startswith(bytes.fromhex("85f60f88"))]
+    if len(guards) != 1:
+        raise SystemExit(f"vehicle-special-fire-logic: expected one rebind guard, found {len(guards)}")
+    guard = guards[0]
+    displaced = bytes.fromhex(guard["hook_displaced"])
+    if len(displaced) != 8 or displaced[:4] != bytes.fromhex("85f60f88"):
+        raise SystemExit("vehicle-special-fire-logic: the rebind guard is not the expected branch")
+    resume = guard["hook_rva"] + len(displaced)
+    tails = {}
+    for name, prefix in (("board", "488b5c2478"), ("disembark", "488b742448")):
+        matches = [hook for hook in descriptor["detours"] if hook["hook_feature"] == feature
+                   and hook["hook_displaced"] == prefix]
+        if len(matches) != 1:
+            raise SystemExit(f"vehicle-special-fire-logic: expected one {name} tail")
+        tails[f"vehicle_special_fire_{name}_resume"] = matches[0]["hook_rva"] + 5
+    helpers = descriptor["vehicle_special_fire_helpers"]
+    if set(helpers) != {"refresh_ai"}:
+        raise SystemExit("vehicle-special-fire-logic: incomplete rebalance helpers")
+    dynamic = [hook for hook in descriptor["detours"] if hook["hook_feature"] == feature
+               and hook["hook_displaced"] == "c783bc0000000000803f"]
+    if len(dynamic) != 1:
+        raise SystemExit(f"vehicle-special-fire-logic: expected one mount update timer, found {len(dynamic)}")
+    clients = [hook for hook in descriptor["detours"] if hook["hook_feature"] == feature
+               and hook["hook_displaced"] == "498b5f60488bc3"]
+    if len(clients) != 1:
+        raise SystemExit(f"vehicle-special-fire-logic: expected one client mount event, found {len(clients)}")
+    client_resume = clients[0]["hook_rva"] + 7
+    client_skip = descriptor["vehicle_special_fire_client_skip"]
+    if client_skip <= client_resume:
+        raise SystemExit("vehicle-special-fire-logic: client mount event skip precedes its continuation")
+    return {
+        "vehicle_special_fire_original": targets.pop(),
+        "vehicle_special_fire_guard_resume": resume,
+        "vehicle_special_fire_guard_skip": resume + int.from_bytes(displaced[4:8], "little", signed=True),
+        "vehicle_special_fire_source": UNIT_BASE,
+        "vehicle_special_fire_dynamic_resume": dynamic[0]["hook_rva"] + 10,
+        "vehicle_special_fire_dynamic_client_resume": client_resume,
+        "vehicle_special_fire_dynamic_client_skip": client_skip,
+        **tails,
+        **{f"vehicle_special_fire_{name}": rva for name, rva in helpers.items()},
+    }
+
+
 def build_unit(plugin, module, spec, descriptor, names, placeholders, claimed):
     name = f"{plugin}-{module}"
     feature = spec[0]
-    blob, labels, cells, code_start = assemble_unit(plugin, module, spec)
+    symbol_overrides = {}
+    if plugin == "vehicle-special-fire" and module == LOGIC:
+        symbol_overrides = vehicle_special_fire_symbol_overrides(descriptor, feature)
+    blob, labels, cells, code_start = assemble_unit(plugin, module, spec, symbol_overrides)
     fixups = code_fixups(name, blob, code_start)
     for fixup, placeholder in placeholder_fixups(blob, placeholders):
         if placeholder in claimed:

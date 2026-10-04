@@ -37,6 +37,11 @@ PANELS = {
                   vtable='panel_vtable', refresh='refresh', perks=True),
     'vehicle': dict(unit=0x278, root=0x128, bases=[0x150, 0x180, 0x1b0, 0],
                     vtable='vehicle_vtable', refresh='vehicle_refresh', perks=False),
+    # The training chooser shares the native event dispatcher, but has its own
+    # window layout and show hook. Its focused fixture branches before the
+    # inventory-panel assertions below.
+    'training': dict(unit=0x288, root=0x128, bases=[0x160, 0x190, 0x1e8, 0x1c0],
+                     vtable='training_vtable', refresh='refresh', perks=False),
 }
 
 
@@ -109,13 +114,34 @@ def case(build, mode, kind='squad'):
         assert i32(r+12) - i32(r+4) <= i32(r+8) - i32(r), 'vertical slider reached the stock layout'
         thumbs.append((widget, i32(widget+0x1bc)))
         put(rects[q(widget+0x1a8)], struct.pack('<4i', 0, 0, i32(widget+0x1b0), 4))
+    training_fixture = {}
+    training_shows = []
+    training_layout_calls = []
     chosen = []
     @cb(C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p)
     def stock_squad_chooser(panel, out, item): chosen.append(('squad', panel, out, item)); return out
     @cb(C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p)
     def stock_vehicle_chooser(panel, out, item): chosen.append(('vehicle', panel, out, item)); return out
+    @cb(None, C.c_void_p, C.c_void_p, C.c_uint8, C.c_int32, C.c_void_p)
+    def stock_training_show(window, squad, mode_value, currency, callback):
+        training_shows.append((window, squad, mode_value, currency, callback))
+        cards = training_fixture['cards'][:training_fixture['count']]
+        first, second = training_fixture['rows']
+        for card in training_fixture['cards']:
+            byte(card+0x5b, 0)
+        layout = C.CFUNCTYPE(C.c_int, C.c_void_p, C.c_int32, C.c_void_p)(addr('training_layout'))
+        # Stock fills two rows. The chooser's native layout returns the count
+        # remaining from the requested index, so the second row starts after
+        # the first row's capacity.
+        layout(window, 0, first)
+        capacity = training_fixture['visible']
+        if len(cards) > capacity:
+            layout(window, capacity, second)
+        for card in cards:
+            byte(card+0x5b, 1)
     stocks = {'refresh': stock_squad, 'vehicle_refresh': stock_vehicle, 'thumb': stock_thumb,
-              'squad_chooser': stock_squad_chooser, 'vehicle_chooser': stock_vehicle_chooser}
+              'squad_chooser': stock_squad_chooser, 'vehicle_chooser': stock_vehicle_chooser,
+              'training_show': stock_training_show}
 
     @cb(C.c_int, C.c_void_p, C.c_void_p, C.c_size_t, C.c_void_p)
     def hook(at, detour, n, out):
@@ -166,8 +192,9 @@ def case(build, mode, kind='squad'):
         else: assert calls == 0
         print(f'PASS build={build} {kind} {mode}: refusal/rollback', flush=True)
         return
-    # Five vtable slots plus one hook per panel refresh.
-    expected_owned = 5 + len(stocks)
+    # Seven vtable slots plus every declared hook, including the training
+    # chooser's post-show hook.
+    expected_owned = 7 + len(stocks)
     assert result == 0 and len(owned) == expected_owned, messages
 
     # Mutable, bounded native object fixtures. These are not real rendering.
@@ -344,8 +371,10 @@ def case(build, mode, kind='squad'):
     @cb(C.c_void_p, C.c_void_p, C.c_uint32)
     def destroy(widget, flags): destroyed.append(('squad', widget)); return widget
     @cb(C.c_void_p, C.c_void_p, C.c_uint32)
+    def training_destroy(widget, flags): destroyed.append(('training', widget)); return widget
+    @cb(C.c_void_p, C.c_void_p, C.c_uint32)
     def vehicle_destroy(widget, flags): destroyed.append(('vehicle', widget)); return widget
-    for n, callback in [('weapon',weapon),('ammo',ammo),('upgrade',upgrade),('perk',perk),('script',script),('listen',listen),('destroy',destroy),('vehicle_destroy',vehicle_destroy)]:
+    for n, callback in [('weapon',weapon),('ammo',ammo),('upgrade',upgrade),('perk',perk),('script',script),('listen',listen),('destroy',destroy),('training_destroy',training_destroy),('vehicle_destroy',vehicle_destroy)]:
         stub(addr(n), callback)
     put(addr(panel_kind['vtable'])+0x90, struct.pack('<Q',hover))
     sv = addr('slider_vtable')
@@ -393,6 +422,162 @@ def case(build, mode, kind='squad'):
     def bindings(section): return [q(w+[0x200,0x1d0][section]) for w in cards[section]]
     def upgrade_bindings(): return [upgrade_bound.get(w,0) for w in upgrade_cards]
     def perk_bindings(): return [perk_bound.get(w,0) for w in perk_cards]
+    if kind == 'training':
+        # Build the native training window independently from the inventory
+        # panels above. Stock show binds and lays out every available card in
+        # two rows; the production post-show detour must collapse it to one.
+        training_window, training_root = alloc(0x300), alloc(0x80)
+        training_fixture['window'] = training_window
+        training_fixture['count'] = 8
+        training_cards = [widget() for _ in range(8)]
+        training_fixture['cards'] = training_cards
+        training_first, training_second = widget(), widget()
+        rects[training_first] = alloc(48); rects[training_second] = alloc(48)
+        put(rects[training_first], struct.pack('<4i', 10, 309, 450, 695))
+        put(rects[training_second], struct.pack('<4i', 10, 695, 450, 1081))
+        training_slider = widget(b'df_trainings', True)
+        training_children = alloc(8)
+        pq(training_children, training_slider)
+        pq(training_root+0x40, training_children); pq(training_root+0x48, training_children+8)
+        pq(training_window+0x128, training_root)
+        pq(training_window+0x148, training_first); pq(training_window+0x150, training_second)
+        training_vector = alloc(len(training_cards)*8)
+        for index, card in enumerate(training_cards): pq(training_vector+index*8, card)
+        pq(training_window+0x1d8, training_vector)
+        pq(training_window+0x1e0, training_vector+len(training_cards)*8)
+        pq(training_window+0x1e8, training_vector+len(training_cards)*8)
+        put(training_window, struct.pack('<Q', addr('training_vtable')))
+        old_root = root
+        root = training_root
+        # Four 100px cards fit in the 440px first row at a 10px gap.
+        training_fixture['visible'] = 4
+        training_fixture['rows'] = (training_first, training_second)
+
+        @cb(C.c_int, C.c_void_p, C.c_int32, C.c_void_p)
+        def stock_training_layout(window, index, row):
+            training_layout_calls.append((window, index, row))
+            count = training_fixture['count']
+            row_rect = struct.unpack('<4i', C.string_at(rects[row], 16))
+            pitch = 110
+            for slot in range(index, min(index + training_fixture['visible'], count)):
+                card = training_fixture['cards'][slot]
+                x = row_rect[0] + (slot - index) * pitch
+                put(rects[card], struct.pack('<4i', x, row_rect[1], x+100, row_rect[1]+100))
+                byte(card+0x5b, 1)
+            return max(0, count-index)
+        stub(addr('training_layout'), stock_training_layout)
+        show = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.c_uint8, C.c_int32, C.c_void_p)(
+            detours['training_show'])
+        training_dispatch = event_call(q(addr('training_vtable')+8))
+        held = [False]
+        @cb(C.c_int16, C.c_int)
+        def get_key_state(key): return -128 if held[0] else 0
+        plugin_image = Image(DLL)
+        plugin_base = int(lib._handle)
+        key_state_iat = next(
+            plugin_base + imp.address - plugin_image.base
+            for module in plugin_image.pe.DIRECTORY_ENTRY_IMPORT
+            if module.dll.lower() == b'user32.dll'
+            for imp in module.imports
+            if imp.name == b'GetKeyState'
+        )
+        put(key_state_iat, struct.pack('<Q', get_key_state))
+
+        def set_training_count(count):
+            training_fixture['count'] = count
+            end = training_vector + count*8
+            pq(training_window+0x1e0, end); pq(training_window+0x1e8, end)
+
+        def training_visible():
+            return [C.c_ubyte.from_address(card+0x5b).value != 0 for card in training_cards]
+
+        def training_wheel(source, delta=-120):
+            i32(event, 0x20a); C.c_int16.from_address(event+10).value = delta
+            training_dispatch(training_window, source, 0, event)
+
+        show(training_window, unit, 1, 250, 0x1234)
+        assert training_shows == [(training_window, unit, 1, 250, 0x1234)]
+        assert training_layout_calls[:2] == [
+            (training_window, 0, training_first),
+            (training_window, 4, training_second),
+        ], training_layout_calls
+        assert training_visible() == [True]*4 + [False]*4, training_visible()
+        assert i32(training_slider+0x1b8) == 4
+        assert i32(training_slider+0x1bc) == 0
+
+        # Wheel input on a nested button follows its card's parent chain.
+        training_button = widget()
+        pq(training_button+0x38, training_cards[0])
+        held[0] = True
+        training_wheel(training_button)
+        held[0] = False
+        assert i32(training_slider+0x1bc) == 0
+        assert training_visible() == [True]*4 + [False]*4, 'wheel during a held drag must not relayout cards'
+        training_wheel(training_button)
+        assert i32(training_slider+0x1bc) == 1
+        assert training_visible() == [False, True, True, True, True, False, False, False]
+
+        # The slider controller uses the same wheel viewport and direction as
+        # a card, including while its stock drag flag is clear.
+        training_ctrl = alloc(0x40); pq(training_ctrl+8, training_slider)
+        i32(event, 0x20a); C.c_int16.from_address(event+10).value = -120
+        ctrl_dispatch(training_ctrl, training_slider, 0, event)
+        assert i32(training_slider+0x1bc) == 2
+        assert training_visible() == [False, False, True, True, True, True, False, False]
+
+        # A native slider change seeks to the final viewport and lays out the
+        # final cards through the same row layout callback.
+        i32(training_slider+0x1bc, 4)
+        i32(event, 0x481)
+        held[0] = True
+        training_dispatch(training_window, training_slider, 0, event)
+        held[0] = False
+        assert training_visible() == [False]*4 + [True]*4, training_visible()
+
+        # The dispatch jump table routes 0x47b to the training selection
+        # callback on vtable +b0; 0x479 is a separate +d0 message.
+        # unchanged, even when it originates from a nested button on the final
+        # visible card.
+        forwarded_training = []
+        @cb(None, C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p)
+        def training_action(window, source, arg, ev): forwarded_training.append((window, source, arg, ev))
+        put(addr('training_vtable')+0xb0, struct.pack('<Q', training_action))
+        i32(event, 0x47b)
+        training_dispatch(training_window, training_button, 0x55, event)
+        assert forwarded_training == [(training_window, training_button, 0x55, event)]
+
+        # Showing the same window again starts at zero, even when stock reuses
+        # the same squad and slider objects.
+        show(training_window, unit, 1, 250, 0x1234)
+        assert i32(training_slider+0x1bc) == 0
+        assert training_visible() == [True]*4 + [False]*4
+
+        # A shorter list clamps the viewport; an empty menu hides its slider.
+        set_training_count(3)
+        show(training_window, unit, 1, 250, 0x1234)
+        assert i32(training_slider+0x1b8) == 0
+        assert training_visible() == [True, True, True, False, False, False, False, False]
+        set_training_count(0)
+        show(training_window, unit, 1, 250, 0x1234)
+        assert C.c_ubyte.from_address(training_slider+0x5b).value == 0
+        assert training_visible() == [False]*8
+
+        # Without the companion slider, stock's two-row result stays visible.
+        pq(training_root+0x48, training_children)
+        set_training_count(8)
+        before_layout_calls = len(training_layout_calls)
+        show(training_window, unit, 1, 250, 0x1234)
+        assert len(training_layout_calls)-before_layout_calls == 2
+        assert training_visible() == [True]*8
+        pq(training_root+0x48, training_children+8)
+
+        # The training-window deleting destructor removes its per-window state.
+        delete_training = C.CFUNCTYPE(C.c_void_p, C.c_void_p, C.c_uint32)(q(addr('training_vtable')))
+        assert delete_training(training_window, 0) == training_window
+        assert destroyed[-1] == ('training', training_window)
+        root = old_root
+        print(f'PASS build={build} training: two-row stock, one-row viewport, wheel, slider seek, click forwarding, reopen, shrink, empty, missing slider, destroy', flush=True)
+        return
     refresh(panel)
     if mode == 'noupgrades':
         # The setting off: upgrade widgets stay stock (never rebound) and the
@@ -699,7 +884,7 @@ def case(build, mode, kind='squad'):
 if __name__ == '__main__':
     if len(sys.argv)>2: case(int(sys.argv[1]),sys.argv[2],sys.argv[3] if len(sys.argv)>3 else 'squad')
     else:
-        for build in [0,1,2,3]:
+        for build in range(len(BUILDS)):
             if not (ROOT / PATHS[build]).exists():
                 continue
             for kind in ['squad','vehicle']:
@@ -708,3 +893,4 @@ if __name__ == '__main__':
                     modes.append('novehicles')
                 for mode in modes:
                     subprocess.run([sys.executable,__file__,str(build),mode,kind],check=True,timeout=90)
+            subprocess.run([sys.executable,__file__,str(build),'ok','training'],check=True,timeout=90)

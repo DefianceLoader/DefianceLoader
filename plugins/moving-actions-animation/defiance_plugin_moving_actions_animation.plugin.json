@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "defiance.moving-actions-animation",
+  "dll": "defiance_plugin_moving_actions_animation.dll",
+  "version": "0.1.8",
+  "abi": 5,
+  "group": "infantry",
+  "settings": [{
+    "key": "enabled", "type": "bool", "default": "false",
+    "description": "Experimental lower-body locomotion pose overlay for standing throws and weapon changes. Requires moving-actions and a full restart."
+  }],
+  "depends": [{ "id": "defiance.moving-actions" }],
+  "hot_reload": false
+}

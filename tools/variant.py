@@ -341,11 +341,15 @@ def main():
     units = resolve_units(profile, sys.argv[2], sys.argv[3])
     folder = staged / "units"
     folder.mkdir(parents=True, exist_ok=True)
+    expected = {f"{name}.{extension}" for name, _, _ in units for extension in ("bin", "json")}
     for stale in folder.glob("*"):
-        stale.unlink()
+        if stale.suffix in (".bin", ".json") and stale.name not in expected:
+            stale.unlink()
     for name, blob, descriptor in units:
-        (folder / f"{name}.bin").write_bytes(blob)
-        (folder / f"{name}.json").write_text(json.dumps(descriptor, indent=1) + "\n", encoding="utf-8", newline="\n")
+        for extension, data in (("bin", blob), ("json", (json.dumps(descriptor, indent=1) + "\n").encode("utf-8"))):
+            path = folder / f"{name}.{extension}"
+            if not path.is_file() or path.read_bytes() != data:
+                path.write_bytes(data)
     print(f"units  resolved for {profile['name']}: {len(units)} -> {folder}")
 
 

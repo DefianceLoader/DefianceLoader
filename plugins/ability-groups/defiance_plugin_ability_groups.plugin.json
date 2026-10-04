@@ -2,9 +2,10 @@
   "schema": 1,
   "id": "defiance.ability-groups",
   "dll": "defiance_plugin_ability_groups.dll",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "abi": 5,
   "group": "infantry",
+  "patch_contract": true,
   "settings": [
     {
       "key": "enabled",

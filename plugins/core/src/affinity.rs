@@ -293,7 +293,7 @@ fn kernel32(name: &[u8]) -> usize {
 
 /// Replace the engine's `SetThreadAffinityMask` call with a no-op, after
 /// checking that the matched code calls what [`PIN_PATTERN`] says it does.
-fn remove_pin(api: &Api) -> Result<(), String> {
+pub(super) fn remove_pin(api: &Api) -> Result<(), String> {
     let base = unsafe { (api.module_base)(c"galileo.dll".as_ptr()) };
     if base.is_null() {
         return Err("galileo.dll is not loaded".into());

@@ -97,6 +97,7 @@ pub struct GroupStatus {
 
 /// The frozen configuration. Values are canonical strings by the time anything
 /// can read them; strings live in the map for the process's life.
+#[derive(Clone)]
 pub struct Snapshot {
     pub paths: Paths,
     resolved: HashMap<(String, String), Resolved>,
@@ -173,6 +174,24 @@ fn declarations(extras: &[Declared]) -> Vec<DeclRef> {
 }
 
 impl Snapshot {
+    /// Use only this plugin's accepted values and validation state for planning.
+    pub(super) fn use_plugin_config(&mut self, id: &str, accepted: &Snapshot) {
+        let id = id.to_ascii_lowercase();
+        self.resolved.retain(|(owner, _), _| owner != &id);
+        self.resolved.extend(
+            accepted
+                .resolved
+                .iter()
+                .filter(|((owner, _), _)| owner == &id)
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        if accepted.is_blocked(&id) {
+            self.blocked.insert(id);
+        } else {
+            self.blocked.remove(&id);
+        }
+    }
+
     /// Resolve every declaration against the group inputs. `bootstrap` is the
     /// parsed `defiance-loader.ini`, used both as the legacy fallback for loader
     /// policy and as the compatibility source for third-party plugin sections.
@@ -808,6 +827,37 @@ mod tests {
         let snapshot = build(&[("core", Some("[logging]\nlevel = chatty\n"))], "");
         assert!(snapshot.is_blocked("logging"));
         assert_eq!(snapshot.text("logging", "level"), None);
+    }
+
+    #[test]
+    fn plugin_log_filters_resolve_from_core_with_empty_defaults() {
+        let defaults = build(&[("core", None)], "");
+        assert_eq!(
+            defaults.text("logging", "include_plugins").as_deref(),
+            Some("")
+        );
+        assert_eq!(
+            defaults.text("logging", "exclude_plugins").as_deref(),
+            Some("")
+        );
+        let snapshot = build(
+            &[(
+                "core",
+                Some(
+                    "[logging]\ninclude_plugins = test.one, test.two\nexclude_plugins = test.two\n",
+                ),
+            )],
+            "",
+        );
+        assert!(!snapshot.is_blocked("logging"));
+        assert_eq!(
+            snapshot.text("logging", "include_plugins").as_deref(),
+            Some("test.one, test.two")
+        );
+        assert_eq!(
+            snapshot.text("logging", "exclude_plugins").as_deref(),
+            Some("test.two")
+        );
     }
 
     #[test]

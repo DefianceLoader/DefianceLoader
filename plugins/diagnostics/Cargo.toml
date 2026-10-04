@@ -1,6 +1,6 @@
 [package]
 name = "defiance-plugin-diagnostics"
-version = "0.4.0"
+version = "0.5.1"
 license = "MPL-2.0"
 edition = "2021"
 [lib]
@@ -9,5 +9,6 @@ crate-type = ["cdylib"]
 [dependencies]
 defiance-api = { path = "../../crates/api" }
 defiance-feature-sdk = { path = "../../crates/feature-sdk" }
+defiance-core = { path = "../../crates/core" }
 [build-dependencies]
 defiance-build-support = { path = "../../crates/build-support" }

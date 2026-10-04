@@ -1,6 +1,7 @@
 """Filesystem integration tests for staging; no game DLLs or installation needed."""
 import contextlib
 import io
+import json
 import pathlib
 import tempfile
 import unittest
@@ -9,8 +10,18 @@ import zipfile
 import package_squad_scroll
 import stage
 import package_unit_inspection
+import package_moving_actions_animation
+from test_package_moving_actions_animation import fixture_resources
 from test_package_squad_scroll import AMMO_INFO, fixture as panel_fixture
 from test_package_unit_inspection import reload_bar
+
+TRAINING_INFO = '\r\n'.join([
+    'name\ttype\tregion\tlink\ttip\tproperty\tvalue',
+    'title_text\ttext\t230,254,1691,290',
+    'close_button\ttext_button\t226,250,442,294',
+    'items_first_line\twidget\t1,309,1921,695',
+    'items_second_line\twidget\t1,695,1921,1081',
+    '']).encode()
 
 
 class StagingTests(unittest.TestCase):
@@ -151,17 +162,28 @@ class StagingTests(unittest.TestCase):
             archive.writestr(package_squad_scroll.RESOURCE, panel_fixture())
             archive.writestr(package_squad_scroll.VEHICLE_RESOURCE, panel_fixture(vehicle=True))
             archive.writestr(package_squad_scroll.AMMO_RESOURCE, AMMO_INFO)
+            archive.writestr(package_squad_scroll.TRAINING_RESOURCE, TRAINING_INFO)
             archive.writestr(package_unit_inspection.RESOURCE, reload_bar())
+            for name, data in fixture_resources().items():
+                archive.writestr(name, data)
         install = stage.Staging(self.game, self.source, False, False)
         mod = self.root / "Game" / "mods" / stage.MOD_DIR
         colours = self.root / "Game" / "mods" / package_unit_inspection.MOD_DIR
+        animations = self.root / "Game" / "mods" / package_moving_actions_animation.MOD_DIR
         install.install()
         self.assertTrue((mod / "mod.json").is_file())
         self.assertTrue((mod / "basis" / package_squad_scroll.RESOURCE).is_file())
+        self.assertTrue((mod / "basis" / package_squad_scroll.TRAINING_RESOURCE).is_file())
+        sources = json.loads((mod / "sources.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            sources[package_squad_scroll.TRAINING_RESOURCE]["basis"]["layout_revision"], 5)
         self.assertTrue((colours / "basis" / package_unit_inspection.RESOURCE).is_file())
+        self.assertTrue((animations / "assets" / "moving_throw.anim").is_file())
+        self.assertTrue((animations / "sources.json").is_file())
         install.uninstall()
         self.assertFalse(mod.exists())
         self.assertFalse(colours.exists())
+        self.assertFalse(animations.exists())
 
     def test_staging_accepts_the_game_root_or_its_bin(self):
         # Given the root, staging must operate in bin; otherwise `../DefianceLoader`
@@ -170,10 +192,28 @@ class StagingTests(unittest.TestCase):
             archive.writestr(package_squad_scroll.RESOURCE, panel_fixture())
             archive.writestr(package_squad_scroll.VEHICLE_RESOURCE, panel_fixture(vehicle=True))
             archive.writestr(package_squad_scroll.AMMO_RESOURCE, AMMO_INFO)
+            archive.writestr(package_squad_scroll.TRAINING_RESOURCE, TRAINING_INFO)
             archive.writestr(package_unit_inspection.RESOURCE, reload_bar())
         self.assertEqual(stage.bin_directory(self.root / "Game"), self.game)
         self.assertEqual(stage.bin_directory(self.game), self.game)
         self.assertEqual(stage.bin_directory(self.root / "Elsewhere"), self.root / "Elsewhere")
+
+    def test_foreign_animation_companion_is_preserved(self):
+        with zipfile.ZipFile(self.root / "Game" / "basis.pak", "w") as archive:
+            for name, data in fixture_resources().items():
+                archive.writestr(name, data)
+        mod = self.root / "Game" / "mods" / package_moving_actions_animation.MOD_DIR
+        mod.mkdir(parents=True)
+        manifest = mod / "mod.json"
+        manifest.write_text('{"name":"someone else"}')
+        asset = mod / "assets.bin"
+        asset.write_bytes(b"foreign data")
+        install = self.staging()
+        with self.assertRaisesRegex(SystemExit, "is not ours"):
+            install.write_mod()
+        install.remove_mod()
+        self.assertEqual(manifest.read_text(), '{"name":"someone else"}')
+        self.assertEqual(asset.read_bytes(), b"foreign data")
 
     def test_dry_run_install_and_uninstall_do_not_change_files(self):
         install = self.staging(dry=True)

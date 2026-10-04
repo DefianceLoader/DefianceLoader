@@ -217,6 +217,189 @@ def main():
         got = CALL() & 0xff
         check(label, got == want, f"answered {got}")
 
+    print("\n== passenger source-gun selection\n")
+    special_base = 0x9000
+    special_targets = {"vehicle_special_fire_original": 0x9200,
+                       "vehicle_special_fire_guard_resume": 0xa000,
+                       "vehicle_special_fire_guard_skip": 0xa040}
+    special_code, special_labels = b.assemble(
+        pathlib.Path("patch/vehicle-special-fire.asm").read_text().splitlines(),
+        special_base, b.CURSOR_OFFSET, symbols=special_targets)
+    put(region + special_base, special_code)
+    put(region + 0x9200, asm("mov rax, qword ptr [rcx + 0x2f0]; ret"))
+    PASSENGER_GUN = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p)(region + special_base)
+    gun_vt = obj(8)
+    primary_descriptor = obj(0x110)
+    primary = obj(0x48, [(0, gun_vt), (0x40, primary_descriptor)])
+    special_descriptor = obj(0x110)
+    special = obj(0x48, [(0, gun_vt), (0x40, special_descriptor)])
+    guns = obj(0x10, [(0, primary), (8, special)])
+    human = obj(0x50, [(0x38, guns), (0x40, guns + 0x10)])
+    holder = obj(0x18, [(0x10, human)])
+    ai = obj(0x300, [(0x1f0, holder), (0x2f0, primary)])
+    for weapon_type, label in ((1, "sniper rifle"), (2, "machine gun"),
+                               (3, "mounted heavy gun"), (4, "antitank missile"),
+                               (5, "antiair missile"), (6, "RPG"),
+                               (17, "future special weapon")):
+        put(special_descriptor + 0x108, struct.pack("<I", weapon_type))
+        check(f"a passenger's {label} takes the dummy mount",
+              PASSENGER_GUN(ai) == special)
+    put(primary_descriptor + 0x108, struct.pack("<I", 2))
+    check("a machine-gun primary does not hide a later RPG",
+          PASSENGER_GUN(ai) == special)
+    put(special, struct.pack("<Q", obj(8)))
+    check("a former gun in the source list keeps the native choice",
+          PASSENGER_GUN(ai) == primary)
+    put(special, struct.pack("<Q", gun_vt))
+    put(special_descriptor + 0xa9, b"\x01")
+    check("a grenade-marked gun keeps the native primary",
+          PASSENGER_GUN(ai) == primary)
+    put(special_descriptor + 0xa9, b"\x00")
+    put(special_descriptor + 0x108, struct.pack("<I", 0))
+    check("a usual weapon type keeps the native primary",
+          PASSENGER_GUN(ai) == primary)
+    put(human + 0x40, struct.pack("<Q", guns + 8))
+    check("a passenger without a special gun keeps the native primary",
+          PASSENGER_GUN(ai) == primary)
+    put(ai + 0x2f0, struct.pack("<Q", 0))
+    check("the native choice of no gun remains no gun",
+          PASSENGER_GUN(ai) is None)
+
+    print("\n== passenger dummy-gun rebinding\n")
+    released = []
+
+    @ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p)
+    def reset_dummy(dummy_arg, source_arg):
+        released.append((dummy_arg, source_arg))
+
+    dummy_vt = obj(0x68, [(0x60, ctypes.cast(reset_dummy, ctypes.c_void_p).value)])
+    other_vt = obj(0x68)
+    dummy = obj(8, [(0, dummy_vt)])
+    dummy_mounts = obj(8, [(0, dummy)])
+    live_source = obj(8, [(0, dummy_vt)])
+    stale_source = obj(8, [(0, other_vt)])
+    sources = obj(8, [(0, live_source)])
+    gunner = obj(0x70, [(0x20, dummy_mounts), (0x68, sources)])
+    epilogue = "pop rdi; pop rsi; pop r14; pop r13; pop rbx; ret"
+    put(region + 0xa000, asm(f"mov eax, 1; {epilogue}"))
+    put(region + 0xa040, asm(f"mov eax, 2; {epilogue}"))
+    guard_thunk = 0xa080
+    thunk_code, _ = ks.asm(
+        "push rbx; push r13; push r14; push rsi; push rdi; "
+        "mov rbx, rcx; mov esi, edx; mov r14d, r8d; "
+        f"jmp {special_labels['vehicle_special_fire_rebind_guard']}", guard_thunk)
+    put(region + guard_thunk, bytes(thunk_code))
+    REBIND = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_int,
+                              ctypes.c_int)(region + guard_thunk)
+    check("a live source continues through the native rebind",
+          REBIND(gunner, 0, 0) == 1 and q(sources) == live_source and not released)
+    put(sources, struct.pack("<Q", stale_source))
+    check("a former gun is released before the native rebind",
+          REBIND(gunner, 0, 0) == 2 and q(sources) == 0 and released == [(dummy, None)],
+          f"binding {q(sources):#x}, releases {released}")
+    released.clear()
+    check("an empty source slot is safe to release",
+          REBIND(gunner, 0, 0) == 2 and q(sources) == 0 and released == [(dummy, None)])
+    released.clear()
+    put(sources, struct.pack("<Q", live_source))
+    check("an unused mount skips rebinding without releasing its source",
+          REBIND(gunner, -1, 0) == 2 and q(sources) == live_source and not released)
+
+    print("\n== scarce passenger mounts prefer special-weapon carriers\n")
+    events = []
+
+    @ctypes.CFUNCTYPE(ctypes.c_ubyte, ctypes.c_void_p, ctypes.c_void_p)
+    def bind_mount(gunner_arg, source_arg):
+        if q(mount_sources):
+            return 0
+        put(mount_sources, struct.pack("<Q", source_arg))
+        events.append(("bind", source_arg))
+        return 1
+
+    @ctypes.CFUNCTYPE(ctypes.c_ubyte, ctypes.c_void_p, ctypes.c_void_p)
+    def unbind_mount(gunner_arg, source_arg):
+        if q(mount_sources) != source_arg:
+            return 0
+        put(mount_sources, bytes(8))
+        events.append(("unbind", source_arg))
+        return 1
+
+    @ctypes.CFUNCTYPE(None, ctypes.c_void_p)
+    def refresh_mounts(ai_arg):
+        events.append(("refresh", ai_arg))
+
+    put(region + 0xa800, asm(
+        f"mov rax, {ctypes.cast(refresh_mounts, ctypes.c_void_p).value}; jmp rax"))
+    priority_base = 0xb000
+    priority_code, priority_labels = b.assemble(
+        pathlib.Path("patch/vehicle-priority-fire.asm").read_text().splitlines(),
+        priority_base, b.CURSOR_OFFSET, symbols={
+            "vehicle_special_fire_source": special_labels["vehicle_special_fire_source"],
+            "vehicle_special_fire_board_resume": 0xa900,
+            "vehicle_special_fire_disembark_resume": 0xa940,
+            "vehicle_special_fire_refresh_ai": 0xa800,
+        })
+    put(region + priority_base, priority_code)
+    REBALANCE = ctypes.CFUNCTYPE(None, ctypes.c_void_p)(
+        region + priority_labels["vehicle_special_fire_rebalance"])
+
+    regular_descriptor = obj(0x110)
+    rocket_descriptor = obj(0x110)
+    put(rocket_descriptor + 0x108, struct.pack("<I", 6))
+    regular_gun = obj(0x48, [(0, gun_vt), (0x40, regular_descriptor)])
+    rocket_gun = obj(0x48, [(0, gun_vt), (0x40, rocket_descriptor)])
+
+    def passenger(weapons, native):
+        entries = obj(len(weapons) * 8, [(i * 8, gun) for i, gun in enumerate(weapons)])
+        human = obj(0x50, [(0x38, entries), (0x40, entries + 8 * len(weapons))])
+        ai = obj(0x300, [(0x1f0, obj(0x18, [(0x10, human)])), (0x2f0, native)])
+        facets = obj(0x60, [(0x28, ai)])
+        return obj(0x10, [(0, ENTITY_VT), (8, facets)])
+
+    regular_passenger = passenger([regular_gun], regular_gun)
+    rocket_passenger = passenger([regular_gun, rocket_gun], regular_gun)
+    mount_sources = obj(8, [(0, regular_gun)])
+    mount_vt = obj(0x158, [(0x148, ctypes.cast(bind_mount, ctypes.c_void_p).value),
+                            (0x150, ctypes.cast(unbind_mount, ctypes.c_void_p).value)])
+    mounted_gunner = obj(0x78, [(0, mount_vt), (0x68, mount_sources),
+                                (0x70, mount_sources + 8)])
+    gunner_vector = obj(8, [(0, mounted_gunner)])
+    vehicle_ai = obj(0x220, [(0x208, gunner_vector), (0x210, gunner_vector + 8)])
+    vehicle_facets = obj(0x60, [(0x28, vehicle_ai)])
+    vehicle_entity = obj(0x10, [(0, ENTITY_VT), (8, vehicle_facets)])
+    passengers = obj(0x10, [(0, regular_passenger), (8, rocket_passenger)])
+    helper = obj(0x120, [(0x20, vehicle_entity), (0x110, passengers),
+                         (0x118, passengers + 0x10)])
+    REBALANCE(helper)
+    check("a late RPG passenger takes a mount occupied by a regular weapon",
+          q(mount_sources) == rocket_gun and events == [
+              ("unbind", regular_gun), ("bind", rocket_gun), ("refresh", vehicle_ai)],
+          str(events))
+    events.clear()
+    REBALANCE(helper)
+    check("a mounted special gun remains bound without further moves",
+          q(mount_sources) == rocket_gun and not events, str(events))
+    put(mount_sources, bytes(8))
+    events.clear()
+    REBALANCE(helper)
+    check("a special passenger gets a free mount before an earlier regular passenger",
+          q(mount_sources) == rocket_gun and events == [
+              ("bind", rocket_gun), ("refresh", vehicle_ai)], str(events))
+    put(passengers + 8, bytes(8))
+    put(mount_sources, bytes(8))
+    events.clear()
+    REBALANCE(helper)
+    check("a regular passenger fills a mount vacated by the special carrier",
+          q(mount_sources) == regular_gun and events == [
+              ("bind", regular_gun), ("refresh", vehicle_ai)], str(events))
+    former_gun = obj(0x48, [(0, other_vt), (0x40, regular_descriptor)])
+    put(passengers + 8, struct.pack("<Q", rocket_passenger))
+    put(mount_sources, struct.pack("<Q", former_gun))
+    events.clear()
+    REBALANCE(helper)
+    check("a former source is not displaced as a regular passenger gun",
+          q(mount_sources) == former_gun and not events, str(events))
+
     print("\n== the behaviour census answers as the getter did, and counts its callers\n")
     census_code, census_labels = b.assemble(
         pathlib.Path("patch/behaviour-census.asm").read_text().splitlines(),

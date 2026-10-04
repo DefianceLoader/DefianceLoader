@@ -1,11 +1,35 @@
 // Ammunition feature: its logic.dll unit (patch/ammo-mode.asm) and game.dll unit
 // (patch/ammo-panel.asm), which Core's patch service installs for the build.
-use defiance_api::{Api, Plugin, ABI_VERSION};
+use core::ffi::c_void;
+use defiance_api::{AmmoStepHandlerV1, AmmoStepV1, Api, Plugin, ABI_VERSION};
 use defiance_feature_sdk::units::Embedded;
+use std::sync::atomic::{AtomicUsize, Ordering};
 defiance_feature_sdk::service_handshake!();
 
 /// Every supported build's units (`build.rs`).
 static UNITS: &[Embedded] = include!(concat!(env!("OUT_DIR"), "/units.rs"));
+defiance_feature_sdk::export_unit_patch_contract!(UNITS, &[], false);
+static STEP_HANDLER: AtomicUsize = AtomicUsize::new(0);
+
+unsafe extern "C" fn set_step_handler(handler: Option<AmmoStepHandlerV1>) {
+    STEP_HANDLER.store(
+        handler.map_or(0, |handler| handler as *const () as usize),
+        Ordering::Release,
+    );
+}
+
+static STEP_API: AmmoStepV1 = AmmoStepV1 {
+    set_handler: set_step_handler,
+};
+
+unsafe extern "C" fn step_dispatch(menu: *mut c_void, widget: *mut c_void, direction: i32) -> i32 {
+    let handler = STEP_HANDLER.load(Ordering::Acquire);
+    if handler == 0 {
+        return 0;
+    }
+    let handler = std::mem::transmute::<usize, AmmoStepHandlerV1>(handler);
+    unsafe { handler(menu, widget, direction) }
+}
 
 /// A setting of this plugin, lower case; empty when it has none.
 fn setting(api: *const Api, key: &str) -> String {
@@ -26,8 +50,8 @@ fn step_modifier_key(setting: &str) -> u32 {
 
 /// Fill the step cell the game unit's wheel and click hooks read, before they
 /// go live: the modifier's virtual key (+0), whether clicks step (+4), and the
-/// hooks' own state, which starts at zero: the wheel's unspent delta (+8) and
-/// the camera wheel's last message (+10..+30).
+/// hooks' own state, which starts at zero: the wheel's unspent delta (+8), the
+/// camera wheel's last message (+10..+30), and the combined-step bridge (+30).
 fn fill_cells(api: *const Api, cell: &dyn Fn(&core::ffi::CStr) -> Option<usize>) {
     if let Some(address) = cell(c"step") {
         let key = step_modifier_key(&setting(api, "step_modifier"));
@@ -38,15 +62,22 @@ fn fill_cells(api: *const Api, cell: &dyn Fn(&core::ffi::CStr) -> Option<usize>)
         unsafe {
             cell.write_volatile(key);
             cell.add(1).write_volatile(click);
-            for word in 2..12 {
+            for word in 2..14 {
                 cell.add(word).write_volatile(0);
             }
+            core::ptr::write_volatile(
+                (address + 0x30) as *mut usize,
+                step_dispatch as *const () as usize,
+            );
         }
     }
 }
 
 unsafe extern "C" fn init(api: *const Api) -> i32 {
     if api.is_null() {
+        return 1;
+    }
+    if defiance_feature_sdk::services::register(c"combined-step", 1, &STEP_API).is_err() {
         return 1;
     }
     unsafe {

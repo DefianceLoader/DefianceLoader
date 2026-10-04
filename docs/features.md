@@ -10,8 +10,10 @@ To switch features without restarting, set `live_toggle = true` under
 `[loader]` in `core.ini` and restart once. From then on, saving a changed
 `enabled`, or any other setting of a feature, takes effect at the main menu,
 or as the next mission starts or save loads: the feature is switched, or
-loaded again with its new values. Core, the expanded ammo menu, squad scrolling and unit inspection
-still need a restart, and a feature that was off at startup comes on only
+loaded again with its new values. Core, the expanded ammo menu, squad scrolling,
+unit inspection, vehicle arrival braking and primary weapon drops still need a
+restart, and a feature
+that was off at startup comes on only
 after a restart.
 
 The gameplay features are single-player only: they change the game's simulation
@@ -72,14 +74,29 @@ a loaded weapon unloads it, so the soldier falls back to an enabled one. A unit
 or soldier with every usable weapon disabled takes no part in an attack order,
 so it does not fire the round already chambered. Hold Ctrl and turn the mouse
 wheel over a card to enable one more soldier (wheel up) or disable one (wheel
-down), in squad order, among the soldiers the card counts; the camera does not
+down), in roster order, among the soldiers the card counts; the camera does not
 zoom while you do. `step_modifier` in `weapons.ini` picks `ctrl`, `shift`,
 `alt` or `none`. With `step_click = true`, Ctrl+left-click on a card enables
 one and Ctrl+right-click disables one; with `none`, a right-click alone
-disables one and a left-click keeps its usual toggle. Steps need one squad (or
-part of one) selected. Individual
-overrides cover the first eight ammo slots, reset on save/load, and are meant
+disables one and a left-click keeps its usual toggle. With expanded-ammo-menu's
+all_selected_squads enabled, steps cover selected squads in selection order,
+then each squad's roster order; otherwise one squad (or part of one) must be
+selected for step controls. Individual overrides cover the first eight local ammo slots, reset
+on save/load, and are meant
 for single-player.
+
+## Special weapons from passenger vehicles
+
+Plugin: `defiance.vehicle-special-fire` (off by default; set `enabled = true`
+in `[defiance.vehicle-special-fire]` in `weapons.ini`). Let a passenger's automatic fire use
+special weapons, including sniper rifles, heavy guns, RPGs, and ATGMs, in
+vehicles with passenger firing mounts. Passengers carrying special weapons
+get mount priority. Mounted guns acquire targets independently, and specials
+can exchange firing positions with ordinary weapons as targets change sides.
+Select the vehicle and use Attack to order its passengers against an enemy;
+Stop restores automatic targeting. Native range, ammunition, deployment,
+reload, and aiming checks still apply. Reboard passengers after enabling the
+feature or loading older saved bindings.
 
 ## Expanded ammo menu
 
@@ -93,7 +110,8 @@ Details: [plugins/expanded-ammo-menu](../plugins/expanded-ammo-menu/README.md).
 Plugin: `defiance.squad-management-scroll`. In the army presets and squad
 management screens, the weapon, ammunition, perk and upgrade rows of infantry
 and vehicles scroll with the mouse wheel or their scrollbars, keeping the
-original card sizes. The upgrade column continues past five with empty cards
+original card sizes. The available-training chooser uses a single horizontal
+row with a scrollbar so extra cards cannot cover its training buttons. The upgrade column continues past five with empty cards
 (`upgrade_slots`, default 20): scroll one into view and drop an upgrade on it to
 install more than five; by default the column stops at the most upgrades the
 unit's type can hold at once (`fit_upgrades`). Starting an upgrade drag scrolls to the card it will
@@ -105,6 +123,37 @@ the game's mod menu. Details:
 
 Plugin: `defiance.pickup`. When picking up a weapon, the selected soldiers are
 preferred, and repeated pickups rotate between the eligible soldiers.
+
+## Moving infantry actions
+
+Plugins: `defiance.moving-actions`, `defiance.moving-actions-animation`,
+`defiance.moving-actions-sync`, `defiance.moving-actions-render-sync`, and
+`defiance.moving-grenades` (experimental, off by default; each is enabled in
+its own section of `infantry.ini`; supported on GOG 2026-09-14 and
+2026-09-25, and Steam 2026-09-22 and 2026-09-25). The movement plugin preserves
+movement speed through grenade throws and weapon changes. Companion plugins
+repair missed weapon handoffs and model/attachment mismatches; the animation
+plugin overlays locomotion leg poses during standing throws and weapon changes.
+Grenade continuation retains a valid interrupted route after positional smoke
+throws, while explicit Stop and new orders cancel it. A brief native grenade
+preparation pause can remain. The animation overlay is experimental and can
+still show transition or gait-cadence artifacts.
+
+The animation plugin uses generated data under
+`mods/defiance_moving_actions/assets`. Install the companion data with the
+companion UI download and restart the game after changes. See
+[building from source](building.md) for the PAK-derived asset workflow.
+
+## Primary weapon drops
+
+Plugin: `defiance.weapon-drops` (experimental, off by default; GOG and
+Steam 2026-09 builds only). A wiped infantry squad drops its primary
+weapons, and collecting a primary re-equips the whole squad with it. To try
+it, set `enabled = true` in `[defiance.weapon-drops]` in `infantry.ini` and
+restart the game; on other game builds it stays inactive. The `ammo_policy` and
+`death_ammo` settings choose what happens to ammunition. Keep copies of your
+saves: with `ammo_policy = retain`, a save needs the plugin to load correctly.
+Details: [plugins/weapon-drops](../plugins/weapon-drops/README.md).
 
 ## Squad previews
 
@@ -131,6 +180,25 @@ two abilities of one ability button (mines and C4 on F2, for example), the game
 empties the button; with this plugin it shows one of them, and pressing it opens
 a row of all of them over the order panel, picked with the order keys or the
 mouse. Details: [plugins/ability-groups](../plugins/ability-groups/README.md).
+
+## Legion vehicle hacking
+
+Plugin: `defiance.legion-vehicle-hacking` (off by default; set
+`enabled = true` in `[defiance.legion-vehicle-hacking]` in `vehicles.ini`).
+Allows hacking Legion vehicles while
+they are repairing themselves. Other hacking target checks remain in place.
+Details: [plugins/legion-vehicle-hacking](../plugins/legion-vehicle-hacking/README.md).
+
+## Vehicle arrival braking
+
+Plugin: `defiance.vehicle-arrival` (experimental, off by default). It shortens
+the braking window for wheeled and tracked cars and tanks as they approach a
+destination. To try it, set `enabled = true` in
+`[defiance.vehicle-arrival]` in `vehicles.ini` and restart the game. The
+`braking_window_percent` setting defaults to `50`; values from `50` through
+`100` are supported, and `100` leaves the game's normal braking behavior.
+In-game stopping accuracy still needs testing. Details:
+[plugins/vehicle-arrival](../plugins/vehicle-arrival/README.md).
 
 ## Regroup
 
@@ -173,11 +241,39 @@ inverts the matrices of moving objects with the game's own arithmetic without
 its many small calls; together that took about 3 ms off each frame in testing
 (51 to 58 fps). All give exactly the game's results. `view_sort = engine`,
 `mesh_sort = engine` and `matrix_inverse = engine` under `[loader]` use the
-game's own.
+game’s own.
 
-None of these changes gameplay, and all are fine in multiplayer.
+On the six supported game builds, `tree_sway = half` under `[loader]` updates
+living-tree wind sway every other tree-manager update while leaving the rest of
+the tree callback at its usual rate. The next sway update receives the sum of
+the skipped and current manager time steps. Trees keep moving, but skipped
+oscillator samples can delay changes in sway speed and make motion less smooth.
+At one busy campaign spot, the user observed roughly 70 to 80 fps with the
+earlier doubled-current-step implementation. A later diagnostic using summed
+steps measured about 80 gameplay-view calls/s at the saved spot, and the user
+found its tree motion acceptable.
+`tree_sway = half_facet` also omits the active tree facet's provider and
+transform refresh on each skipped sway tick. Its completion and release path
+continues to run. At the saved campaign hotspot, one complete ON window gave
+about 83 gameplay-view calls/s versus about 80 before and after, and visible
+trees looked normal. That gain is provisional; deferred provider updates may
+have effects beyond tree motion. This is an opt-in setting, statically mapped
+and byte guarded on the six supported builds but checked in game only on Steam
+2026-09-25.
+`tree_sway = engine` is the default. Unknown game builds keep the engine rate;
+changing this setting requires a restart. The other five supported builds have
+guarded hook sites but have not yet been checked in game.
+
+The rendering optimizations leave gameplay unchanged and are fine in
+multiplayer. The optional tree sway setting has been checked in single-player.
 
 ## Diagnostics
 
-Plugin: `defiance.diagnostics`. Records extra information about selection and
-squad behaviour for troubleshooting; no player controls. Safe to switch off.
+Plugin: `defiance.diagnostics`. Captures configured selection and behaviour
+events for troubleshooting; it adds no player controls. The plugin is enabled
+by default, but every probe in the sample configuration is off. Configure
+probes in `DefianceLoader/config/diagnostics-probes.json`; edits to a valid
+file take effect while the game is running. See [Diagnostics probes](diagnostics.md).
+
+The plugin does not install patch units. The generated diagnostics units remain
+available to the standalone injector's patching and `--select-probe` workflow.

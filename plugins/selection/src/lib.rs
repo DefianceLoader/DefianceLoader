@@ -11,6 +11,15 @@ defiance_feature_sdk::service_handshake!();
 
 /// Every supported build's units (`build.rs`).
 static UNITS: &[Embedded] = include!(concat!(env!("OUT_DIR"), "/units.rs"));
+defiance_feature_sdk::export_unit_patch_contract!(
+    UNITS,
+    if cfg!(feature = "rust-selection") {
+        &["setter", "is_selected"]
+    } else {
+        &[]
+    },
+    false,
+);
 
 /// Call the verified build's selectable virtual getter. The provider does not
 /// retain the facet. Null is allowed; every other pointer must be live.

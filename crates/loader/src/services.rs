@@ -51,6 +51,10 @@ fn loader_table(name: &str, version: u32) -> Option<(usize, usize)> {
             &crate::trace::API as *const _ as usize,
             core::mem::size_of::<defiance_api::TraceV1>(),
         )),
+        ("trace-capture", 1) => Some((
+            &crate::trace::capture::API as *const _ as usize,
+            core::mem::size_of::<defiance_api::TraceCaptureV1>(),
+        )),
         ("session", 1) => Some((
             &crate::session::API as *const _ as usize,
             core::mem::size_of::<defiance_api::SessionV1>(),
@@ -166,25 +170,34 @@ pub fn begin(owner: usize, id: &str, dependencies: Vec<String>) {
         })
     });
 }
+/// The service owner for the current plugin initialization thread, if any.
+/// Loader-owned capabilities use this to bind their lifetime to init.
+pub fn current_owner() -> Option<usize> {
+    CURRENT.with(|slot| slot.borrow().as_ref().map(|context| context.owner))
+}
 pub fn finish(owner: usize, success: bool) {
     CURRENT.with(|slot| *slot.borrow_mut() = None);
     registry().lock().unwrap().finish(owner, success);
+    if !success {
+        crate::trace::capture::close_owner(owner);
+    }
 }
 /// Drop every table a plugin registered, when it is unloaded
 /// (`lifecycle::unload`). Consumers that cached a table are unloaded first.
 pub fn remove(owner: usize) {
     registry().lock().unwrap().finish(owner, false);
+    crate::trace::capture::close_owner(owner);
 }
 
-/// Drop a plugin's tables but keep its record of the tables it holds, for an
-/// old copy that stays mapped (`lifecycle::unload` with `retain`): its code
-/// still runs, and so still calls what it holds.
+/// Drop a plugin's tables but keep its record of the tables it holds while an
+/// old copy remains mapped after a retain request or a busy unload.
 pub fn withdraw(owner: usize) {
     registry()
         .lock()
         .unwrap()
         .tables
         .retain(|_, s| s.owner != owner);
+    crate::trace::capture::close_owner(owner);
 }
 
 unsafe fn name(ptr: *const c_char) -> Option<String> {

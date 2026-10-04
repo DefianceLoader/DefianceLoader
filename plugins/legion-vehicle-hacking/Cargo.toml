@@ -1,0 +1,22 @@
+[package]
+name = "defiance-plugin-legion-vehicle-hacking"
+version = "0.1.0"
+license = "MPL-2.0"
+edition = "2021"
+
+# Standalone plugin in its own workspace, packaged with the loader.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+defiance-api = { path = "../../crates/api" }
+defiance-core = { path = "../../crates/core" }
+
+[build-dependencies]
+defiance-build-support = { path = "../../crates/build-support" }
+
+[profile.release]
+panic = "abort"
+debug = 2

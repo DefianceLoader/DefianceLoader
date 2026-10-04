@@ -1,14 +1,21 @@
 //! Startup-only, opt-in expansion of the stock three-row ammunition menu.
-//! All layout-dependent operands are validated before any write. Never hot unload.
+//! All layout-dependent operands are validated before any write. The optional
+//! combined-step callback is cleared on stop; native layout patches are not hot-unloaded.
 use core::ffi::c_void;
-use defiance_api::{Api, Plugin, ABI_VERSION, LOG_ERROR, LOG_INFO};
+use defiance_api::{
+    AmmoStepV1, Api, PatchContractV1, Plugin, ABI_VERSION, LOG_ERROR, LOG_INFO, LOG_WARN,
+    PATCH_KIND_ENTRY,
+};
 mod combined;
 mod sites;
+mod tooltip;
 use std::sync::atomic::{AtomicUsize, Ordering};
 static REDRAW: AtomicUsize = AtomicUsize::new(0);
 static LAYOUT: AtomicUsize = AtomicUsize::new(0);
 static ALL_SELECTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static COUNT: AtomicUsize = AtomicUsize::new(0);
+static STEP_SERVICE: AtomicUsize = AtomicUsize::new(0);
+static TOOLTIP: AtomicUsize = AtomicUsize::new(0);
 type Pair = unsafe extern "C" fn(usize, usize);
 unsafe fn read(at: usize) -> usize {
     *(at as *const usize)
@@ -53,6 +60,12 @@ unsafe extern "C" fn redraw(menu: usize, entity: usize) {
         COUNT.load(Ordering::Relaxed),
         std::mem::transmute::<usize, Pair>(LAYOUT.load(Ordering::Relaxed)),
     );
+    tooltip::place(
+        menu,
+        COUNT.load(Ordering::Relaxed),
+        TOOLTIP.load(Ordering::Relaxed),
+        std::mem::transmute::<usize, Pair>(LAYOUT.load(Ordering::Relaxed)),
+    );
 }
 
 #[derive(Clone, Copy)]
@@ -69,7 +82,7 @@ struct Site {
     width: usize,
     kind: Kind,
 }
-/// The class offsets `combined.rs` reads, which move between builds while the
+/// The class offsets the menu helpers read, which move between builds while the
 /// patch source stays one. The reference build's values are the defaults.
 #[derive(Clone, Copy)]
 pub struct Offsets {
@@ -80,6 +93,8 @@ pub struct Offsets {
     pub world_player: usize,
     /// The AI's "set this ammo type" virtual method, used by the union click.
     pub ai_set: usize,
+    /// The GUI owner's live ammunition-tooltip controller.
+    pub tooltip: usize,
 }
 
 struct Build {
@@ -124,6 +139,27 @@ unsafe fn log(api: &Api, level: u32, text: &str) {
 extern "system" {
     fn GetModuleFileNameW(module: *mut c_void, path: *mut u16, capacity: u32) -> u32;
 }
+unsafe fn selected_build(api: &Api) -> Result<(*mut u8, usize, &'static Build), String> {
+    let base = (api.module_base)(c"game.dll".as_ptr()).cast::<u8>();
+    if base.is_null() {
+        return Err("game.dll is not loaded".into());
+    }
+    let size = (api.module_size)(base.cast());
+    let mut path = [0u16; 32768];
+    let length = GetModuleFileNameW(base.cast(), path.as_mut_ptr(), path.len() as u32) as usize;
+    if length == 0 || length >= path.len() {
+        return Err("cannot resolve game.dll path".into());
+    }
+    use std::os::windows::ffi::OsStringExt;
+    let path = std::path::PathBuf::from(std::ffi::OsString::from_wide(&path[..length]));
+    let sha = defiance_core::sha256::file(&path).map_err(|e| e.to_string())?;
+    let build = sites::BUILDS
+        .iter()
+        .find(|b| b.sha == sha)
+        .ok_or("unsupported game.dll build; no menu writes made")?;
+    Ok((base, size, build))
+}
+
 unsafe fn install(api: &Api) -> Result<(), String> {
     let columns = defiance_feature_sdk::integer(api, "defiance.expanded-ammo-menu", "columns")
         .map_err(|e| e.to_string())?;
@@ -137,25 +173,25 @@ unsafe fn install(api: &Api) -> Result<(), String> {
         Err(defiance_feature_sdk::ConfigError::Unavailable) => false,
         Err(error) => return Err(error.to_string()),
     };
+    let step_service = if all_selected {
+        defiance_feature_sdk::services::query::<AmmoStepV1>(
+            c"defiance.ammunition",
+            c"combined-step",
+            1,
+        )
+    } else {
+        None
+    };
+    if all_selected && step_service.is_none() {
+        log(
+            api,
+            LOG_WARN,
+            "ammunition combined-step service v1 unavailable; combined slot steps stay disabled until the ammunition plugin is updated",
+        );
+    }
     let menu = defiance_feature_sdk::services::ammo_menu()
         .ok_or("Core ammo-menu service v1 unavailable; update Core with this plugin")?;
-    let base = (api.module_base)(c"game.dll".as_ptr());
-    if base.is_null() {
-        return Err("game.dll is not loaded".into());
-    }
-    let size = (api.module_size)(base);
-    let mut path = [0u16; 32768];
-    let length = GetModuleFileNameW(base, path.as_mut_ptr(), path.len() as u32) as usize;
-    if length == 0 || length >= path.len() {
-        return Err("cannot resolve game.dll path".into());
-    }
-    use std::os::windows::ffi::OsStringExt;
-    let path = std::path::PathBuf::from(std::ffi::OsString::from_wide(&path[..length]));
-    let sha = defiance_core::sha256::file(&path).map_err(|e| e.to_string())?;
-    let build = sites::BUILDS
-        .iter()
-        .find(|b| b.sha == sha)
-        .ok_or("unsupported game.dll build; no menu writes made")?;
+    let (base, size, build) = unsafe { selected_build(api) }?;
     combined::set_offsets(build.offsets);
     // In particular do not edit the nine-slot loop before storage, destruction,
     // click handling, and exception cleanup have all been validated together.
@@ -232,6 +268,7 @@ unsafe fn install(api: &Api) -> Result<(), String> {
     }
     COUNT.store(count, Ordering::Relaxed);
     LAYOUT.store(base as usize + build.layout, Ordering::Relaxed);
+    TOOLTIP.store(build.offsets.tooltip, Ordering::Relaxed);
     let address = base.cast::<u8>().add(build.redraw).cast();
     let mut trampoline = std::ptr::null_mut();
     if (api.hook_exact)(
@@ -268,7 +305,7 @@ unsafe fn install(api: &Api) -> Result<(), String> {
         applied.push(address);
     }
     ALL_SELECTED.store(all_selected, Ordering::Relaxed);
-    log(api,LOG_INFO,&format!("expanded ammo menu: 3 rows x {columns} columns ({count} slots); compact visible slots v2 (relative root movement); all_selected_squads={all_selected}; menu context fix v3; combined counts/reload share v2, vehicles; startup-only, no hot unload"));
+    log(api,LOG_INFO,&format!("expanded ammo menu: 3 rows x {columns} columns ({count} slots); compact visible slots v2 (relative root movement); tooltip beside visible grid v1; all_selected_squads={all_selected}; menu context fix v3; combined counts/reload share v2, vehicles; startup-only, no hot unload"));
     // Nothing fallible may follow successful publication. On refusal the host
     // rolls back this plugin's owned patches; capacity remains unchanged.
     if (menu.publish)(count as u32) != 0 {
@@ -277,7 +314,82 @@ unsafe fn install(api: &Api) -> Result<(), String> {
         }
         return Err("ammo-menu capacity publication refused; patches rolled back".into());
     }
+    if let Some(service) = step_service {
+        STEP_SERVICE.store(service as *const AmmoStepV1 as usize, Ordering::Release);
+        (service.set_handler)(Some(combined::step));
+    }
     Ok(())
+}
+
+unsafe extern "C" fn patch_contract(api: *const Api) -> *const PatchContractV1 {
+    let Some(api_ref) = (unsafe { api.as_ref() }) else {
+        return core::ptr::null();
+    };
+    let columns = match unsafe {
+        defiance_feature_sdk::integer(api_ref, "defiance.expanded-ammo-menu", "columns")
+    } {
+        Ok(columns) => columns,
+        Err(_) => return core::ptr::null(),
+    };
+    let count = match slots(columns) {
+        Ok(count) => count,
+        Err(_) => return core::ptr::null(),
+    };
+    let all_selected = match unsafe {
+        defiance_feature_sdk::boolean(
+            api_ref,
+            "defiance.expanded-ammo-menu",
+            "all_selected_squads",
+        )
+    } {
+        Ok(value) => value,
+        Err(defiance_feature_sdk::ConfigError::Unavailable) => false,
+        Err(_) => return core::ptr::null(),
+    };
+    let (_, _, build) = match unsafe { selected_build(api_ref) } {
+        Ok(selected) => selected,
+        Err(_) => return core::ptr::null(),
+    };
+    let mut patches = build
+        .sites
+        .iter()
+        .filter_map(|site| {
+            let after = replacement(site, count);
+            (after != site.before).then(|| defiance_feature_sdk::contract::Patch {
+                module: c"game.dll",
+                rva: site.rva,
+                kind: defiance_api::PATCH_KIND_BYTES,
+                before: site.before.to_vec(),
+                after: Some(after),
+            })
+        })
+        .collect::<Vec<_>>();
+    patches.push(defiance_feature_sdk::contract::Patch {
+        module: c"game.dll",
+        rva: build.redraw,
+        kind: PATCH_KIND_ENTRY,
+        before: build.redraw_before.to_vec(),
+        after: None,
+    });
+    if all_selected {
+        if let Some(&(rva, before)) = build.combined.first() {
+            patches.push(defiance_feature_sdk::contract::Patch {
+                module: c"game.dll",
+                rva,
+                kind: PATCH_KIND_ENTRY,
+                before: before.to_vec(),
+                after: None,
+            });
+        }
+    }
+    unsafe { defiance_feature_sdk::contract::build(api, patches) }
+}
+unsafe extern "C" fn stop() {
+    let service = STEP_SERVICE.swap(0, Ordering::AcqRel);
+    if service != 0 {
+        let service = &*(service as *const AmmoStepV1);
+        (service.set_handler)(None);
+    }
 }
 unsafe extern "C" fn init(api: *const Api) -> i32 {
     let Some(api) = api.as_ref() else {
@@ -305,8 +417,13 @@ pub extern "C" fn defiance_plugin() -> *const Plugin {
         name: c"defiance.expanded-ammo-menu".as_ptr(),
         version: concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast(),
         init,
-        stop: None,
+        stop: Some(stop),
     })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn defiance_patch_contract_v1(api: *const Api) -> *const PatchContractV1 {
+    unsafe { patch_contract(api) }
 }
 defiance_feature_sdk::crash_handshake!();
 defiance_feature_sdk::service_handshake!();

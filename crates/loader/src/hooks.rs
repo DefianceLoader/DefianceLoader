@@ -16,25 +16,27 @@
 //! to a nearby relay containing an absolute jump to the detour. The relay
 //! shares the trampoline allocation, after its unconditional jump back.
 //!
-//! A hook is owned by the plugin whose `init` installed it. Plugin loading is
-//! sequential, so a single "who is initialising" slot is enough: `install`
-//! charges the hook to whoever is current. That is what lets a plugin's `stop`
-//! take its hooks out again, and what lets a conflict say who got there first.
-//! Two plugins cannot hook one target; the second is refused rather than
-//! silently chaining, since a chain changes what the first plugin's trampoline
-//! means.
+//! A hook belongs to the plugin whose `init` requested it. Managed plugins
+//! build their trampolines and stage write spans during initialization; the
+//! host checks the complete plan and publishes survivors in one transaction.
+//! The original trampoline is ready during init, while the new branch remains
+//! unpublished. Startup conflicts use deterministic plan order, and live add
+//! or reload requests must not overlap a published owner. Legacy plugins keep
+//! immediate installation after the managed plan. No request chains detours.
 
-use crate::code::{alloc_near, flush, publish, write, CommitError, PendingCode};
+use crate::code::{
+    alloc_near, flush, publish, publish_transaction, write, CommitError, PendingCode, PlannedWrite,
+};
 #[cfg(test)]
 use crate::win;
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use std::sync::Mutex;
 
 const ABSOLUTE_JUMP: usize = 14;
 const MIN_DISPLACED: usize = 5;
 
-#[derive(PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 enum Kind {
     /// a function entry, taken over for every caller
     Entry,
@@ -65,7 +67,22 @@ struct Installed {
     code: (usize, usize),
 }
 
+struct Staged {
+    hook: Installed,
+    replacement: Vec<u8>,
+    allocation: Option<PendingCode>,
+}
+
+/// One expected request after its module-relative address has been resolved.
+pub struct ExpectedPatch {
+    pub target: usize,
+    pub kind: u32,
+    pub before: Vec<u8>,
+    pub after: Option<Vec<u8>>,
+}
+
 static INSTALLED: Mutex<Vec<Installed>> = Mutex::new(Vec::new());
+static STAGED: Mutex<Vec<Staged>> = Mutex::new(Vec::new());
 /// The allocations of removed hooks, with their owners: `(owner, start, end)`.
 /// They stay mapped, since a thread may still be in one, and a relay or stub
 /// still jumps into its owner's code, so unloading that owner must wait until
@@ -84,6 +101,16 @@ pub fn owned_code(owner: usize) -> Vec<(usize, usize)> {
         .filter(|hook| hook.owner == owner && hook.code.1 > hook.code.0)
         .map(|hook| hook.code)
         .collect();
+    out.extend(
+        STAGED
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .filter(|request| {
+                request.hook.owner == owner && request.hook.code.1 > request.hook.code.0
+            })
+            .map(|request| request.hook.code),
+    );
     out.extend(
         RETIRED
             .lock()
@@ -119,6 +146,7 @@ pub fn installed() -> Vec<(String, usize, usize, &'static str)> {
 struct Owner {
     index: usize,
     name: String,
+    staged: bool,
 }
 
 thread_local! {
@@ -126,14 +154,67 @@ thread_local! {
     /// Thread-local, not process-global, so a background call cannot inherit
     /// another plugin's ownership or collide with plugin zero.
     static CURRENT: RefCell<Option<Owner>> = const { RefCell::new(None) };
+    /// Startup defers every managed plugin's hook requests until the complete
+    /// managed set has initialized and the host has resolved its overlaps.
+    static PATCH_PLAN: Cell<bool> = const { Cell::new(false) };
+}
+
+/// A scoped startup patch plan. Managed installers stage requests while this
+/// guard is alive; the host decides which owners survive and publishes them.
+pub struct PatchPlanGuard(bool);
+
+impl PatchPlanGuard {
+    pub fn begin() -> Self {
+        Self(PATCH_PLAN.with(|active| active.replace(true)))
+    }
+}
+
+impl Drop for PatchPlanGuard {
+    fn drop(&mut self) {
+        PATCH_PLAN.with(|active| active.set(self.0));
+    }
+}
+
+pub fn patch_plan_active() -> bool {
+    PATCH_PLAN.with(Cell::get)
+}
+
+/// One overlap found between two owners' resolved write spans.
+#[derive(Clone, Debug)]
+pub struct PatchConflictSide {
+    pub owner: usize,
+    pub name: String,
+    pub start: usize,
+    pub length: usize,
+    pub kind: &'static str,
+    /// Published spans are already active and always keep priority over a new
+    /// staged owner (the rule used by hot add and reload).
+    pub published: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct PatchConflict {
+    pub first: PatchConflictSide,
+    pub second: PatchConflictSide,
 }
 
 /// Mark `name` as the plugin installing hooks on this thread now.
 pub fn begin_plugin(owner: usize, name: &str) {
+    begin_plugin_with_policy(owner, name, false);
+}
+
+/// Mark a managed plugin's `init`: hook requests are prepared now and remain
+/// unpublished until the host commits its runtime patch plan.
+pub fn begin_managed_plugin(owner: usize, name: &str) {
+    begin_plugin_with_policy(owner, name, true);
+}
+
+fn begin_plugin_with_policy(owner: usize, name: &str, staged: bool) {
     CURRENT.with(|slot| {
         *slot.borrow_mut() = Some(Owner {
             index: owner,
             name: name.to_string(),
+            staged,
         })
     });
 }
@@ -146,6 +227,281 @@ pub fn end_plugin() {
 fn overlaps(hook: &Installed, target: usize, length: usize) -> bool {
     target < hook.target.saturating_add(hook.original.len())
         && hook.target < target.saturating_add(length)
+}
+
+/// A published span always conflicts. During startup, overlaps between
+/// different staged owners are collected for deterministic plan resolution;
+/// an owner cannot stage overlapping writes of its own.
+fn staged_overlap(owner: &Owner, target: usize, length: usize) -> Option<String> {
+    STAGED
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .find(|staged| {
+            overlaps(&staged.hook, target, length)
+                && (!owner.staged || staged.hook.owner == owner.index)
+        })
+        .map(|staged| staged.hook.owner_name.clone())
+}
+
+fn conflict_side(hook: &Installed, published: bool) -> PatchConflictSide {
+    PatchConflictSide {
+        owner: hook.owner,
+        name: hook.owner_name.clone(),
+        start: hook.target,
+        length: hook.original.len(),
+        kind: hook.kind.label(),
+        published,
+    }
+}
+
+/// Return every partial or complete overlap in the current plan, including a
+/// new request that races a previously published owner.
+pub fn staged_conflicts() -> Vec<PatchConflict> {
+    let installed = INSTALLED.lock().unwrap_or_else(|p| p.into_inner());
+    let staged = STAGED.lock().unwrap_or_else(|p| p.into_inner());
+    let mut conflicts = Vec::new();
+    for request in &*staged {
+        for current in &*installed {
+            if overlaps(current, request.hook.target, request.hook.original.len()) {
+                conflicts.push(PatchConflict {
+                    first: conflict_side(current, true),
+                    second: conflict_side(&request.hook, false),
+                });
+            }
+        }
+    }
+    for first in 0..staged.len() {
+        for second in first + 1..staged.len() {
+            if overlaps(
+                &staged[first].hook,
+                staged[second].hook.target,
+                staged[second].hook.original.len(),
+            ) {
+                conflicts.push(PatchConflict {
+                    first: conflict_side(&staged[first].hook, false),
+                    second: conflict_side(&staged[second].hook, false),
+                });
+            }
+        }
+    }
+    conflicts
+}
+
+/// Require a managed owner's staged requests to match its declared contract.
+pub fn validate_staged_contract(owner: usize, expected: &[ExpectedPatch]) -> Result<(), String> {
+    let staged = STAGED.lock().unwrap_or_else(|p| p.into_inner());
+    let actual: Vec<&Staged> = staged
+        .iter()
+        .filter(|request| request.hook.owner == owner)
+        .collect();
+    let mut matched = vec![false; expected.len()];
+    for request in &actual {
+        let kind = match request.hook.kind {
+            Kind::Entry => defiance_api::PATCH_KIND_ENTRY,
+            Kind::Bytes => defiance_api::PATCH_KIND_BYTES,
+            Kind::Call => defiance_api::PATCH_KIND_CALL,
+        };
+        let found = expected.iter().enumerate().find_map(|(index, entry)| {
+            (!matched[index]
+                && entry.target == request.hook.target
+                && entry.kind == kind
+                && entry.before == request.hook.original
+                && entry
+                    .after
+                    .as_ref()
+                    .is_none_or(|after| after == &request.replacement))
+            .then_some(index)
+        });
+        let Some(index) = found else {
+            return Err(format!(
+                "unexpected {} request at {:#x} ({} bytes)",
+                request.hook.kind.label(),
+                request.hook.target,
+                request.hook.original.len()
+            ));
+        };
+        matched[index] = true;
+    }
+    if let Some((_, entry)) = expected
+        .iter()
+        .enumerate()
+        .find(|(index, _)| !matched[*index])
+    {
+        let kind = match entry.kind {
+            defiance_api::PATCH_KIND_ENTRY => "function",
+            defiance_api::PATCH_KIND_BYTES => "byte patch",
+            defiance_api::PATCH_KIND_CALL => "call site",
+            _ => "unknown patch",
+        };
+        return Err(format!(
+            "missing expected {kind} request at {:#x} ({} bytes)",
+            entry.target,
+            entry.before.len()
+        ));
+    }
+    Ok(())
+}
+
+/// Describe both owners, operation ranges, module RVAs and the module build
+/// hash for a conflict shown in the startup report.
+pub fn describe_conflict(conflict: &PatchConflict) -> String {
+    fn side(side: &PatchConflictSide) -> String {
+        format!(
+            "{} {} at {} ({:#x}..{:#x})",
+            side.name,
+            side.kind,
+            module_location(side.start),
+            side.start,
+            side.start.saturating_add(side.length)
+        )
+    }
+    format!(
+        "{} overlaps {}",
+        side(&conflict.first),
+        side(&conflict.second)
+    )
+}
+
+fn module_location(address: usize) -> String {
+    let mut module = core::ptr::null_mut();
+    if unsafe { crate::win::GetModuleHandleExW(0x4 | 0x2, address as *const u16, &mut module) } == 0
+    {
+        return format!("{address:#x}");
+    }
+    let mut info: crate::win::ModuleInfo = unsafe { core::mem::zeroed() };
+    if unsafe {
+        crate::win::GetModuleInformation(
+            crate::win::GetCurrentProcess(),
+            module,
+            &mut info,
+            core::mem::size_of::<crate::win::ModuleInfo>() as u32,
+        )
+    } == 0
+        || address < info.base as usize
+    {
+        return format!("{address:#x}");
+    }
+    let mut name = vec![0u16; 1024];
+    let length =
+        unsafe { crate::win::GetModuleFileNameW(module, name.as_mut_ptr(), name.len() as u32) };
+    if length == 0 || length as usize >= name.len() {
+        return format!(
+            "{:#x}+{:#x}",
+            info.base as usize,
+            address - info.base as usize
+        );
+    }
+    let path = std::path::PathBuf::from(crate::win::from_wide(&name[..length as usize]));
+    let module_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("module");
+    let build = defiance_core::sha256::file(&path)
+        .map(|hash| format!(" sha256={hash}"))
+        .unwrap_or_default();
+    format!("{module_name}+{:#x}{build}", address - info.base as usize)
+}
+
+/// Publish only `owners`' prepared writes as one transaction. A before-write
+/// error leaves them staged so the host can stop and discard those plugins;
+/// an after-write error retains every entry and allocation for safe recovery.
+pub fn commit_staged(owners: &[usize]) -> Result<(), CommitError> {
+    let mut installed = INSTALLED.lock().unwrap_or_else(|p| p.into_inner());
+    let mut staged = STAGED.lock().unwrap_or_else(|p| p.into_inner());
+    let selected: Vec<usize> = staged
+        .iter()
+        .enumerate()
+        .filter_map(|(index, request)| owners.contains(&request.hook.owner).then_some(index))
+        .collect();
+    if selected.is_empty() {
+        return Ok(());
+    }
+    for (position, &index) in selected.iter().enumerate() {
+        let request = &staged[index].hook;
+        if installed
+            .iter()
+            .any(|current| overlaps(current, request.target, request.original.len()))
+            || selected[..position]
+                .iter()
+                .any(|&prior| overlaps(&staged[prior].hook, request.target, request.original.len()))
+        {
+            return Err(CommitError::BeforeWrite(format!(
+                "{} has an unresolved overlapping span at {:#x}",
+                request.owner_name, request.target
+            )));
+        }
+    }
+    let writes: Vec<PlannedWrite<'_>> = selected
+        .iter()
+        .map(|&index| PlannedWrite {
+            address: staged[index].hook.target as *mut u8,
+            before: &staged[index].hook.original,
+            after: &staged[index].replacement,
+            invariant: staged[index].replacement.len(),
+        })
+        .collect();
+    let after_write = match publish_transaction(&writes) {
+        Ok(()) => None,
+        Err(CommitError::BeforeWrite(error)) => return Err(CommitError::BeforeWrite(error)),
+        Err(CommitError::AfterWrite(error)) => Some(error),
+    };
+    drop(writes);
+
+    let mut remaining = Vec::with_capacity(staged.len() - selected.len());
+    for request in std::mem::take(&mut *staged) {
+        if !owners.contains(&request.hook.owner) {
+            remaining.push(request);
+            continue;
+        }
+        record_mapping(
+            request.hook.target,
+            request.hook.original.len(),
+            request.hook.code.0,
+            request.hook.code.1.saturating_sub(request.hook.code.0),
+            &request.hook.owner_name,
+        );
+        if let Some(allocation) = request.allocation {
+            allocation.forget();
+        }
+        installed.push(request.hook);
+    }
+    *staged = remaining;
+    match after_write {
+        Some(error) => Err(CommitError::AfterWrite(error)),
+        None => Ok(()),
+    }
+}
+
+/// Drop requests for owners that did not survive planning. Executable storage
+/// is retained because an initializer may have handed a trampoline to a
+/// worker before its owner was refused.
+pub fn discard_staged(owners: &[usize]) -> usize {
+    let mut staged = STAGED.lock().unwrap_or_else(|p| p.into_inner());
+    let mut remaining = Vec::with_capacity(staged.len());
+    let mut removed = 0;
+    for request in std::mem::take(&mut *staged) {
+        if !owners.contains(&request.hook.owner) {
+            remaining.push(request);
+            continue;
+        }
+        retire_staged(request);
+        removed += 1;
+    }
+    *staged = remaining;
+    removed
+}
+
+fn retire_staged(request: Staged) {
+    if let Some(allocation) = request.allocation {
+        let start = allocation.address();
+        allocation.forget();
+        RETIRED.lock().unwrap_or_else(|p| p.into_inner()).push((
+            request.hook.owner,
+            start,
+            request.hook.code.1,
+        ));
+    }
 }
 
 /// Whether any installed hook or byte patch overlaps `length` bytes at `start`.
@@ -181,9 +537,10 @@ pub fn put_back_originals(start: usize, bytes: &mut [u8]) -> bool {
 /// The plugin charged with a new hook, or why the call is not supported.
 ///
 /// Hook installation is only meaningful inside a plugin's `init`: the host
-/// charges the hook to that plugin so its `stop` can take it back out, and a
-/// conflict can name who got there first. A call from a background thread or
-/// outside `init` is refused rather than silently charged to plugin zero.
+/// charges the request to that plugin so its `stop` can take it back out, and
+/// the runtime plan can name both owners in an overlap. A call from a
+/// background thread or outside `init` is refused rather than silently charged
+/// to plugin zero.
 fn current_owner() -> Result<Owner, String> {
     CURRENT
         .with(|slot| slot.borrow().clone())
@@ -276,7 +633,8 @@ pub unsafe fn install(
     unsafe { install_out(target, detour, displaced, core::ptr::null_mut()) }
 }
 
-/// As `install`, but stores the trampoline in `original` before publication.
+/// As `install`, but stores the trampoline in `original` before the hook can
+/// be published. Managed requests stay staged until the runtime plan commits.
 ///
 /// # Safety
 /// `target` must be the start of an instruction; `original` may be null.
@@ -328,6 +686,9 @@ unsafe fn install_entry(
             existing.owner
         ));
     }
+    if let Some(existing) = staged_overlap(&owner, target as usize, displaced) {
+        return Err(format!("{target:p} overlaps a staged span from {existing}"));
+    }
 
     let original = unsafe { read(target as *const u8, displaced) };
     defiance_core::decode::validate_copy(&original)?;
@@ -376,6 +737,26 @@ unsafe fn install_entry(
             core::sync::atomic::Ordering::Release,
         );
     }
+    let entry = Installed {
+        target: target as usize,
+        kind: Kind::Entry,
+        original,
+        owner: owner.index,
+        owner_name: owner.name.clone(),
+        code: (trampoline, trampoline + allocation_size),
+    };
+    if owner.staged {
+        STAGED
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(Staged {
+                hook: entry,
+                replacement: patch,
+                allocation: Some(allocation),
+            });
+        return Ok(trampoline as *mut c_void);
+    }
+
     match commit(target as *mut u8, &patch) {
         Ok(()) => {}
         // Nothing changed: the allocation is released by the drop below.
@@ -400,14 +781,7 @@ unsafe fn install_entry(
         allocation_size,
         &owner.name,
     );
-    installed.push(Installed {
-        target: target as usize,
-        kind: Kind::Entry,
-        original,
-        owner: owner.index,
-        owner_name: owner.name,
-        code: (trampoline, trampoline + allocation_size),
-    });
+    installed.push(entry);
     allocation.forget(); // the installed hook owns the entire block
     Ok(trampoline as *mut c_void)
 }
@@ -428,7 +802,8 @@ pub unsafe fn install_call(site: *mut c_void, detour: *mut c_void) -> Result<usi
 }
 
 /// As `install_call`, but stores the address the call reached in `original`
-/// before the call is redirected.
+/// before the call is redirected. Managed requests stay staged until the
+/// runtime plan commits.
 ///
 /// # Safety
 /// `site` must be the start of a direct `call`; `original` may be null.
@@ -451,6 +826,9 @@ pub unsafe fn install_call_out(
             existing.owner_name,
             existing.owner
         ));
+    }
+    if let Some(existing) = staged_overlap(&owner, site as usize, MIN_DISPLACED) {
+        return Err(format!("{site:p} overlaps a staged span from {existing}"));
     }
     if original[0] != 0xe8 {
         return Err(format!("{site:p} is not a direct call"));
@@ -481,6 +859,25 @@ pub unsafe fn install_call_out(
             core::sync::atomic::Ordering::Release,
         );
     }
+    let entry = Installed {
+        target: site as usize,
+        kind: Kind::Call,
+        original,
+        owner: owner.index,
+        owner_name: owner.name.clone(),
+        code: (stub, stub + stub_size),
+    };
+    if owner.staged {
+        STAGED
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(Staged {
+                hook: entry,
+                replacement: patch,
+                allocation: Some(allocation),
+            });
+        return Ok(reached);
+    }
     // A call has no instruction boundary inside its five bytes, so any
     // suspended thread can only be at the start; publishing is safe.
     match publish(at, &patch, MIN_DISPLACED) {
@@ -498,19 +895,13 @@ pub unsafe fn install_call_out(
     }
 
     record_mapping(site as usize, MIN_DISPLACED, stub, stub_size, &owner.name);
-    installed.push(Installed {
-        target: site as usize,
-        kind: Kind::Call,
-        original,
-        owner: owner.index,
-        owner_name: owner.name,
-        code: (stub, stub + stub_size),
-    });
+    installed.push(entry);
     allocation.forget();
     Ok(reached)
 }
 
-/// An assembled patch owns its whole span in the same registry as hooks.
+/// An assembled patch owns its whole span in the same registry as hooks. A
+/// managed plugin stages the replacement until the runtime plan commits.
 pub unsafe fn patch_bytes(target: *mut c_void, before: &[u8], after: &[u8]) -> Result<(), String> {
     if before.is_empty() || before.len() != after.len() {
         return Err("invalid patch length".into());
@@ -523,8 +914,30 @@ pub unsafe fn patch_bytes(target: *mut c_void, before: &[u8], after: &[u8]) -> R
     {
         return Err(format!("byte patch overlaps {}", existing.owner_name));
     }
+    if let Some(existing) = staged_overlap(&owner, target as usize, before.len()) {
+        return Err(format!("byte patch overlaps a staged span from {existing}"));
+    }
     if unsafe { read(target.cast(), before.len()) } != before {
         return Err("byte patch expected bytes mismatch".into());
+    }
+    let entry = Installed {
+        target: target as usize,
+        kind: Kind::Bytes,
+        original: before.to_vec(),
+        owner: owner.index,
+        owner_name: owner.name.clone(),
+        code: (0, 0),
+    };
+    if owner.staged {
+        STAGED
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(Staged {
+                hook: entry,
+                replacement: after.to_vec(),
+                allocation: None,
+            });
+        return Ok(());
     }
     match publish(target.cast(), after, after.len()) {
         Ok(()) => {}
@@ -534,20 +947,23 @@ pub unsafe fn patch_bytes(target: *mut c_void, before: &[u8], after: &[u8]) -> R
         }
     }
     record_mapping(target as usize, before.len(), 0, 0, &owner.name);
-    installed.push(Installed {
-        target: target as usize,
-        kind: Kind::Bytes,
-        original: before.to_vec(),
-        owner: owner.index,
-        owner_name: owner.name,
-        code: (0, 0),
-    });
+    installed.push(entry);
     Ok(())
 }
 
 /// Restore the site. Published executable storage lives until process exit.
 /// A detour outside the trampoline may still hold its address for a later call.
 pub fn remove(target: *mut c_void) -> Result<(), String> {
+    {
+        let mut staged = STAGED.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(index) = staged
+            .iter()
+            .position(|request| request.hook.target == target as usize)
+        {
+            retire_staged(staged.remove(index));
+            return Ok(());
+        }
+    }
     let mut installed = INSTALLED.lock().unwrap();
     let Some(index) = installed
         .iter()
@@ -593,6 +1009,7 @@ pub fn remove_owned(owner: usize) -> usize {
 /// The host must not announce a clean rollback while a restored hook's code is
 /// still reachable, so a non-zero second value degrades startup.
 pub fn remove_owned_report(owner: usize) -> (usize, usize) {
+    let mut removed = discard_staged(&[owner]);
     let targets: Vec<usize> = INSTALLED
         .lock()
         .unwrap()
@@ -600,7 +1017,6 @@ pub fn remove_owned_report(owner: usize) -> (usize, usize) {
         .filter(|hook| hook.owner == owner)
         .map(|hook| hook.target)
         .collect();
-    let mut removed = 0;
     let mut failed = 0;
     for target in targets {
         match remove(target as *mut c_void) {

@@ -4,7 +4,10 @@ use crate::{
     bindings as b,
     model::{remap_pins, Supply},
 };
-use defiance_api::{Api, ABI_VERSION, LOG_ERROR, LOG_INFO, LOG_WARN};
+use defiance_api::{
+    Api, PatchContractV1, ABI_VERSION, LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_WARN, PATCH_KIND_CALL,
+    PATCH_KIND_ENTRY,
+};
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet},
@@ -135,7 +138,7 @@ type AssignString = unsafe extern "C" fn(usize, usize, usize) -> usize;
 unsafe extern "C" fn keep_requested_species(dst: usize, src: usize, len: usize) -> usize {
     if CONTEXT.with(|p| p.borrow().is_some()) {
         log(
-            LOG_INFO,
+            LOG_DEBUG,
             "regroup factory: retained requested squad type instead of menu default",
         );
         dst
@@ -985,11 +988,11 @@ unsafe extern "C" fn prepare_templates(holder: usize, config: usize) {
             // slots, even with an empty weapons override. Skip before either
             // templates or their default ammunition are allocated.
             if actual_species != p.species {
-                log(LOG_INFO, &format!("regroup destination: matched separately allocated species {} by identifier and native type", species_label(actual_species)));
+                log(LOG_DEBUG, &format!("regroup destination: matched separately allocated species {} by identifier and native type", species_label(actual_species)));
             }
             PREPARED_HOLDER.with(|v| v.set(holder));
             log(
-                LOG_INFO,
+                LOG_DEBUG,
                 "regroup destination: skipped default weapon templates",
             );
             return;
@@ -1092,7 +1095,7 @@ unsafe fn regroup(manager: usize, p: Plan) -> usize {
                 if holder != 0 && pointers(holder, 0xa0, 64).is_ok_and(|m| m.is_empty()) {
                     call(b::CLEANUP, ai);
                     log(
-                        LOG_INFO,
+                        LOG_DEBUG,
                         "requested native cleanup of empty failed destination",
                     );
                 } else {
@@ -1162,7 +1165,7 @@ unsafe fn configure_hotkeys(api: &Api) -> Result<(), String> {
                 .map_err(|_| format!("{name}: invalid UTF-8"))?
         };
         let chord = crate::hotkeys::Chord::parse(text).map_err(|e| format!("{name}: {e}"))?;
-        log(LOG_INFO, &format!("{name} = {text}"));
+        log(LOG_DEBUG, &format!("{name} = {text}"));
         chords.push(chord);
     }
     if chords[0] == chords[1] {
@@ -1208,7 +1211,7 @@ unsafe extern "C" fn input_dispatch(
         dispatch, message, key, flags,
     );
     if !INPUT_SEEN.swap(true, Ordering::Relaxed) {
-        log(LOG_INFO, "game input dispatch hook reached");
+        log(LOG_DEBUG, "game input dispatch hook reached");
     }
     let input = q(dispatch, 8);
     if input == 0 {
@@ -1234,7 +1237,7 @@ unsafe extern "C" fn input_dispatch(
         return;
     }
     log(
-        LOG_INFO,
+        LOG_DEBUG,
         if action == 1 {
             "restore keyboard event detected"
         } else {
@@ -1257,7 +1260,7 @@ unsafe extern "C" fn input_dispatch(
         );
     } else if action == 1 {
         log(
-            LOG_INFO,
+            LOG_DEBUG,
             &format!(
                 "restore limits: {} soldiers, {} ammunition types",
                 limits().soldiers,
@@ -1272,7 +1275,7 @@ unsafe extern "C" fn input_dispatch(
         }
     } else {
         log(
-            LOG_INFO,
+            LOG_DEBUG,
             &format!(
                 "regroup limits: {} soldiers, {} ammunition types",
                 limits().soldiers,
@@ -1282,7 +1285,7 @@ unsafe extern "C" fn input_dispatch(
         match input_manager(input).and_then(|manager| plan(manager).map(|p| (manager, p))) {
             Ok((manager, p)) => {
                 log(
-                    LOG_INFO,
+                    LOG_DEBUG,
                     &format!(
                         "regroup preflight passed: {} soldiers from {} squads; starting creation",
                         p.moved.len(),
@@ -1335,6 +1338,87 @@ unsafe fn validated_build(
         }
     }
     Ok((base, build))
+}
+
+fn checked_bytes(build: &b::Build, rva: usize, length: usize) -> Option<&'static [u8]> {
+    build
+        .checks
+        .iter()
+        .find(|(at, bytes)| *at == rva && bytes.len() >= length)
+        .map(|(_, bytes)| &bytes[..length])
+}
+
+pub unsafe fn patch_contract(api: *const Api) -> *const PatchContractV1 {
+    let Some(api_ref) = (unsafe { api.as_ref() }) else {
+        return core::ptr::null();
+    };
+    if api_ref.abi_version != ABI_VERSION || api_ref.reserved != 0 {
+        return core::ptr::null();
+    }
+    let (_, logic) = match unsafe { validated_build(api_ref, b"logic.dll\0", b::BUILDS) } {
+        Ok(selected) => selected,
+        Err(_) => return core::ptr::null(),
+    };
+    let (_, game) = match unsafe { validated_build(api_ref, b"game.dll\0", b::GAME_BUILDS) } {
+        Ok(selected) => selected,
+        Err(_) => return core::ptr::null(),
+    };
+    if offsets_for(logic.sha, game.sha).is_none() {
+        return core::ptr::null();
+    }
+    let mut patches = Vec::with_capacity(10);
+    for index in [
+        b::SPAWN_FALLBACK_CALL,
+        b::CREATE_CALL,
+        b::WIRE_CALL,
+        b::TEMPLATES_CALL,
+    ] {
+        let rva = logic.rvas[index];
+        let Some(before) = checked_bytes(logic, rva, 5) else {
+            return core::ptr::null();
+        };
+        patches.push(defiance_feature_sdk::contract::Patch {
+            module: c"logic.dll",
+            rva,
+            kind: PATCH_KIND_CALL,
+            before: before.to_vec(),
+            after: None,
+        });
+    }
+    for (rva, length) in [
+        (game.rvas[0], INPUT_DISPLACED),
+        (game.rvas[4], HOVER_DISPLACED),
+    ] {
+        let Some(before) = checked_bytes(game, rva, length) else {
+            return core::ptr::null();
+        };
+        patches.push(defiance_feature_sdk::contract::Patch {
+            module: c"game.dll",
+            rva,
+            kind: PATCH_KIND_ENTRY,
+            before: before.to_vec(),
+            after: None,
+        });
+    }
+    for (index, length) in [
+        (b::PERK_REFRESH, PERK_DISPLACED),
+        (b::EXPORT_ROSTER, ROSTER_DISPLACED),
+        (b::CLEANUP, CLEANUP_DISPLACED),
+        (b::SQUAD_UPDATE, UPDATE_DISPLACED),
+    ] {
+        let rva = logic.rvas[index];
+        let Some(before) = checked_bytes(logic, rva, length) else {
+            return core::ptr::null();
+        };
+        patches.push(defiance_feature_sdk::contract::Patch {
+            module: c"logic.dll",
+            rva,
+            kind: PATCH_KIND_ENTRY,
+            before: before.to_vec(),
+            after: None,
+        });
+    }
+    unsafe { defiance_feature_sdk::contract::build(api, patches) }
 }
 
 pub unsafe extern "C" fn init(api: *const Api) -> i32 {

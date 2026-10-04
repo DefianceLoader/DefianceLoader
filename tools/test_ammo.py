@@ -1037,7 +1037,7 @@ def spin(case, delta, source=None, lparam=0x00500040):
     WHEEL(case["menu"], source or case["cards"][0], None, event(0x20a, delta, lparam))
 
 
-put(step_cell, bytes(0x30))
+put(step_cell, bytes(0x38))
 put(step_cell, struct.pack("<I", 0x11))              # Ctrl, no click steps
 put(keys, struct.pack("<H", 0x8000))
 case = step_case()

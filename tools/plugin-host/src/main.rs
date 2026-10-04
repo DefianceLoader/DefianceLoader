@@ -16,6 +16,65 @@ extern "system" {
     fn GetProcAddress(module: *mut c_void, name: *const u8) -> *mut c_void;
 }
 static MODULES: OnceLock<[(usize, usize); 2]> = OnceLock::new();
+static RTTI: OnceLock<Vec<defiance_core::pe::Mapped>> = OnceLock::new();
+type ConfigGet = unsafe extern "C" fn(*const c_char, *const c_char) -> *const c_char;
+static CONFIG_GET: OnceLock<ConfigGet> = OnceLock::new();
+static PROBE_FILE: OnceLock<std::ffi::CString> = OnceLock::new();
+
+unsafe extern "C" fn config_get(section: *const c_char, key: *const c_char) -> *const c_char {
+    if !section.is_null()
+        && !key.is_null()
+        && unsafe { CStr::from_ptr(section) }.to_bytes() == b"defiance.diagnostics"
+        && unsafe { CStr::from_ptr(key) }.to_bytes() == b"probe_file"
+    {
+        return PROBE_FILE
+            .get_or_init(|| {
+                let path = std::env::temp_dir().join(format!(
+                    "defiance-native-host-{}-empty-probes.json",
+                    std::process::id()
+                ));
+                std::ffi::CString::new(path.to_string_lossy().as_bytes()).unwrap()
+            })
+            .as_ptr();
+    }
+    CONFIG_GET
+        .get()
+        .map_or(std::ptr::null(), |get| unsafe { get(section, key) })
+}
+
+// Share the generated passenger contract with the byte inventory assertion.
+mod passenger {
+    #[derive(Clone, Copy)]
+    pub(super) struct Site {
+        pub rva: usize,
+        pub before: &'static [u8],
+    }
+    #[allow(dead_code)]
+    pub(super) struct Build {
+        pub name: &'static str,
+        pub tick: Site,
+        pub deployment: Site,
+        pub query: Site,
+        pub choose: Site,
+        pub command: Site,
+        pub shared_refresh: Site,
+        pub setter: Site,
+        pub range: Site,
+        pub move_acquire: Site,
+        pub candidate_query: Site,
+        pub capable: Site,
+        pub ui: Site,
+        pub gunner_count: usize,
+        pub gunner_get: usize,
+    }
+    pub(super) const BUILDS: &[Build] = sites::BUILDS;
+    mod sites {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../plugins/vehicle-special-fire/src/sites.rs"
+        ));
+    }
+}
 static PATCH: OnceLock<unsafe extern "C" fn(*mut c_void, *const u8, *const u8, usize) -> i32> =
     OnceLock::new();
 static HOOK_EXACT: OnceLock<
@@ -23,8 +82,66 @@ static HOOK_EXACT: OnceLock<
 > = OnceLock::new();
 static FAIL_AT: AtomicUsize = AtomicUsize::new(usize::MAX);
 static CALLS: AtomicUsize = AtomicUsize::new(0);
+const INSPECTION_MODULE_SIZE: usize = 0x1000;
+static INSPECTION_MODULE: AtomicUsize = AtomicUsize::new(0);
+static INSPECTION_PATTERN_CALLS: AtomicUsize = AtomicUsize::new(0);
 unsafe extern "C" fn fail_pickup_hook(_: *mut c_void, _: *mut c_void, _: *mut *mut c_void) -> i32 {
     -1
+}
+unsafe extern "C" fn fail_unit_inspection_hook(
+    _: *mut c_void,
+    _: *mut c_void,
+    _: *mut *mut c_void,
+) -> i32 {
+    -1
+}
+unsafe extern "C" fn inspection_module(name: *const c_char) -> *mut c_void {
+    if unsafe { CStr::from_ptr(name) }.to_bytes() == b"game.dll" {
+        INSPECTION_MODULE.load(Ordering::SeqCst) as *mut c_void
+    } else {
+        std::ptr::null_mut()
+    }
+}
+unsafe extern "C" fn inspection_size(base: *mut c_void) -> usize {
+    if base as usize == INSPECTION_MODULE.load(Ordering::SeqCst) {
+        INSPECTION_MODULE_SIZE
+    } else {
+        0
+    }
+}
+unsafe extern "C" fn inspection_find_pattern(
+    base: *mut c_void,
+    size: usize,
+    _: *const c_char,
+) -> *mut c_void {
+    if base.is_null() || size != INSPECTION_MODULE_SIZE {
+        return std::ptr::null_mut();
+    }
+    let index = INSPECTION_PATTERN_CALLS.fetch_add(1, Ordering::SeqCst);
+    if unsafe { *(base as *const u8) } == 0 {
+        return std::ptr::null_mut();
+    }
+    let Some(offset) = [0x100, 0x200, 0x300, 0x400].get(index) else {
+        return std::ptr::null_mut();
+    };
+    unsafe { (base as *mut u8).add(*offset) as *mut c_void }
+}
+unsafe extern "C" fn inspection_config_get(
+    section: *const c_char,
+    key: *const c_char,
+) -> *const c_char {
+    if unsafe { CStr::from_ptr(section) }.to_bytes() != b"defiance.unit-inspection" {
+        return std::ptr::null();
+    }
+    match unsafe { CStr::from_ptr(key) }.to_bytes() {
+        b"show_allied" | b"show_neutral" | b"show_enemy" => c"true".as_ptr(),
+        b"ally_weapon_toggles" => c"false".as_ptr(),
+        b"own_colour" => c"teal".as_ptr(),
+        b"allied_colour" => c"yellow".as_ptr(),
+        b"neutral_colour" => c"grey-blue".as_ptr(),
+        b"enemy_colour" => c"red".as_ptr(),
+        _ => std::ptr::null(),
+    }
 }
 unsafe extern "C" fn patch(
     at: *mut c_void,
@@ -54,6 +171,21 @@ unsafe extern "C" fn size(base: *mut c_void) -> usize {
         .find(|m| m.0 == base as usize)
         .unwrap()
         .1
+}
+// VirtualAlloc copies retain the file's preferred-base vtable pointers. Resolve
+// their stock RTTI at that base, then return the live copy's method address.
+unsafe extern "C" fn vtable_slot(class: *const c_char, slot: usize) -> *mut c_void {
+    let class = unsafe { CStr::from_ptr(class) }.to_str().unwrap();
+    for (i, image) in RTTI.get().unwrap().iter().enumerate() {
+        if let Some(rva) =
+            defiance_core::rtti::method(&image.image, image.base, class, slot, &|rva| {
+                image.is_code(rva)
+            })
+        {
+            return (MODULES.get().unwrap()[i].0 + rva) as *mut c_void;
+        }
+    }
+    core::ptr::null_mut()
 }
 unsafe extern "C" fn log(_: u32, text: *const c_char) {
     println!("{}", unsafe { CStr::from_ptr(text) }.to_string_lossy());
@@ -122,6 +254,143 @@ unsafe fn exercise_rust_pickup(target: usize) {
         "production callback must not write the squad"
     );
 }
+fn prepare_inspection_module(base: *mut u8) {
+    unsafe {
+        core::ptr::write_bytes(base, 0x90, INSPECTION_MODULE_SIZE);
+        *base.add(0x386) = 0xe8;
+        core::ptr::write_bytes(base.add(0x387), 0, 4);
+        for (offset, bytes) in [
+            (0x400 + 0x18a, &[0x4c, 0x8b, 0x82, 0x28, 0x06, 0, 0][..]),
+            (0x400 + 0x1be, &[0xff, 0x90, 0x40, 0x06, 0, 0][..]),
+            (0x400 + 0x1de, &[0xff, 0x90, 0x30, 0x06, 0, 0][..]),
+            (0x400 + 0x1fe, &[0xff, 0x90, 0x38, 0x06, 0, 0][..]),
+        ] {
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), base.add(offset), bytes.len());
+        }
+    }
+}
+
+fn unit_inspection_partial_install_test(plugins: &PathBuf) {
+    let path = plugins.join("defiance_plugin_unit_inspection.dll");
+    let wide: Vec<u16> = path
+        .to_string_lossy()
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    let library = unsafe { LoadLibraryW(wide.as_ptr()) };
+    assert!(!library.is_null(), "load unit-inspection");
+    let symbol = unsafe { GetProcAddress(library, b"defiance_plugin\0".as_ptr()) };
+    assert!(!symbol.is_null(), "unit-inspection has a plugin entry");
+    let entry: Entry = unsafe { core::mem::transmute(symbol) };
+    let plugin = unsafe { &*entry() };
+    assert_eq!(
+        unsafe { CStr::from_ptr(plugin.name) }.to_bytes(),
+        b"defiance.unit-inspection"
+    );
+
+    let module = unsafe { VirtualAlloc(std::ptr::null_mut(), INSPECTION_MODULE_SIZE, 0x3000, 0x40) }
+        as *mut u8;
+    assert!(!module.is_null(), "allocate the synthetic game module");
+    INSPECTION_MODULE.store(module as usize, Ordering::SeqCst);
+
+    for (case, expected_hooks) in [
+        ("second ownership hook", 1),
+        ("ammo click redirect", 2),
+        ("relation label hook", 3),
+    ] {
+        prepare_inspection_module(module);
+        let stock = snapshot(module as usize, INSPECTION_MODULE_SIZE);
+        INSPECTION_PATTERN_CALLS.store(0, Ordering::SeqCst);
+        CALLS.store(0, Ordering::SeqCst);
+        FAIL_AT.store(usize::MAX, Ordering::SeqCst);
+
+        let mut api = defiance_loader::test_host::build_api();
+        api.module_base = inspection_module;
+        api.module_size = inspection_size;
+        api.find_pattern = inspection_find_pattern;
+        api.config_get = inspection_config_get;
+        api.hook_exact = hook_exact;
+        api.log = log;
+        match case {
+            "second ownership hook" => FAIL_AT.store(1, Ordering::SeqCst),
+            "ammo click redirect" => api.hook_call = fail_unit_inspection_hook,
+            _ => api.hook = fail_unit_inspection_hook,
+        }
+
+        let owner = 0x7000 + expected_hooks;
+        defiance_loader::test_host::begin_plugin(owner, "defiance.unit-inspection");
+        let status = unsafe { (plugin.init)(&api) };
+        defiance_loader::test_host::end_plugin();
+        assert_ne!(status, 0, "{case} must fail plugin initialization");
+        assert_eq!(
+            INSPECTION_PATTERN_CALLS.load(Ordering::SeqCst),
+            4,
+            "{case} reaches the installation hooks on the synthetic build"
+        );
+        assert_eq!(
+            defiance_loader::test_host::installed().len(),
+            expected_hooks,
+            "{case} leaves each earlier hook owned before rollback"
+        );
+        if let Some(stop) = plugin.stop {
+            unsafe { stop() };
+        }
+        let (removed, failed) = defiance_loader::test_host::remove_owned_report(owner);
+        assert_eq!(removed, expected_hooks, "{case} restores every owned hook");
+        assert_eq!(failed, 0, "{case} rollback is complete");
+        assert!(defiance_loader::test_host::installed().is_empty());
+        assert_eq!(
+            snapshot(module as usize, INSPECTION_MODULE_SIZE),
+            stock,
+            "{case} restores the synthetic game bytes"
+        );
+    }
+
+    unsafe { core::ptr::write_bytes(module, 0, INSPECTION_MODULE_SIZE) };
+    INSPECTION_PATTERN_CALLS.store(0, Ordering::SeqCst);
+    CALLS.store(0, Ordering::SeqCst);
+    let stock = snapshot(module as usize, INSPECTION_MODULE_SIZE);
+    let mut api = defiance_loader::test_host::build_api();
+    api.module_base = inspection_module;
+    api.module_size = inspection_size;
+    api.find_pattern = inspection_find_pattern;
+    api.config_get = inspection_config_get;
+    api.hook_exact = hook_exact;
+    api.log = log;
+    let owner = 0x7fff;
+    defiance_loader::test_host::begin_plugin(owner, "defiance.unit-inspection");
+    let status = unsafe { (plugin.init)(&api) };
+    defiance_loader::test_host::end_plugin();
+    assert_eq!(status, 0, "an unsupported build remains an optional no-op");
+    assert_eq!(INSPECTION_PATTERN_CALLS.load(Ordering::SeqCst), 4);
+    let contract_symbol =
+        unsafe { GetProcAddress(library, b"defiance_patch_contract_v1\0".as_ptr()) };
+    assert!(
+        !contract_symbol.is_null(),
+        "unit-inspection exports its contract"
+    );
+    let contract: unsafe extern "C" fn(*const Api) -> *const defiance_api::PatchContractV1 =
+        unsafe { core::mem::transmute(contract_symbol) };
+    let contract = unsafe { contract(&api) };
+    assert!(
+        !contract.is_null(),
+        "unsupported build has an empty contract"
+    );
+    assert_eq!(unsafe { (*contract).count }, 0);
+    assert_eq!(INSPECTION_PATTERN_CALLS.load(Ordering::SeqCst), 8);
+    assert!(
+        defiance_loader::test_host::installed().is_empty(),
+        "an unsupported build stages no hooks"
+    );
+    let (removed, failed) = defiance_loader::test_host::remove_owned_report(owner);
+    assert_eq!((removed, failed), (0, 0));
+    assert_eq!(
+        snapshot(module as usize, INSPECTION_MODULE_SIZE),
+        stock,
+        "an unsupported build leaves the module unchanged"
+    );
+}
+
 /// The feature DLLs a scenario does not load at all, by legacy feature ID
 /// (0 is core).
 fn skipped(scenario: &str) -> Vec<u32> {
@@ -137,9 +406,10 @@ fn skipped(scenario: &str) -> Vec<u32> {
         "without-pickup" => vec![1],
         "without-diagnostics" => vec![7],
         "without-preview-weapon" => vec![10],
+        "without-vehicle-special-fire" => vec![11],
         "without-core" => vec![0],
-        "diagnostics-only" => vec![2, 4, 3, 5, 8, 9, 6, 1, 10],
-        "core-only" => vec![2, 4, 3, 5, 8, 9, 6, 1, 7, 10],
+        "diagnostics-only" => vec![2, 4, 3, 5, 8, 9, 6, 1, 10, 11],
+        "core-only" => vec![2, 4, 3, 5, 8, 9, 6, 1, 7, 10, 11],
         "without-posture-and-ammo" => vec![4, 3, 6],
         "without-movement-and-ammo" => vec![3, 6],
         "shared-helper-corrupt" => vec![1, 7],
@@ -155,7 +425,7 @@ fn omitted(scenario: &str) -> Vec<u32> {
         "fail-firing" => vec![5],
         "without-posture" => vec![4, 3], // movement is refused without posture
         "without-selection" => vec![2, 4, 3, 5, 8, 9, 6],
-        "diagnostics-only" => vec![2, 4, 3, 5, 8, 9, 6, 1, 10],
+        "diagnostics-only" => vec![2, 4, 3, 5, 8, 9, 6, 1, 7, 10, 11],
         "without-ammo" | "fail-ammo" | "disabled-ammo-corrupt" | "enabled-ammo-corrupt" => vec![6],
         "without-attack" | "fail-attack" => vec![8],
         "without-garrison" | "fail-garrison" => vec![9],
@@ -164,7 +434,8 @@ fn omitted(scenario: &str) -> Vec<u32> {
         "without-pickup" => vec![1],
         "without-diagnostics" => vec![7],
         "without-preview-weapon" => vec![10],
-        "core-only" => vec![2, 4, 3, 5, 8, 9, 6, 1, 7, 10],
+        "without-vehicle-special-fire" => vec![11],
+        "core-only" => vec![2, 4, 3, 5, 8, 9, 6, 1, 7, 10, 11],
         "without-posture-and-ammo" => vec![4, 3, 6],
         "without-movement-and-ammo" => vec![3, 6],
         "shared-helper-corrupt" => vec![1, 7],
@@ -185,9 +456,12 @@ fn main() {
         .to_path_buf();
     let mut originals = Vec::new();
     let mut targets = Vec::new();
+    let mut rtti = Vec::new();
     for name in ["logic.dll", "game.dll"] {
         let path = dir.join(name);
-        let image = defiance_core::pe::map_file(&path).unwrap();
+        let mapped = defiance_core::pe::map(&path).unwrap();
+        let image = mapped.image.clone();
+        rtti.push(mapped);
         let base =
             unsafe { VirtualAlloc(std::ptr::null_mut(), image.len(), 0x3000, 0x40) } as *mut u8;
         assert!(!base.is_null());
@@ -206,6 +480,7 @@ fn main() {
             (targets[1].base as usize, targets[1].size),
         ])
         .unwrap();
+    assert!(RTTI.set(rtti).is_ok());
     // The reference build's units, as Core embeds them, relocated with the
     // same code Core uses when this copy is a verified build.
     let module_index = |unit: &Unit| usize::from(unit.module == "game.dll");
@@ -222,6 +497,7 @@ fn main() {
             "attack" => 8,
             "garrison" => 9,
             "preview-weapon" => 10,
+            "vehicle-special-fire" => 11,
             _ => 0,
         }
     };
@@ -360,8 +636,11 @@ fn main() {
         );
     }
     let mut api: Api = defiance_loader::test_host::build_api();
+    CONFIG_GET.set(api.config_get).unwrap();
+    api.config_get = config_get;
     api.module_base = module;
     api.module_size = size;
+    api.vtable_slot = vtable_slot;
     api.log = log;
     PATCH.set(api.patch_bytes).unwrap();
     api.patch_bytes = patch;
@@ -371,6 +650,10 @@ fn main() {
         api.hook_call = fail_pickup_hook;
     }
     let api = Box::leak(Box::new(api));
+    if scenario == "unit-inspection-partial-install" {
+        unit_inspection_partial_install_test(&plugins);
+        return;
+    }
     let order = [
         (0, "core"),
         (2, "selection"),
@@ -383,6 +666,7 @@ fn main() {
         (1, "pickup"),
         (7, "diagnostics"),
         (10, "preview_weapon"),
+        (11, "vehicle_special_fire"),
     ];
     let mut failed = Vec::new();
     if scenario == "unknown-build" {
@@ -476,9 +760,9 @@ fn main() {
         }
     }
     if scenario == "unknown-build" {
-        assert_eq!(failed, [0, 2, 4, 3, 5, 8, 9, 6, 1, 7, 10]);
+        assert_eq!(failed, [0, 2, 4, 3, 5, 8, 9, 6, 1, 10, 11]);
     } else if scenario == "without-core" {
-        assert_eq!(failed, [2, 4, 3, 5, 8, 9, 6, 1, 7, 10]);
+        assert_eq!(failed, [2, 4, 3, 5, 8, 9, 6, 1, 10, 11]);
     } else if scenario == "fail-ammo" {
         assert_eq!(failed, [6]);
     } else if scenario == "fail-attack" {
@@ -495,7 +779,7 @@ fn main() {
         // The build anchor is required by every unit, so damaging it refuses
         // Core, and with it every feature, on both the source and a relocated
         // build.
-        assert_eq!(failed, [0, 2, 4, 3, 5, 8, 9, 6, 10]);
+        assert_eq!(failed, [0, 2, 4, 3, 5, 8, 9, 6, 10, 11]);
     } else if scenario == "enabled-ammo-corrupt" {
         // Only ammunition is refused: its install on the source build, its
         // missing signature on a relocated build. Other features install.
@@ -507,7 +791,8 @@ fn main() {
     // each unit's code exactly its blob linked where Core put it; everything
     // else in the modules is stock.
     let installed = |feature: u32| {
-        !omitted(scenario).contains(&feature)
+        feature != 7
+            && !omitted(scenario).contains(&feature)
             && !failed.contains(&(feature as i32))
             && !skipped(scenario).contains(&feature)
     };
@@ -518,6 +803,36 @@ fn main() {
             .map(|t| snapshot(t.base as usize, t.size))
             .collect();
         let mut expected = originals.clone();
+        if installed(11) {
+            let tick = unsafe { vtable_slot(c".?AVGunner@Leonardo@@".as_ptr(), 5) } as usize;
+            let build = passenger::BUILDS
+                .iter()
+                .find(|build| targets[0].base as usize + build.tick.rva == tick)
+                .expect("passenger native contract matches stock RTTI");
+            let entry_sites = [
+                (0, build.tick),
+                (0, build.deployment),
+                (0, build.choose),
+                (0, build.command),
+                (0, build.setter),
+                (0, build.shared_refresh),
+                (0, build.move_acquire),
+                (0, build.candidate_query),
+                (0, build.capable),
+                (1, build.ui),
+            ];
+            for (i, site) in entry_sites {
+                let at = site.rva;
+                let length = site.before.len();
+                assert_eq!(&originals[i][at..at + length], site.before);
+                assert_eq!(actual[i][at], 0xe9, "passenger native entry holds a jump");
+                let destination = reached(&actual[i], at, targets[i].base as usize);
+                assert_ne!(destination, targets[i].base as usize + at);
+                let mut branch = actual[i][at..at + 5].to_vec();
+                branch.resize(length, 0x90);
+                expected[i][at..at + length].copy_from_slice(&branch);
+            }
+        }
         // The trace ring every importing unit reaches must be one and the same.
         let mut ring: Option<usize> = None;
         for (u, blob) in &units {

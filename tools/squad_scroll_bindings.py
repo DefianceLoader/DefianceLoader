@@ -14,7 +14,7 @@ from rtti import Rtti
 from rustfmt import rustfmt
 
 ROOT = Path(__file__).resolve().parent.parent
-FUNCTIONS = dict(refresh=0x29e6c0, dispatch=0x2c2da0, destroy=0x29c4e0,
+FUNCTIONS = dict(training_show=0x299360, training_layout=0x299dc0, refresh=0x29e6c0, dispatch=0x2c2da0, destroy=0x29c4e0,
                  ammo=0x3cb00, weapon=0x3674b0, script=0x709e0,
                  listen=0x2d3270, thumb=0x2c6180, slider_dispatch=0x2c52d0,
                  # The training_slot_* (perk) bind, called by the perk refresh
@@ -100,6 +100,10 @@ def anchors_of_reference(source):
     shared helper its call in the one caller; and the drag-start helper."""
     anchors = {}
     for name, rva in FUNCTIONS.items():
+        if name == 'training_layout':
+            # The row placer is a short helper called twice by training_show;
+            # its own signature changes across game builds.
+            continue
         if name in CALLERS:
             rva = next(i.address for i in source.functions.disasm(
                 *source.functions.function_of(CALLERS[name]))
@@ -107,6 +111,66 @@ def anchors_of_reference(source):
         anchors[name] = rva
     anchors['drag_start'] = DRAG_START
     return anchors
+
+
+def training_layout_from_show(img, show):
+    """Find the two-row item placer from `TrainingWindow::show` and check its
+    contract: two rows share the vector, center cards with a 10px gap, and use
+    the viewport parents at +0x148 and +0x150."""
+    function = img.function_of(show)
+    assert function is not None, hex(show)
+    code = list(img.disasm(*function))
+    memory_offsets = {
+        op.mem.disp
+        for ins in code for op in ins.operands
+        if op.type == capstone.x86.X86_OP_MEM
+    }
+    assert {0x128, 0x148, 0x150, 0x1d8, 0x1e0, 0x1f0, 0x1f8, 0x1fc} <= memory_offsets
+
+    calls = []
+    for index, ins in enumerate(code):
+        if ins.mnemonic != 'call' or not ins.op_str.startswith('0x'):
+            continue
+        if index < 2 or code[index - 1].op_str != 'rcx, rsi':
+            continue
+        if not (code[index - 2].op_str.startswith('edx,')
+                and code[index - 2].mnemonic in ('xor', 'mov')):
+            continue
+        preceding = code[max(0, index - 7):index]
+        offsets = {
+            op.mem.disp
+            for item in preceding for op in item.operands
+            if op.type == capstone.x86.X86_OP_MEM
+        }
+        if 0x148 in offsets or 0x150 in offsets:
+            calls.append((ins, preceding, offsets))
+    assert len(calls) == 2, [(hex(ins.address), ins.op_str) for ins, _, _ in calls]
+    first, second = calls
+    layout = first[0].operands[0].imm
+    assert second[0].operands[0].imm == layout
+    assert 0x148 in first[2] and 0x150 in second[2]
+    assert any(ins.mnemonic == 'xor' and ins.op_str.startswith('edx,') for ins in first[1])
+    assert any(ins.mnemonic == 'mov' and ins.op_str == 'edx, eax' for ins in second[1])
+
+    placer = list(img.disasm(*img.function_of(layout)))
+    placer_offsets = {
+        op.mem.disp
+        for ins in placer for op in ins.operands
+        if op.type == capstone.x86.X86_OP_MEM
+    }
+    assert {0x1d8, 0x1e0} <= placer_offsets
+    ten_pixel_lea = any(
+        ins.mnemonic == 'lea'
+        and any(op.type == capstone.x86.X86_OP_MEM and op.mem.disp == 10 for op in ins.operands)
+        for ins in placer
+    )
+    ten_pixel_step = any(
+        ins.mnemonic == 'add'
+        and any(op.type == capstone.x86.X86_OP_IMM and op.imm == 10 for op in ins.operands)
+        for ins in placer
+    )
+    assert ten_pixel_lea and ten_pixel_step
+    return layout
 
 
 def table(source, target, anchors):
@@ -118,6 +182,11 @@ def table(source, target, anchors):
             # The frame size in its prologue changed, so no signature follows
             # it; it is the callee of the panel's vtable slot 7 wrapper, found
             # after the vtables below.
+            continue
+        if name == 'training_layout':
+            mapped = training_layout_from_show(target.functions, result['training_show'])
+            found[name] = mapped
+            result[name] = mapped
             continue
         at = anchors[name]
         start, pattern, mask = source.signature(at, [])
@@ -131,7 +200,8 @@ def table(source, target, anchors):
             assert ins.mnemonic == 'call'
             mapped = ins.operands[0].imm
         result[name] = mapped
-    for name, cls in [('panel_vtable', 'UnitManagerSquadInfo'),
+    for name, cls in [('training_vtable', 'TrainingWindow'),
+                      ('panel_vtable', 'UnitManagerSquadInfo'),
                       ('vehicle_vtable', 'UnitManagerVehicleInfo'),
                       ('slider_vtable', 'GuiSliderWidget'),
                       ('slider_ctrl_vtable', 'GuiSliderCtrl')]:
@@ -141,6 +211,8 @@ def table(source, target, anchors):
         assert len(candidates) == 1, (cls, candidates)
         result[name] = candidates[0]
     img = target.functions
+    result['training_destroy'] = img.u64(result['training_vtable']) - img.base
+    assert img.u64(result['training_vtable'] + 8) - img.base == result['dispatch']
     assert img.u64(result['panel_vtable']) - img.base == result['destroy']
     assert img.u64(result['panel_vtable'] + 8) - img.base == result['dispatch']
     assert img.u64(result['slider_ctrl_vtable'] + 8) - img.base == result['slider_dispatch']

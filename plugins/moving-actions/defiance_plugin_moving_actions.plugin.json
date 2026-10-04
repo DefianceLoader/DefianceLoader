@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "id": "defiance.moving-actions",
+  "dll": "defiance_plugin_moving_actions.dll",
+  "version": "0.1.0",
+  "abi": 5,
+  "group": "infantry",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "false",
+      "description": "Experimental: keep soldiers moving during grenade throws and weapon changes. Action timing is retained. Animation appearance requires testing. Restart required."
+    }
+  ],
+  "depends": [],
+  "conflicts": []
+}

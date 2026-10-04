@@ -1,6 +1,9 @@
 //! Opt-in, startup-only squad-management viewport. Never hot unload.
 use core::ffi::c_void;
-use defiance_api::{Api, Plugin, ABI_VERSION, LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_WARN};
+use defiance_api::{
+    Api, PatchContractV1, Plugin, ABI_VERSION, LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_WARN,
+    PATCH_KIND_ENTRY,
+};
 use std::sync::{
     atomic::{AtomicBool, AtomicPtr, Ordering},
     OnceLock,
@@ -27,6 +30,10 @@ struct Build {
     listen: Site,
     thumb: Site,
     slider_dispatch: Site,
+    training_vtable: usize,
+    training_destroy: Site,
+    training_layout: Site,
+    training_show: Site,
     panel_vtable: usize,
     vehicle_vtable: usize,
     vehicle_destroy: Site,
@@ -54,8 +61,11 @@ struct Build {
     squad_fit_name: usize,
 }
 impl Build {
-    fn functions(&self) -> [&Site; 16] {
+    fn functions(&self) -> [&Site; 19] {
         [
+            &self.training_destroy,
+            &self.training_layout,
+            &self.training_show,
             &self.refresh,
             &self.dispatch,
             &self.destroy,
@@ -81,6 +91,7 @@ static ORIGINAL_VEHICLE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut()
 static ORIGINAL_THUMB: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ORIGINAL_SQUAD_CHOOSER: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ORIGINAL_VEHICLE_CHOOSER: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static ORIGINAL_TRAINING_SHOW: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 
 unsafe fn log(api: &Api, level: u32, text: &str) {
@@ -93,7 +104,7 @@ extern "system" {
     fn GetModuleFileNameW(module: *mut c_void, path: *mut u16, capacity: u32) -> u32;
 }
 
-unsafe fn install(api: &Api) -> Result<(), String> {
+unsafe fn selected_build(api: &Api) -> Result<(*mut c_void, usize, &'static Build), String> {
     let base = (api.module_base)(c"game.dll".as_ptr());
     if base.is_null() {
         return Err("game.dll is not loaded".into());
@@ -125,15 +136,21 @@ unsafe fn install(api: &Api) -> Result<(), String> {
             ));
         }
     }
-    if build.panel_vtable + 16 > size
-        || build.vehicle_vtable + 16 > size
-        || build.slider_vtable + 8 > size
-        || build.slider_ctrl_vtable + 16 > size
-    {
-        return Err("vtable outside game.dll".into());
-    }
-    let base = base as usize;
-    let patches = [
+    Ok((base, size, build))
+}
+
+fn vtable_patches(base: usize, build: &Build) -> [(usize, usize, usize); 7] {
+    [
+        (
+            base + build.training_vtable,
+            base + build.training_destroy.rva,
+            native::destroy as *const () as usize,
+        ),
+        (
+            base + build.training_vtable + 8,
+            base + build.dispatch.rva,
+            native::dispatch as *const () as usize,
+        ),
         (
             base + build.panel_vtable,
             base + build.destroy.rva,
@@ -159,7 +176,21 @@ unsafe fn install(api: &Api) -> Result<(), String> {
             base + build.slider_dispatch.rva,
             native::slider_dispatch as *const () as usize,
         ),
-    ];
+    ]
+}
+
+unsafe fn install(api: &Api) -> Result<(), String> {
+    let (base, size, build) = unsafe { selected_build(api) }?;
+    if build.training_vtable + 16 > size
+        || build.panel_vtable + 16 > size
+        || build.vehicle_vtable + 16 > size
+        || build.slider_vtable + 8 > size
+        || build.slider_ctrl_vtable + 16 > size
+    {
+        return Err("vtable outside game.dll".into());
+    }
+    let base = base as usize;
+    let patches = vtable_patches(base, build);
     for &(at, before, _) in &patches {
         if *(at as *const usize) != before {
             return Err("panel vtable already modified; no writes made".into());
@@ -229,6 +260,12 @@ unsafe fn install(api: &Api) -> Result<(), String> {
     // threads. Both panels have their own refresh and share one detour body.
     for (site, detour, original, name) in [
         (
+            &build.training_show,
+            native::training_show as *mut _,
+            ORIGINAL_TRAINING_SHOW.as_ptr(),
+            "training show",
+        ),
+        (
             &build.refresh,
             native::refresh as *mut _,
             ORIGINAL.as_ptr(),
@@ -283,11 +320,59 @@ unsafe fn install(api: &Api) -> Result<(), String> {
         LOG_INFO,
         &format!(
             "squad scrolling installed: perk_slots={perk_slots}, upgrade_slots={upgrade_slots}, \
-             upgrades={upgrades}, fit_upgrades={fit_upgrades}, vehicles={vehicles}; companion UI mod required; \
+             upgrades={upgrades}, fit_upgrades={fit_upgrades}, vehicles={vehicles}; training chooser scrolling; companion UI mod required; \
              startup-only, no hot unload"
         ),
     );
     Ok(())
+}
+
+unsafe extern "C" fn patch_contract(api: *const Api) -> *const PatchContractV1 {
+    let Some(api_ref) = (unsafe { api.as_ref() }) else {
+        return core::ptr::null();
+    };
+    let (base, size, build) = match unsafe { selected_build(api_ref) } {
+        Ok(selected) => selected,
+        Err(_) => return core::ptr::null(),
+    };
+    if build.training_vtable + 16 > size
+        || build.panel_vtable + 16 > size
+        || build.vehicle_vtable + 16 > size
+        || build.slider_vtable + 8 > size
+        || build.slider_ctrl_vtable + 16 > size
+    {
+        return core::ptr::null();
+    }
+    let base = base as usize;
+    let mut patches = vtable_patches(base, build)
+        .into_iter()
+        .map(|(at, before, _)| {
+            defiance_feature_sdk::contract::Patch::bytes(
+                c"game.dll",
+                at - base,
+                &before.to_le_bytes(),
+            )
+        })
+        .collect::<Vec<_>>();
+    patches.extend(
+        [
+            &build.training_show,
+            &build.refresh,
+            &build.vehicle_refresh,
+            &build.thumb,
+            &build.squad_chooser,
+            &build.vehicle_chooser,
+        ]
+        .into_iter()
+        .map(|site| defiance_feature_sdk::contract::Patch {
+            module: c"game.dll",
+            rva: site.rva,
+            kind: PATCH_KIND_ENTRY,
+            before: site.before.to_vec(),
+            after: None,
+        }),
+    );
+    unsafe { defiance_feature_sdk::contract::build(api, patches) }
 }
 
 unsafe extern "C" fn init(api: *const Api) -> i32 {
@@ -315,6 +400,11 @@ pub extern "C" fn defiance_plugin() -> *const Plugin {
         stop: None,
     })
 }
+
+#[no_mangle]
+pub unsafe extern "C" fn defiance_patch_contract_v1(api: *const Api) -> *const PatchContractV1 {
+    unsafe { patch_contract(api) }
+}
 defiance_feature_sdk::crash_handshake!();
 
 #[cfg(test)]
@@ -322,8 +412,17 @@ mod tests {
     #[test]
     fn displaced_prologues_need_no_relocation() {
         for b in super::sites::BUILDS {
-            assert!(b.refresh.before.len() >= 14);
-            defiance_core::decode::validate_copy(b.refresh.before).unwrap();
+            for site in [
+                &b.refresh,
+                &b.vehicle_refresh,
+                &b.training_show,
+                &b.thumb,
+                &b.squad_chooser,
+                &b.vehicle_chooser,
+            ] {
+                assert!(site.before.len() >= 14);
+                defiance_core::decode::validate_copy(site.before).unwrap();
+            }
         }
     }
 }

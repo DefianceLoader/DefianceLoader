@@ -18,7 +18,8 @@ it is resolved by hand.
 
 The whole analysis is one pass over both modules and is cached, keyed by the
 two modules' hashes and this tool's version, because the same questions are
-asked repeatedly while a build is ported.
+asked repeatedly while a build is ported. The cache is the one every worktree
+shares (tools/shared_cache.py), so a new worktree does not repeat it.
 
     python tools/offsetmap.py logic bin/gog/2026-09-14/logic.dll
     python tools/offsetmap.py game  bin/gog/2026-09-14/game.dll --occurrences 0x160 "call|rax|0x148"
@@ -28,12 +29,11 @@ asked repeatedly while a build is ported.
 import bisect, collections, hashlib, json, pathlib, re, sys
 import capstone
 sys.path.insert(0, "tools")
-import sigs
+import shared_cache, sigs
 from builddiff import base_option, base_paths, functions, normalized, shape
 
 # Bump when the analysis changes shape, so a stale cache is not reused.
 VERSION = 3
-CACHE = pathlib.Path("out")
 # A function paired by its skeleton alone must be at least this long, so two
 # small accessors that differ only in the field they read are not confused.
 MIN_SKELETON = 12
@@ -146,7 +146,7 @@ def analyze(which, other_path, refresh=False, base=None):
     only the changed ones, with the function and instruction of each, so an
     ambiguous key can be resolved by inspecting the calls that moved."""
     ref_sha, tgt_sha = _sha(base_paths(which, base)[0]), _sha(other_path)
-    cache = CACHE / f"offsetmap-analysis-{which}-{ref_sha[:8]}-{tgt_sha[:8]}-v{VERSION}.json"
+    cache = shared_cache.directory() / f"offsetmap-analysis-{which}-{ref_sha[:8]}-{tgt_sha[:8]}-v{VERSION}.json"
     if cache.exists() and not refresh:
         return json.loads(cache.read_text(encoding="utf-8"))
     table = collections.defaultdict(collections.Counter)
@@ -177,8 +177,7 @@ def analyze(which, other_path, refresh=False, base=None):
         "ambiguous": {encode(k): dict(c) for k, c in table.items() if len(c) > 1},
         "occurrences": {encode(k): v for k, v in occurrences.items()},
     }
-    CACHE.mkdir(exist_ok=True)
-    cache.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+    shared_cache.write_text(cache, json.dumps(data, indent=2, sort_keys=True))
     return data
 
 

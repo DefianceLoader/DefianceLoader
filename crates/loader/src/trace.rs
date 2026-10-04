@@ -101,8 +101,20 @@ extern "system" {
 
 /// Each slot's address while it is traced, else 0. The handler matches on it.
 static SITES: [AtomicUsize; MAX_SITES] = [const { AtomicUsize::new(0) }; MAX_SITES];
+#[cfg(test)]
+pub(crate) static CAPTURE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Whether a slot is taken, including while it is being filled in.
 static CLAIMED: [AtomicBool; MAX_SITES] = [const { AtomicBool::new(false) }; MAX_SITES];
+/// Capture sites use the same debug registers, but never enter the log path.
+static CAPTURE_SLOTS: [AtomicBool; MAX_SITES] = [const { AtomicBool::new(false) }; MAX_SITES];
+static CAPTURE_ADDRESSES: [AtomicUsize; MAX_SITES] = [const { AtomicUsize::new(0) }; MAX_SITES];
+static CAPTURE_GENERATIONS: [AtomicU32; MAX_SITES] = [const { AtomicU32::new(0) }; MAX_SITES];
+/// Packed (generation, hit budget) so an exception can never use a reused
+/// slot's budget while retiring an older callback.
+static CAPTURE_GENERATION_LIMITS: [std::sync::atomic::AtomicU64; MAX_SITES] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; MAX_SITES];
+const CAPTURE_RETIRING: u32 = 1 << 31;
+static REGISTRATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static HITS: [AtomicU32; MAX_SITES] = [const { AtomicU32::new(0) }; MAX_SITES];
 static LIMITS: [AtomicU32; MAX_SITES] = [const { AtomicU32::new(0) }; MAX_SITES];
 /// Each slot's label, leaked so a hit being reported never reads a freed one.
@@ -189,6 +201,11 @@ pub fn parse(text: &str) -> Result<Vec<Site>, String> {
 /// reports; the first caller's is kept.
 fn ensure_running(sink: fn(&str)) -> Result<(), TraceError> {
     let _ = SINK.set(sink);
+    ensure_handler_running()
+}
+
+/// Install shared breakpoint machinery without choosing the legacy logger.
+fn ensure_handler_running() -> Result<(), TraceError> {
     RUNNING
         .get_or_init(|| {
             if unsafe { AddVectoredExceptionHandler(1, on_exception) }.is_null() {
@@ -221,10 +238,15 @@ pub fn add(address: usize, hits: u32, label: &str, sink: fn(&str)) -> Result<(),
     if address == 0 || hits == 0 || !win::is_executable(address) {
         return Err(TraceError::Invalid);
     }
-    ensure_running(sink)?;
-    if SITES.iter().any(|s| s.load(Ordering::Acquire) == address) {
+    let _registration = REGISTRATION.lock().unwrap_or_else(|p| p.into_inner());
+    if SITES.iter().any(|s| s.load(Ordering::Acquire) == address)
+        || CAPTURE_ADDRESSES
+            .iter()
+            .any(|s| s.load(Ordering::Acquire) == address)
+    {
         return Err(TraceError::Duplicate);
     }
+    ensure_running(sink)?;
     let slot = CLAIMED
         .iter()
         .position(|claimed| {
@@ -247,14 +269,178 @@ pub fn add(address: usize, hits: u32, label: &str, sink: fn(&str)) -> Result<(),
 /// Stop tracing the slot holding `address`. Nothing is allocated or locked, so
 /// the handler calls it when a site has logged its hits.
 fn release_slot(slot: usize, address: usize) -> bool {
-    if SITES[slot]
-        .compare_exchange(address, 0, Ordering::AcqRel, Ordering::Acquire)
+    // Legacy handlers may have routed an exception before a capture reused
+    // this slot. Claim generation zero before clearing anything so an old
+    // trace-v1 release cannot erase a newly published capture generation.
+    if CAPTURE_GENERATIONS[slot]
+        .compare_exchange(0, CAPTURE_RETIRING, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
     {
         return false;
     }
+    if SITES[slot]
+        .compare_exchange(address, 0, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        let _ = CAPTURE_GENERATIONS[slot].compare_exchange(
+            CAPTURE_RETIRING,
+            0,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+        return false;
+    }
     let next = RETIRED_NEXT.fetch_add(1, Ordering::Relaxed) % RETIRED_SLOTS;
     RETIRED[next].store(address, Ordering::Release);
+    CAPTURE_SLOTS[slot].store(false, Ordering::Release);
+    CAPTURE_ADDRESSES[slot].store(0, Ordering::Release);
+    CAPTURE_GENERATIONS[slot].store(0, Ordering::Release);
+    CAPTURE_GENERATION_LIMITS[slot].store(0, Ordering::Release);
+    CLAIMED[slot].store(false, Ordering::Release);
+    true
+}
+
+/// Claim, initialize, and publish a buffered capture atomically with respect
+/// to all legacy trace registrations.
+pub(super) fn register_capture(
+    address: usize,
+    generation: u32,
+    limit: u32,
+    prepare: impl FnOnce(usize),
+) -> Result<usize, TraceError> {
+    if address == 0 || !win::is_executable(address) {
+        return Err(TraceError::Invalid);
+    }
+    if generation == 0 || generation & CAPTURE_RETIRING != 0 {
+        return Err(TraceError::Invalid);
+    }
+    ensure_handler_running()?;
+    let _registration = REGISTRATION.lock().unwrap_or_else(|p| p.into_inner());
+    if SITES
+        .iter()
+        .any(|site| site.load(Ordering::Acquire) == address)
+        || CAPTURE_ADDRESSES
+            .iter()
+            .any(|site| site.load(Ordering::Acquire) == address)
+    {
+        return Err(TraceError::Duplicate);
+    }
+    let slot = CLAIMED
+        .iter()
+        .position(|claimed| {
+            claimed
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        })
+        .ok_or(TraceError::Full)?;
+    // Reserve this generation before preparing storage. A delayed legacy
+    // release may briefly own the zero-generation marker on an empty slot.
+    loop {
+        match CAPTURE_GENERATIONS[slot].compare_exchange(
+            0,
+            generation,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => break,
+            Err(_) => std::hint::spin_loop(),
+        }
+    }
+    prepare(slot);
+    // `prepare` stores the copied request in capture state; only its bounded
+    // hit count is needed in the exception path.
+    CAPTURE_GENERATION_LIMITS[slot].store(
+        (u64::from(generation) << 32) | u64::from(limit),
+        Ordering::Release,
+    );
+    CAPTURE_ADDRESSES[slot].store(address, Ordering::Release);
+    CAPTURE_SLOTS[slot].store(true, Ordering::Release);
+    SITES[slot].store(address, Ordering::Release);
+    arm_all();
+    Ok(slot)
+}
+
+/// Retire an exhausted site's address but keep its capture queue and claimed
+/// slot alive until the consumer explicitly stops the handle.
+pub(super) fn retire_capture_site(slot: usize, address: usize, generation: u32) -> bool {
+    if generation == 0
+        || CAPTURE_GENERATIONS[slot]
+            .compare_exchange(
+                generation,
+                generation | CAPTURE_RETIRING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_err()
+    {
+        return false;
+    }
+    if SITES[slot]
+        .compare_exchange(address, 0, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        CAPTURE_GENERATIONS[slot].store(generation, Ordering::Release);
+        return false;
+    }
+    let next = RETIRED_NEXT.fetch_add(1, Ordering::Relaxed) % RETIRED_SLOTS;
+    RETIRED[next].store(address, Ordering::Release);
+    CAPTURE_GENERATIONS[slot].store(generation, Ordering::Release);
+    true
+}
+
+pub(super) fn release_capture_slot(slot: usize, address: usize, generation: u32) -> bool {
+    let _registration = REGISTRATION.lock().unwrap_or_else(|p| p.into_inner());
+    if generation == 0 {
+        return false;
+    }
+    loop {
+        let current = CAPTURE_GENERATIONS[slot].load(Ordering::Acquire);
+        if current == (generation | CAPTURE_RETIRING) {
+            std::hint::spin_loop();
+            continue;
+        }
+        if current != generation {
+            return false;
+        }
+        if CAPTURE_GENERATIONS[slot]
+            .compare_exchange(
+                generation,
+                generation | CAPTURE_RETIRING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+        {
+            break;
+        }
+    }
+    if CAPTURE_ADDRESSES[slot].load(Ordering::Acquire) != address {
+        CAPTURE_GENERATIONS[slot].store(generation, Ordering::Release);
+        return false;
+    }
+    let site = SITES[slot].load(Ordering::Acquire);
+    if site == address {
+        if SITES[slot]
+            .compare_exchange(address, 0, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            CAPTURE_GENERATIONS[slot].store(generation, Ordering::Release);
+            return false;
+        }
+        let next = RETIRED_NEXT.fetch_add(1, Ordering::Relaxed) % RETIRED_SLOTS;
+        RETIRED[next].store(address, Ordering::Release);
+    } else if site != 0 {
+        CAPTURE_GENERATIONS[slot].store(generation, Ordering::Release);
+        return false;
+    }
+    if SITES[slot].load(Ordering::Acquire) != 0 {
+        CAPTURE_GENERATIONS[slot].store(generation, Ordering::Release);
+        return false;
+    }
+    CAPTURE_SLOTS[slot].store(false, Ordering::Release);
+    CAPTURE_ADDRESSES[slot].store(0, Ordering::Release);
+    CAPTURE_GENERATION_LIMITS[slot].store(0, Ordering::Release);
+    CAPTURE_GENERATIONS[slot].store(0, Ordering::Release);
     CLAIMED[slot].store(false, Ordering::Release);
     true
 }
@@ -262,7 +448,12 @@ fn release_slot(slot: usize, address: usize) -> bool {
 /// Stop tracing `address` before its hits are logged. The helper clears the
 /// debug registers within two seconds; hits until then resume silently.
 pub fn release(address: usize) -> bool {
-    address != 0 && (0..MAX_SITES).any(|slot| release_slot(slot, address))
+    if address == 0 {
+        return false;
+    }
+    let _registration = REGISTRATION.lock().unwrap_or_else(|p| p.into_inner());
+    (0..MAX_SITES)
+        .any(|slot| !CAPTURE_SLOTS[slot].load(Ordering::Acquire) && release_slot(slot, address))
 }
 
 /// Arm `addresses` (with their labels) from `[trace] sites`, logging `hits`
@@ -331,6 +522,8 @@ unsafe extern "C" fn service_stop(address: usize) -> i32 {
 }
 
 /// `defiance.loader` / `trace` v1: [`add`] and [`release`] for plugins.
+#[path = "trace_capture.rs"]
+pub mod capture;
 pub static API: defiance_api::TraceV1 = defiance_api::TraceV1 {
     trace: service_trace,
     stop: service_stop,
@@ -420,6 +613,15 @@ unsafe extern "system" fn on_exception(pointers: *mut Pointers) -> i32 {
     }
     match SITES.iter().position(|s| s.load(Ordering::Acquire) == rip) {
         Some(index) => {
+            if CAPTURE_SLOTS[index].load(Ordering::Acquire) {
+                let generation = CAPTURE_GENERATIONS[index].load(Ordering::Acquire);
+                crate::trace::capture::on_hit_generation(index, context, generation);
+                let eflags = u32::from_le_bytes(context.0[EFLAGS..EFLAGS + 4].try_into().unwrap());
+                context.0[EFLAGS..EFLAGS + 4]
+                    .copy_from_slice(&(eflags | RESUME_FLAG).to_le_bytes());
+                context.set_u64(DR6, 0);
+                return CONTINUE_EXECUTION;
+            }
             let hit = HITS[index].fetch_add(1, Ordering::Relaxed) + 1;
             let limit = LIMITS[index].load(Ordering::Relaxed);
             if hit <= limit {
@@ -810,6 +1012,7 @@ mod tests {
     /// One test, since the slots are process-wide.
     #[test]
     fn a_hit_logs_its_stack_and_resumes() {
+        let _serial = CAPTURE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let address = traced as extern "C" fn(u64) -> u64 as usize;
         start(&[(address, "traced".into())], 2, collect).unwrap();
         assert_eq!(

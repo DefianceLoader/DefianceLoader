@@ -30,6 +30,7 @@ extern "system" {
     fn OpenProcess(access: u32, inherit: i32, process_id: u32) -> Handle;
     fn CloseHandle(handle: Handle) -> i32;
     fn VirtualAlloc(address: *mut u8, size: usize, kind: u32, protect: u32) -> *mut u8;
+    fn VirtualFree(address: *mut u8, size: usize, kind: u32) -> i32;
     fn VirtualProtect(address: *mut u8, size: usize, protect: u32, previous: *mut u32) -> i32;
     fn ReadProcessMemory(
         process: Handle,
@@ -59,6 +60,7 @@ extern "system" {
         allocation_type: u32,
         protect: u32,
     ) -> *mut u8;
+    fn VirtualFreeEx(process: Handle, address: *mut u8, size: usize, kind: u32) -> i32;
     fn FlushInstructionCache(process: Handle, address: *const u8, size: usize) -> i32;
     fn LoadLibraryW(name: *const u16) -> Handle;
     fn GetProcAddress(module: Handle, name: *const u8) -> *mut c_void;
@@ -99,9 +101,9 @@ pub struct Target {
 /// injector's diagnostic probes can read without a second implementation.
 ///
 /// When the pid is this process's own — the loader's plugin, and the injector's
-/// self test — reads and writes go through the local calls rather than the
-/// `*Ex` ones. Those remote calls are what a heuristic reads as injection, and
-/// there is no reason to reach across a process boundary into yourself.
+/// self test — allocations and writes use local calls rather than the `*Ex`
+/// ones. Reads use `ReadProcessMemory` in both cases so a diagnostic pointer
+/// or a foreign hook can fail cleanly instead of dereferencing invalid memory.
 pub struct Process {
     handle: Handle,
     local: bool,
@@ -143,9 +145,6 @@ impl Process {
     }
 
     pub fn read(&self, address: *const u8, len: usize) -> Result<Vec<u8>, String> {
-        if self.local {
-            return Ok(unsafe { core::slice::from_raw_parts(address, len) }.to_vec());
-        }
         let mut buffer = vec![0u8; len];
         let mut read = 0usize;
         let ok =
@@ -157,6 +156,18 @@ impl Process {
             ));
         }
         Ok(buffer)
+    }
+
+    /// Release an allocation whose hooks are absent or have been restored.
+    pub(crate) fn release(&self, address: *mut u8) {
+        const MEM_RELEASE: u32 = 0x8000;
+        unsafe {
+            if self.local {
+                VirtualFree(address, 0, MEM_RELEASE);
+            } else {
+                VirtualFreeEx(self.handle, address, 0, MEM_RELEASE);
+            }
+        }
     }
 
     /// Write code or data, making the page writable only for the copy and
@@ -209,13 +220,21 @@ impl Process {
                 &mut written,
             )
         };
-        if ok == 0 || written != data.len() {
-            return Err(format!("WriteProcessMemory failed with error {}", unsafe {
-                GetLastError()
-            }));
+        let write_error = (ok == 0 || written != data.len()).then(|| unsafe { GetLastError() });
+        if write_error.is_none() {
+            unsafe { FlushInstructionCache(self.handle, address, data.len()) };
         }
-        unsafe { FlushInstructionCache(self.handle, address, data.len()) };
-        unsafe { VirtualProtectEx(self.handle, address, data.len(), previous, &mut previous) };
+        let restored =
+            unsafe { VirtualProtectEx(self.handle, address, data.len(), previous, &mut previous) };
+        if let Some(code) = write_error {
+            return Err(format!("WriteProcessMemory failed with error {code}"));
+        }
+        if restored == 0 {
+            return Err(format!(
+                "restoring protection failed with error {}",
+                unsafe { GetLastError() }
+            ));
+        }
         Ok(())
     }
 
@@ -286,6 +305,17 @@ fn block_record_path() -> Option<PathBuf> {
         .ok()?
         .parent()
         .map(|dir| dir.join("defiance-pickup-inject.block"))
+}
+
+fn payload_fits_block(payload: &[u8], block_bytes: usize, cursor_offset: usize) -> bool {
+    let Some(cursor_end) = cursor_offset.checked_add(4) else {
+        return false;
+    };
+    // The special-fire gate sits after the cursor. Any cursor bytes carried
+    // inside the blob must be zero padding, just like the allocated page.
+    payload.len() <= block_bytes
+        && cursor_end <= block_bytes
+        && payload.iter().skip(cursor_offset).take(4).all(|&b| b == 0)
 }
 
 /// Apply the logic.dll patch, and return "patched" or "already patched".
@@ -405,7 +435,7 @@ pub fn apply(
     }
 
     if !block_done {
-        if payload.len() > patch.cursor_offset || patch.cursor_offset + 4 > patch.block_bytes {
+        if !payload_fits_block(payload, patch.block_bytes, patch.cursor_offset) {
             return Err("the code and the cursor do not both fit the block".to_string());
         }
 
@@ -930,6 +960,25 @@ pub fn self_test(patch: &Patch, payload: &[u8]) -> Result<(), String> {
         return Err("a foreign build was refused, but only after writing".to_string());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::payload_fits_block;
+
+    #[test]
+    fn code_after_cursor_requires_reserved_zero_state_and_block_space() {
+        let mut payload = vec![0x90; 32];
+        payload[16..20].fill(0);
+        assert!(payload_fits_block(&payload, 32, 16));
+        payload[19] = 0x90;
+        assert!(!payload_fits_block(&payload, 32, 16));
+        payload[19] = 0;
+        assert!(!payload_fits_block(&payload, 31, 16));
+        assert!(!payload_fits_block(&payload[..8], 19, 16));
+        assert!(!payload_fits_block(&payload[..8], 32, usize::MAX));
+        assert!(payload_fits_block(&payload[..8], 32, 16));
+    }
 }
 
 /// The game.dll half of the self test: a stand-in module with the displaced

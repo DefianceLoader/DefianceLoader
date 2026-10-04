@@ -1,6 +1,6 @@
 [package]
 name = "defiance-plugin-unit-inspection"
-version = "0.1.1"
+version = "0.1.2"
 license = "MPL-2.0"
 edition = "2021"
 [workspace]
@@ -8,6 +8,7 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 [dependencies]
 defiance-api = { path = "../../crates/api" }
+defiance-core = { path = "../../crates/core" }
 defiance-feature-sdk = { path = "../../crates/feature-sdk" }
 [build-dependencies]
 defiance-build-support = { path = "../../crates/build-support" }

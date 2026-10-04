@@ -68,6 +68,16 @@ pub fn multiplayer_safe(node: &Planned) -> bool {
 
 /// Resolve the nodes into decisions and an initialization order.
 pub fn plan(nodes: Vec<Discovered>, snapshot: &Snapshot) -> Plan {
+    plan_with_loaded_versions(nodes, snapshot, &[])
+}
+
+/// Resolve dependencies using captured versions for providers already loaded.
+/// A matching ID takes precedence over the on-disk manifest; `None` is unknown.
+pub(crate) fn plan_with_loaded_versions(
+    nodes: Vec<Discovered>,
+    snapshot: &Snapshot,
+    loaded_versions: &[(String, Option<manifest::Version>)],
+) -> Plan {
     let mut planned: Vec<Planned> = nodes
         .into_iter()
         .map(|node| {
@@ -119,7 +129,7 @@ pub fn plan(nodes: Vec<Discovered>, snapshot: &Snapshot) -> Plan {
     }
 
     // Dependencies: missing, disabled, version-incompatible or blocked.
-    propagate_dependencies(&mut planned, &by_id);
+    propagate_dependencies(&mut planned, &by_id, loaded_versions);
 
     // Cycles among still-initializing nodes.
     let cycle_nodes = find_cycles(&planned, &by_id);
@@ -134,7 +144,7 @@ pub fn plan(nodes: Vec<Discovered>, snapshot: &Snapshot) -> Plan {
     }
 
     // A cycle also makes every transitive consumer unavailable.
-    propagate_dependencies(&mut planned, &by_id);
+    propagate_dependencies(&mut planned, &by_id, loaded_versions);
     let order = order_active(&planned, &by_id);
     Plan {
         nodes: planned,
@@ -244,7 +254,11 @@ fn conflict_pairs(planned: &[Planned]) -> Vec<(usize, usize, String)> {
     pairs
 }
 
-fn propagate_dependencies(planned: &mut [Planned], by_id: &BTreeMap<String, Vec<usize>>) {
+fn propagate_dependencies(
+    planned: &mut [Planned],
+    by_id: &BTreeMap<String, Vec<usize>>,
+    loaded_versions: &[(String, Option<manifest::Version>)],
+) {
     loop {
         let mut changed = false;
         for index in 0..planned.len() {
@@ -281,7 +295,7 @@ fn propagate_dependencies(planned: &mut [Planned], by_id: &BTreeMap<String, Vec<
                                 break;
                             }
                         }
-                        if !version_ok(dependency, dependency_node) {
+                        if !version_ok(dependency, dependency_node, loaded_versions) {
                             block = Some(format!(
                                 "required `{}` version does not satisfy the declared range",
                                 dependency.id
@@ -302,11 +316,23 @@ fn propagate_dependencies(planned: &mut [Planned], by_id: &BTreeMap<String, Vec<
     }
 }
 
-fn version_ok(dependency: &Dependency, provider: &Planned) -> bool {
+fn version_ok(
+    dependency: &Dependency,
+    provider: &Planned,
+    loaded_versions: &[(String, Option<manifest::Version>)],
+) -> bool {
     if dependency.min.is_none() && dependency.max.is_none() {
         return true;
     }
-    match provider.manifest.as_ref().map(|manifest| manifest.version) {
+    let running = loaded_versions
+        .iter()
+        .find(|(id, _)| id.eq_ignore_ascii_case(&provider.id))
+        .map(|(_, version)| *version);
+    let version = match running {
+        Some(version) => version,
+        None => provider.manifest.as_ref().map(|manifest| manifest.version),
+    };
+    match version {
         Some(version) => manifest::satisfies(version, dependency),
         // A legacy plugin has no declared version, so a range cannot be met.
         None => false,
@@ -543,6 +569,16 @@ mod tests {
         depends: &[(&str, Option<&str>)],
         conflicts: &[&str],
     ) -> String {
+        test_manifest_with_version(id, dll, "1.0.0", depends, conflicts)
+    }
+
+    fn test_manifest_with_version(
+        id: &str,
+        dll: &str,
+        version: &str,
+        depends: &[(&str, Option<&str>)],
+        conflicts: &[&str],
+    ) -> String {
         let depends: Vec<String> = depends
             .iter()
             .map(|(id, min)| match min {
@@ -552,7 +588,7 @@ mod tests {
             .collect();
         let conflicts: Vec<String> = conflicts.iter().map(|id| format!("\"{id}\"")).collect();
         format!(
-            r#"{{"schema":1,"id":"{id}","dll":"{dll}","version":"1.0.0","abi":{},"group":"g","settings":[],"depends":[{}],"conflicts":[{}]}}"#,
+            r#"{{"schema":1,"id":"{id}","dll":"{dll}","version":"{version}","abi":{},"group":"g","settings":[],"depends":[{}],"conflicts":[{}]}}"#,
             defiance_api::ABI_VERSION,
             depends.join(","),
             conflicts.join(","),
@@ -637,7 +673,8 @@ mod tests {
     #[test]
     fn a_manifest_identity_mismatch_blocks_the_plugin() {
         let mut node = node("defiance_plugin_feature_selection.dll");
-        node.error = Some("packaging error: manifest version 9.9.9 is not 0.3.0".into());
+        node.error =
+            Some("packaging error: manifest version 9.9.9 is not in the 0.3.0 series".into());
         let plan = plan(vec![node], &snapshot(&[]));
         assert!(matches!(plan.nodes[0].decision, Decision::Blocked { .. }));
     }
@@ -708,6 +745,33 @@ mod tests {
         assert!(
             matches!(x.decision, Decision::Blocked { .. }),
             "{:?}",
+            x.decision
+        );
+    }
+
+    #[test]
+    fn a_hot_added_plugin_uses_the_loaded_provider_version() {
+        let provider_dll = "defiance_plugin_core.dll";
+        // The running provider is 1.0.0 while its pending disk manifest says 2.0.0.
+        let on_disk = test_manifest_with_version("defiance.core", provider_dll, "2.0.0", &[], &[]);
+        let running = test_manifest("defiance.core", provider_dll, &[], &[]);
+        let dependent = test_manifest("x.p", "x.dll", &[("defiance.core", Some("2.0.0"))], &[]);
+        let loaded_version = manifest::parse(&running, provider_dll).unwrap().version;
+        let plan = plan_with_loaded_versions(
+            vec![
+                with_manifest(provider_dll, &on_disk),
+                with_manifest("x.dll", &dependent),
+            ],
+            &snapshot(&[]),
+            &[("defiance.core".into(), Some(loaded_version))],
+        );
+        let x = plan.nodes.iter().find(|n| n.id == "x.p").unwrap();
+        assert!(
+            matches!(
+                &x.decision,
+                Decision::Blocked { reason } if reason.contains("version does not satisfy")
+            ),
+            "hot-added dependent must be blocked by the loaded provider version: {:?}",
             x.decision
         );
     }

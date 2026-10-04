@@ -9,34 +9,84 @@ Author workflow: [plugin authoring](plugin-authoring.md). Source of truth:
 
 `defiance_plugin()` returns a permanent `Plugin` containing `abi_version`,
 NUL-terminated UTF-8 `name` and `version`, `init(const Api*) -> i32`, and optional
-`stop()`. `init` returns 0 on success. `Api.abi_version` must equal 5 and
+`stop()`. `init` returns 0 when initialization succeeds. The loader may still
+call `stop()` after a managed plugin succeeds if its runtime patch plan loses an
+overlap or one of its required providers is refused. `Api.abi_version` must equal 5 and
 `Api.reserved` must equal 0. Do not append fields to this structure yourself.
 All ABI callbacks use C calling conventions; game detours must match the
 original game's Microsoft x64 signature, not merely the loader callback type.
 
+Each plugin receives a process-lifetime API table whose logger is bound to its
+loader-plan ID. Cached log callbacks keep that identity after a DLL reload;
+callbacks run from any thread and messages need no source prefix. The loader
+reserves a logger for at most 256 distinct IDs per process; reloading an ID
+reuses its reservation.
+
 | Api function | Result and contract |
 |---|---|
-| `log(level, message)` | Log UTF-8 text. INFO=0, WARN=1, ERROR=2, DEBUG=3 (written only with `[logging] level = debug`; loaders before 0.4.0 write it as info). The message must live through the call. |
+| `log(level, message)` | Log UTF-8 text, attributed to this API table's plugin ID on any thread. INFO=0, WARN=1, ERROR=2, DEBUG=3 (written only with `[logging] level = debug`; loaders before 0.4.0 write it as info). Choose the level by the [log level policy](development.md#log-levels). The message must live through the call. Output also obeys the [plugin log filters](development.md#filter-plugin-logs). |
 | `module_base(name)` | Loaded module base, or null. Does not load modules. |
 | `module_size(base)` | Mapped size, or zero. Use a loaded module base. |
 | `find_pattern(base, size, pattern)` | Unique match or null; hex bytes with `??` wildcards, matched against the code as it was before any plugin hooked it (the original service). Caller supplies a valid readable range. |
 | `find_pattern_at(base, size, pattern, offset)` | Unique match plus an offset inside the matched window; otherwise null. A signature match alone is not a supported-build guarantee. |
-| `hook(target, detour, original_out)` | Installs an entry detour, decoding whole instructions. On success, `original_out` gets a callable trampoline. |
+| `hook(target, detour, original_out)` | Requests an entry detour, decoding whole instructions. On acceptance, `original_out` gets a callable trampoline. |
 | `hook_exact(target, detour, displaced, original_out)` | Same, with an exact span. Rejects incomplete instructions; never expands the requested span. |
-| `hook_call(site, detour, original_out)` | Redirects one direct rel32 call; other callers stay unchanged. Returns the original callee through the output. |
-| `unhook(target)` | Restores the owned hook/patch at that address. Storage remains retained if restoration fails. |
+| `hook_call(site, detour, original_out)` | Requests redirecting one direct rel32 call; other callers stay unchanged. Returns the original callee through the output. |
+| `unhook(target)` | Drops a staged request or restores the published hook/patch at that address. Storage remains retained if restoration fails. |
 | `rtti_method(class, method)` | Method pointer or null, using the loader's `defiance-rtti.ini` name-to-slot table. Class names are substring matches; RTTI contains no method names. |
 | `vtable_slot(class, slot)` | Zero-based virtual slot pointer or null, using the first matching vtable in logic.dll then game.dll. Validate ambiguous class matches yourself. |
-| `config_get(plugin_id, key)` | Canonical validated UTF-8 setting or null. IDs/keys are case-insensitive. Loader owns the returned process-lifetime string. |
-| `patch_bytes(target, before, after, length)` | Compares expected bytes and installs an owned replacement; mismatch/overlap is refused. Caller supplies valid buffers. |
+| `config_get(plugin_id, key)` | Canonical validated UTF-8 setting or null. IDs/keys are case-insensitive. The diagnostics `probe_file` setting resolves valid relative filenames against the loader's accepted config directory and returns an absolute path. Loader owns the returned process-lifetime string. |
+| `patch_bytes(target, before, after, length)` | Compares expected bytes and requests an owned replacement; mismatch/overlap is refused. Caller supplies valid buffers. |
 
-Hook/patch functions return 0 on success, nonzero on failure. Install during
-init so ownership is attributed correctly. Overlapping hooks are refused;
-automatic hook chaining is not provided. Entry trampolines currently reject
-displaced instructions requiring relative/RIP-relative relocation. Distant
-detours can use owned near relays. Failed initialization rolls back owned patches;
-an incomplete rollback stops further plugin startup. Never free a detour while
-any game code can still reach it.
+## Optional expected-write contract v1
+
+This export declares the writes a successful managed `init` is expected to
+submit. It is separate from `Plugin` and leaves ABI 5 unchanged:
+
+```c
+__declspec(dllexport)
+const DefiancePatchContractV1 *defiance_patch_contract_v1(const DefianceApi *api);
+```
+
+The loader calls it after successful `init`, before planning or publishing that
+plugin's staged requests. Return a process-lifetime contract object and entry
+array. Each entry names a loaded module basename, RVA, operation kind, and exact
+original bytes; `after` may also specify exact replacement bytes. Leave
+`after` null/zero for runtime-linked branches and hooks. An empty entry list
+declares that `init` must stage no writes.
+
+The loader requires a one-to-one match: a missing, unexpected, duplicated, or
+different-kind request refuses the plugin before commit and blocks its
+dependants. `patch_contract: true` in a managed plugin's sidecar manifest makes
+the export mandatory; without that flag, exporting the contract still opts the
+plugin into validation. Older manifests default to no requirement.
+
+Built-in unit plugins can use
+`defiance_feature_sdk::export_unit_patch_contract!(UNITS, native_names, has_call_detour)`.
+The SDK derives the list from the descriptors for Core's selected build, with
+the same native replacement names and call-detour mode that `init` passes to
+`units::install`. A standalone plugin can instead return an explicit entry
+list from its export.
+The contract should be maintained independently of the calls made by `init`,
+so it can expose an accidentally omitted request.
+
+Hook/patch functions return 0 when the request is accepted, nonzero on failure.
+Install during init so ownership is attributed correctly. Managed plugins stage
+their hooks and byte writes until the next legacy initializer or the end of
+startup. The loader checks each staged group for overlaps and changed live
+bytes, stops the later owner and its dependants for each conflict, and publishes
+the survivors in one transaction. A manifest dependency may place a legacy
+initializer before a managed plugin; that later managed group checks against
+already published spans. A conflict may call `stop()` after a successful
+`init`. `original_out` is ready during init, but the new detour is not live until
+the group commits; a call through the trampoline still reaches the original
+code. Hot-added and reloaded managed plugins commit after their own init,
+checked against already published spans. Legacy plugins keep immediate
+ownership checks. Automatic hook chaining is not provided.
+Entry trampolines reject displaced instructions requiring relative/RIP-relative
+relocation. Distant detours can use owned near relays. Failed initialization
+discards its staged requests; an incomplete published rollback stops further
+plugin startup. Never free a detour while any game code can still reach it.
 
 ## Optional service API v1
 
@@ -183,6 +233,56 @@ patches own. There are four, shared with `[trace] sites`.
 Both may be called from any thread once the table is resolved. Tracing slows
 every hit; keep it out of builds meant for play.
 
+## Loader service: trace-capture v1
+
+Provider: `defiance.loader`. Name: `trace-capture`. Exact service version: `1`.
+Rust table: `TraceCaptureV1`; C table: `DefianceTraceCaptureV1`. The SDK
+resolves it with `services::trace_capture()`.
+
+This service captures register values, typed memory fields, and optional stack
+frames at an execution breakpoint. The loader copies the plan and owns the
+bounded event queue; the exception handler calls no plugin code. Stack frames
+are not unwound: the event starts with the captured instruction pointer, then
+the loader scans a bounded 512-byte window from the stack pointer for return
+addresses inside loaded modules that follow a call instruction. These candidate
+frames are marked in `scanned_frames`; the diagnostics plugin prints them with
+a `?` prefix because they may be stale. The frame limit includes the instruction
+pointer when present. Capture and queue capacity are bounded, and the four
+hardware sites are shared with `trace` v1 and `[trace] sites`. A site keeps its
+slot after reaching its hit limit until its handle is stopped or its session is
+closed.
+
+Call `open()` during plugin initialization to get a nonzero session capability.
+Use `start(session, request, &handle)` on any thread to copy a plan into the
+loader and create a generation handle. A request must have the exact current
+`TraceRequestV1` size, zero reserved fields, an executable address, 1–1,000,000
+hits, `every >= 1`, no more than 16 fields, and no more than 16 stack frames.
+Hits count every encounter, including ones excluded by a filter or sampling.
+The optional filter compares `(field & filter_mask)` to
+`(filter_value & filter_mask)`; the field must be readable. Field types are
+`u8`, `u16`, `u32`, `u64`, `f32`, and `f64`; floating-point values are returned
+as raw bits. Registers use the order `rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi,
+r8..r15, rip`. A field path has at most four signed offsets: intermediate
+steps read pointers, and the last step reads the requested type. With no path,
+the field contains the low bits selected by its type. Failed field reads clear
+that field's bit in `valid_fields`.
+
+`poll(handle, events, capacity, &stats)` copies up to `capacity` queued events
+and returns the count. A zero capacity permits a null event pointer; the stats
+pointer is optional. Stats report total encountered hits, captured events,
+dropped events, and whether the hit limit is still active. Each site's queue
+holds 128 events; check `dropped` when interpreting a capture. `stop(handle)`
+discards remaining queued events and frees the handle's site. `close(session)`
+stops all handles in that session. The loader also closes plugin sessions after
+failed init or unload.
+
+`start` returns 0 on success, 1 for an invalid request, 2 when all shared sites
+are occupied, 3 for a duplicate address, 4 when tracing is unavailable, and 5
+for a closed or unknown session. `poll` returns a negative value for an invalid
+or closed handle. `stop` and `close` return 0 on success or 1 for an unknown or
+closed handle/session. A completed handle does not identify or stop a later
+capture that reuses its address.
+
 ## Loader service: original v1
 
 Provider: `defiance.loader`. Name: `original`. Exact service version: `1`.
@@ -273,14 +373,20 @@ resolved per game build by `tools/variant.py` into
 - `patch.cell(prepared, name)` is the address of a unit's named cell, for the
   plugin to fill before its hooks read it; 0 when no unit has one.
 - `patch.install(api, prepared, replacements, count, call_detour)` checks every
-  site, then writes them all under the calling plugin's ownership: 0, or
-  nonzero with nothing of the plugin's left written (the host rolls back).
+  site, then stages them under the calling plugin's ownership: 0 when accepted,
+  or nonzero. A managed plugin must propagate failure from `init` so the loader
+  discards requests already staged by that plugin.
   `replacements` replace functions the units list as `natives` outright in
   Rust; a non-null `call_detour` takes the units' one call write.
+- `patch.contract(api, prepared)` returns the writes accepted by `install`,
+  using Core's relocated sites and original bytes. The Feature SDK uses this
+  when the loader checks a managed plugin's declared patch contract after init.
 
-Call all three during your own init: the host charges the writes to the plugin
-initializing. The host restores them when the plugin fails or is unloaded; the
-linked code is never freed, since game code may still be returning through it.
+Call `prepare`, `cell` and `install` during your own init: the host charges the
+writes to the plugin initializing. The Feature SDK calls `contract` after
+successful init. Managed writes stay invisible until their group commits; the
+host restores them when the plugin is unloaded. The linked code is never freed,
+since game code may still be returning through it.
 In Rust, `defiance_feature_sdk::units::install` does all of this for units
 embedded with `defiance_build_support::embed_units`.
 

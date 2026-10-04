@@ -19,7 +19,9 @@ def run(loader):
     imports = {pe.get_string_at_rva(item.struct.Name): item for item in pe.DIRECTORY_ENTRY_IMPORT}
     system = br"\\?\GLOBALROOT\SystemRoot\System32\dxgi.dll"
     assert system in imports, list(imports)
-    exports = {item.name for item in pe.DIRECTORY_ENTRY_EXPORT.symbols if item.name and item.name != b"DllMain"}
+    all_exports = {item.name for item in pe.DIRECTORY_ENTRY_EXPORT.symbols if item.name}
+    assert b"DEFIANCE_LOADER_STATE" in all_exports, "loader must expose launcher startup status"
+    exports = all_exports - {b"DllMain", b"DEFIANCE_LOADER_STATE"}
     imported = {item.name for item in imports[system].imports}
     # Only the anchor is bound at load time; DllMain resolves the rest, so an
     # export an older Windows lacks cannot stop the proxy (and the game) loading.
@@ -70,17 +72,30 @@ pub unsafe extern "system" fn Probe() -> i32 {
 #[link(name="caller", kind="raw-dylib")]
 extern "system" { fn Probe() -> i32; }
 #[link(name="kernel32")]
-extern "system" { fn GetModuleHandleW(name: *const u16) -> *mut (); }
+extern "system" {
+    fn GetModuleHandleW(name: *const u16) -> *mut ();
+    fn GetProcAddress(module: *mut (), name: *const u8) -> *const u8;
+    fn GetCurrentProcessId() -> u32;
+}
 fn main() {
     assert_eq!(unsafe { Probe() }, 1, "caller DllMain did not forward successfully");
     let local = std::env::current_exe().unwrap().with_file_name("dxgi.dll");
     let local: Vec<u16> = local.to_str().unwrap().encode_utf16().chain(Some(0)).collect();
-    assert!(!unsafe { GetModuleHandleW(local.as_ptr()) }.is_null(), "fixture bypassed the local proxy");
+    let proxy = unsafe { GetModuleHandleW(local.as_ptr()) };
+    assert!(!proxy.is_null(), "fixture bypassed the local proxy");
+    let status = unsafe { GetProcAddress(proxy, b"DEFIANCE_LOADER_STATE\0".as_ptr()) };
+    assert!(!status.is_null(), "loader startup data export is missing");
+    let bytes = unsafe { core::slice::from_raw_parts(status, 24) };
+    assert_eq!(&bytes[..8], b"DFLBOOT1");
+    let word = |at| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+    assert_eq!(word(8), 1, "launcher ABI mismatch");
+    assert_eq!(word(16), unsafe { GetCurrentProcessId() });
+    assert!(matches!(word(12), 1 | 3), "a non-game fixture must not become a ready host");
 }
 ''', encoding="utf-8")
         for source, flags in [("caller", ["--crate-type=cdylib"]), ("runner", [])]:
             suffix = ".dll" if flags else ".exe"
-            subprocess.run(["rustc", str(folder / (source + ".rs")), *flags,
+            subprocess.run(["rustc", "--edition=2021", str(folder / (source + ".rs")), *flags,
                             "-o", str(folder / (source + suffix))], check=True, timeout=90)
         # Children inherit this; a startup error must fail instead of opening a dialog.
         old = ctypes.windll.kernel32.SetErrorMode(0x8003)
@@ -100,5 +115,4 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("loader", nargs="?", type=pathlib.Path, default=ROOT / "target/release/defiance_loader.dll")
     run(parser.parse_args().loader.resolve())
-
 

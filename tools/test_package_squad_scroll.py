@@ -5,9 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 import zipfile
-from package_squad_scroll import (layout, vehicle_layout, ammo_info_layout, resources, dds,
+from package_squad_scroll import (layout, vehicle_layout, training_layout, ammo_info_layout, resources, dds,
                                   dim_material, dim_materials, DIM_ALBEDO, DIM_EMISSION,
-                                  RESOURCE, VEHICLE_RESOURCE)
+                                  RESOURCE, VEHICLE_RESOURCE, TRAINING_RESOURCE, TRAINING_SLIDER)
 
 
 # The stock ammo card's rows, in the game's CRLF and property-row format.
@@ -64,6 +64,44 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(after.count(b'\tdirection\tvertical'), 1)
         self.assertNotIn(b'df_perks', after)
         self.assertEqual(after[len(before):].count(b'\tenabled\ttrue'), 3)
+
+    def test_training_scrollbar_sits_below_the_first_row(self):
+        before = b'\r\n'.join([
+            b'name\ttype\tregion\tlink\ttip\tproperty\tvalue',
+            b'title_text\ttext\t230,254,1691,290',
+            b'close_button\ttext_button\t226,250,442,294',
+            b'items_first_line\twidget\t1,309,1921,695',
+            b'items_second_line\twidget\t1,695,1921,1081', b''])
+        after = training_layout(before)
+        self.assertTrue(after.startswith(before))
+        bounds = TRAINING_SLIDER
+        region = ', '.join(str(value) for value in bounds).encode()
+        self.assertIn(b'df_trainings\tslider\t ' + region, after)
+        title = (230, 254, 1691, 290)
+        back = (226, 250, 442, 294)
+        first_row = (1, 309, 1921, 695)
+        self.assertGreaterEqual(bounds[1], max(title[3], back[3]))
+        self.assertLessEqual(bounds[3], first_row[1])
+        self.assertEqual((bounds[0], bounds[2]), (first_row[0], first_row[2]))
+        self.assertEqual(after.count(b'\tslider\t'), 1)
+        self.assertIn(b'\tdirection\thorizontal', after)
+        for bad in (after, before.replace(b'items_first_line', b'other'),
+                    before.replace(b'309', b'308'), before.replace(b'widget', b'text'),
+                    before.replace(b'title_text', b'other_title'),
+                    before.replace(b'230,254,1691,290', b'230,253,1691,290'),
+                    before.replace(b'text_button', b'button'),
+                    before.replace(b'226,250,442,294', b'226,249,442,294')):
+            with self.assertRaises(ValueError):
+                training_layout(bad)
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp)
+            for pak in ('basis.pak', 'patch_010_dlc.pak'):
+                with zipfile.ZipFile(game / pak, 'w') as z:
+                    z.writestr(TRAINING_RESOURCE, before)
+            layers, sources = resources(game, TRAINING_RESOURCE, training_layout)
+            self.assertEqual(layers['basis'], after)
+            self.assertEqual(layers['basis'], layers['dlc'])
+            self.assertEqual(sources['basis']['layout_revision'], 5)
 
     def test_ammo_card_count_is_right_aligned_in_a_wider_box(self):
         after = ammo_info_layout(AMMO_INFO).decode().split('\r\n')

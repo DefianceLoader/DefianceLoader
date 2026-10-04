@@ -1,4 +1,5 @@
-//! How the loader gets into the game, without an injector.
+//! How the loader gets into the game, through either a proxy DLL or an EXE
+//! launcher that loads the neutral DLL directly.
 //!
 //! The DLL this crate builds is a *proxy*: it is placed beside `trm.exe` under
 //! the name of a system DLL the game imports (`version.dll`, `dxgi.dll`,
@@ -6,7 +7,12 @@
 //! that import, so the game loads it as if it were the system one. Which name
 //! to take comes from `trm.exe`'s import table, read by `tools/proxy.py`,
 //! which generates a tail-jump forwarder for every export in
-//! `proxy_generated.rs`; see `proxy.rs`. This replaces "start the injector,
+//! `proxy_generated.rs`; see `proxy.rs`.
+//!
+//! A separate EXE can load the neutral DLL with `LoadLibraryW`; DllMain starts
+//! the same host and publishes completion in
+//! [`crate::startup::DEFIANCE_LOADER_STATE`]. Proxy loading replaces
+//! "start the injector,
 //! then start the game" with "double-click the game": the store's shortcut
 //! keeps working and there is no window to leave open.
 //!
@@ -30,6 +36,8 @@ pub unsafe extern "system" fn DllMain(
     _reserved: *mut c_void,
 ) -> i32 {
     if reason == win::DLL_PROCESS_ATTACH {
+        let process_id = unsafe { GetCurrentProcessId() };
+        crate::startup::DEFIANCE_LOADER_STATE.begin(process_id);
         unsafe { crate::proxy::resolve() };
         unsafe { win::DisableThreadLibraryCalls(module) };
         let mut id = 0u32;
@@ -44,6 +52,7 @@ pub unsafe extern "system" fn DllMain(
             )
         };
         if thread.is_null() {
+            crate::startup::DEFIANCE_LOADER_STATE.fail();
             // The log is not open under the loader lock; the debugger channel
             // is safe here. Forwarding still works without the host.
             const MESSAGE: &[u8] = b"DefianceLoader: could not create the host thread\n\0";
@@ -64,5 +73,11 @@ pub unsafe extern "system" fn DllMain(
 
 unsafe extern "system" fn host_thread(_parameter: *mut c_void) -> u32 {
     crate::host::run();
+    crate::startup::DEFIANCE_LOADER_STATE.fail();
     0
+}
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetCurrentProcessId() -> u32;
 }

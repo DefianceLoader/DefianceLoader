@@ -20,4 +20,12 @@ pub unsafe extern "C" fn defiance_plugin() -> *const defiance_api::Plugin {
     })
 }
 
+#[cfg(windows)]
+#[no_mangle]
+pub unsafe extern "C" fn defiance_patch_contract_v1(
+    api: *const defiance_api::Api,
+) -> *const defiance_api::PatchContractV1 {
+    unsafe { native::patch_contract(api) }
+}
+
 defiance_feature_sdk::crash_handshake!();

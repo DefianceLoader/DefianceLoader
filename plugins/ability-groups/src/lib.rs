@@ -14,7 +14,9 @@
 //! mission, where no ability bar exists, so
 //! no row has the game's widgets moved.
 use core::ffi::c_void;
-use defiance_api::{Api, Plugin, ABI_VERSION, LOG_ERROR, LOG_INFO};
+use defiance_api::{
+    Api, PatchContractV1, Plugin, ABI_VERSION, LOG_ERROR, LOG_INFO, PATCH_KIND_ENTRY,
+};
 
 mod native;
 mod sites;
@@ -80,7 +82,7 @@ extern "system" {
     fn GetModuleFileNameW(module: *mut c_void, path: *mut u16, capacity: u32) -> u32;
 }
 
-unsafe fn install(api: &Api) -> Result<&'static Build, String> {
+unsafe fn selected_build(api: &Api) -> Result<(*mut c_void, usize, &'static Build), String> {
     let base = (api.module_base)(c"game.dll".as_ptr());
     if base.is_null() {
         return Err("game.dll is not loaded".into());
@@ -112,8 +114,41 @@ unsafe fn install(api: &Api) -> Result<&'static Build, String> {
             ));
         }
     }
+    Ok((base, size, build))
+}
+
+unsafe fn install(api: &Api) -> Result<&'static Build, String> {
+    let (base, _, build) = unsafe { selected_build(api) }?;
     native::install(api, base as usize, build)?;
     Ok(build)
+}
+
+unsafe extern "C" fn patch_contract(api: *const Api) -> *const PatchContractV1 {
+    let Some(api_ref) = (unsafe { api.as_ref() }) else {
+        return core::ptr::null();
+    };
+    let (_, _, build) = match unsafe { selected_build(api_ref) } {
+        Ok(selected) => selected,
+        Err(_) => return core::ptr::null(),
+    };
+    let patches = [
+        &build.update,
+        &build.reset,
+        &build.key,
+        &build.bar_destroy,
+        &build.order_key,
+        &build.click,
+    ]
+    .into_iter()
+    .map(|site| defiance_feature_sdk::contract::Patch {
+        module: c"game.dll",
+        rva: site.rva,
+        kind: PATCH_KIND_ENTRY,
+        before: site.before.to_vec(),
+        after: None,
+    })
+    .collect();
+    unsafe { defiance_feature_sdk::contract::build(api, patches) }
 }
 
 unsafe extern "C" fn init(api: *const Api) -> i32 {
@@ -148,6 +183,11 @@ pub extern "C" fn defiance_plugin() -> *const Plugin {
         init,
         stop: None,
     })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn defiance_patch_contract_v1(api: *const Api) -> *const PatchContractV1 {
+    unsafe { patch_contract(api) }
 }
 defiance_feature_sdk::crash_handshake!();
 

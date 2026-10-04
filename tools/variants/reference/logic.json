@@ -2,7 +2,7 @@
   "feature_schema": 1,
   "source_sha256": "17ef48350153306e210e14a24b0ad398c56fb99d3d46c88f246df260ade85780",
   "code_bytes": 412,
-  "block_bytes": 12288,
+  "block_bytes": 16384,
   "cursor_offset": 12032,
   "call_site": 4437976,
   "call_before": "e813290000",
@@ -55,14 +55,44 @@
     {
       "hook_rva": 1933296,
       "hook_displaced": "885130c3cc",
-      "hook_entry": 10668,
+      "hook_entry": 10438,
       "hook_feature": 2
     },
     {
       "hook_rva": 4292904,
       "hook_displaced": "498b06498bce",
-      "hook_entry": 10606,
+      "hook_entry": 10376,
       "hook_feature": 2
+    },
+    {
+      "hook_rva": 2727173,
+      "hook_displaced": "85f60f88c2000000",
+      "hook_entry": 10623,
+      "hook_feature": 11
+    },
+    {
+      "hook_rva": 2726882,
+      "hook_displaced": "c783bc0000000000803f",
+      "hook_entry": 12288,
+      "hook_feature": 11
+    },
+    {
+      "hook_rva": 1834400,
+      "hook_displaced": "498b5f60488bc3",
+      "hook_entry": 13234,
+      "hook_feature": 11
+    },
+    {
+      "hook_rva": 4622043,
+      "hook_displaced": "488b5c2478",
+      "hook_entry": 13824,
+      "hook_feature": 11
+    },
+    {
+      "hook_rva": 4624619,
+      "hook_displaced": "488b742448",
+      "hook_entry": 13852,
+      "hook_feature": 11
     },
     {
       "hook_rva": 2110617,
@@ -197,6 +227,10 @@
       "hook_feature": 7
     }
   ],
+  "vehicle_special_fire_helpers": {
+    "refresh_ai": 816496
+  },
+  "vehicle_special_fire_client_skip": 1834481,
   "trace_fixups": [
     {
       "trace_fix_offset": 1600,
@@ -272,22 +306,22 @@
       "rel_feature": 6
     },
     {
-      "rel_offset": 10549,
-      "rel_target": 4295856,
-      "rel_feature": 2
-    },
-    {
-      "rel_offset": 10594,
+      "rel_offset": 10304,
       "rel_target": 4292608,
       "rel_feature": 2
     },
     {
-      "rel_offset": 10659,
+      "rel_offset": 10364,
+      "rel_target": 4292608,
+      "rel_feature": 2
+    },
+    {
+      "rel_offset": 10429,
       "rel_target": 4292910,
       "rel_feature": 2
     },
     {
-      "rel_offset": 10664,
+      "rel_offset": 10434,
       "rel_target": 4293075,
       "rel_feature": 2
     },
@@ -355,11 +389,77 @@
       "rel_offset": 9770,
       "rel_target": 2111549,
       "rel_feature": 2
+    },
+    {
+      "rel_offset": 13848,
+      "rel_target": 4622048,
+      "rel_feature": 11
+    },
+    {
+      "rel_offset": 13876,
+      "rel_target": 4624624,
+      "rel_feature": 11
+    },
+    {
+      "rel_offset": 14320,
+      "rel_target": 816496,
+      "rel_feature": 11
+    },
+    {
+      "rel_offset": 14670,
+      "rel_target": 816496,
+      "rel_feature": 11
+    },
+    {
+      "rel_offset": 12342,
+      "rel_target": 2726892,
+      "rel_feature": 11
+    },
+    {
+      "rel_offset": 13289,
+      "rel_target": 1834407,
+      "rel_feature": 11
+    },
+    {
+      "rel_offset": 13294,
+      "rel_target": 1834481,
+      "rel_feature": 11
+    },
+    {
+      "rel_offset": 10507,
+      "rel_target": 2809040,
+      "rel_feature": 11
+    },
+    {
+      "rel_offset": 10696,
+      "rel_target": 2727375,
+      "rel_feature": 11
+    },
+    {
+      "rel_offset": 10701,
+      "rel_target": 2727181,
+      "rel_feature": 11
     }
   ],
   "census_offset": 4864,
   "pose_offset": 2560,
   "pose_calls": [
+    {
+      "pose_site": 4621259,
+      "pose_before": "e80059e4ff",
+      "pose_entry": 10496,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 11
+    },
+    {
+      "pose_site": 4623792,
+      "pose_before": "e81b4fe4ff",
+      "pose_entry": 10496,
+      "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 11
+    },
     {
       "pose_site": 4438713,
       "pose_before": "488b442450",
@@ -533,14 +633,6 @@
       "pose_before": "e80becffff",
       "pose_entry": 10240,
       "pose_tail": "",
-      "pose_stock": 0,
-      "pose_feature": 2
-    },
-    {
-      "pose_site": 4296336,
-      "pose_before": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff5050",
-      "pose_entry": 10518,
-      "pose_tail": "909090909090909090909090909090909090909090909090",
       "pose_stock": 0,
       "pose_feature": 2
     },
@@ -1234,13 +1326,6 @@
       "site_offset": 0
     },
     {
-      "site_name": "marquee_select",
-      "site_start": 4296336,
-      "site_group": 4296112,
-      "site_pattern": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff50504883c308483b5dff",
-      "site_offset": 0
-    },
-    {
       "site_name": "dim_pose",
       "site_start": 2110617,
       "site_group": 2107840,
@@ -1322,6 +1407,76 @@
       "site_start": 1933296,
       "site_group": 1933296,
       "site_pattern": "885130c3cccccccccccccccccccccccc488bc44889580848896818",
+      "site_offset": 0
+    },
+    {
+      "site_name": "vehicle_special_fire_source",
+      "site_start": 4621259,
+      "site_group": 4620352,
+      "site_pattern": "e8????????4c8be04885c074624180bfa4010000007558488b4d20",
+      "site_offset": 0
+    },
+    {
+      "site_name": "vehicle_special_fire_disembark_source",
+      "site_start": 4623792,
+      "site_group": 4623779,
+      "site_pattern": "e8????????488bd84885c0741e488b4d20488b11ff92b0000000",
+      "site_offset": 0
+    },
+    {
+      "site_name": "vehicle_special_fire_original",
+      "site_start": 2809040,
+      "site_group": 2809040,
+      "site_pattern": "48895c240848896c24104889742418574883ec20488b81f0010000",
+      "site_offset": 0
+    },
+    {
+      "site_name": "vehicle_special_fire_rebind",
+      "site_start": 2727173,
+      "site_group": 2726336,
+      "site_pattern": "85f60f88????????4d63ee488b43204a8b0ce8488b01488b5368",
+      "site_offset": 0
+    },
+    {
+      "site_name": "vehicle_special_fire_rebind_skip",
+      "site_start": 2727375,
+      "site_group": 2726336,
+      "site_pattern": "83bbc0000000010f85????????498b1424488955304885d2",
+      "site_offset": 0
+    },
+    {
+      "site_name": "vehicle_special_fire_dynamic_tick",
+      "site_start": 2726882,
+      "site_group": 2726336,
+      "site_pattern": "c783bc0000000000803f488b4358483943500f85????????",
+      "site_offset": 0
+    },
+    {
+      "site_name": "vehicle_special_fire_dynamic_client",
+      "site_start": 1834400,
+      "site_group": 1833888,
+      "site_pattern": "498b5f60488bc348c1e8204863f8488b4618488b0cf8488b01488b5660488b14faff50604863db488b4618488b0cd8488b01488b5660488b14faff5058488b4e60488b04f9488904d9488b46604c8924f8",
+      "site_offset": 0
+    },
+    {
+      "site_name": "vehicle_special_fire_board",
+      "site_start": 4622041,
+      "site_group": 4620352,
+      "site_pattern": "ffd7488b5c24784883c430415f415e415d415c5f5e5dc3488d0d????????ff15????????cc",
+      "site_offset": 2
+    },
+    {
+      "site_name": "vehicle_special_fire_disembark",
+      "site_start": 4624603,
+      "site_group": 4624517,
+      "site_pattern": "488b11ff5240448bc3488bce8bd0ffd7488b742448488b7c2450",
+      "site_offset": 16
+    },
+    {
+      "site_name": "vehicle_special_fire_refresh_ai",
+      "site_start": 816496,
+      "site_group": 816496,
+      "site_pattern": "48895c24084889742410574883ec20c681d001000000488bf1",
       "site_offset": 0
     }
   ],

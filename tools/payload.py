@@ -30,15 +30,19 @@ REGION_ICON_GATE = (0x418128, bytes.fromhex("498b06498bce"), "region_icon_gate")
 REGION_CALLS = [(site, b"\xe8" + struct.pack("<i", 0x418000 - site - 5),
                  f"region_individual_{i}", 2)
                 for i, site in enumerate((0x418e1f, 0x419097, 0x419130, 0x4193f0))]
-# and the marquee replace pass's select loop body, which marquee_select takes
-# over so a squad hit marks its roster
-REGION_CALLS.append((0x418e90, bytes.fromhex(
-    "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff5050"), "marquee_select", 2))
 # The squad preview's dimmed soldiers (patch/preview-dim.asm): code after the
 # ammo mode, and its cell (Core's material callback, then the mode) before the
 # ammunition scratch.
 PREVIEW_DIM_OFFSET = 0x2580
 PREVIEW_DIM_CELL = 0x26e0
+SPECIAL_PRIORITY_OFFSET = 0x3600
+SPECIAL_DYNAMIC_OFFSET = 0x3000
+PAYLOAD_BLOCK_SIZE = 0x4000
+SPECIAL_DYNAMIC_RESET = bytes.fromhex("c783bc0000000000803f")
+SPECIAL_DYNAMIC_CLIENT = bytes.fromhex(
+    "498b5f60488bc348c1e8204863f8488b4618488b0cf8488b01488b5660488b14faff5060")
+# The region predicate ends before +0x100; its cell starts at +0x1f0.
+SPECIAL_FIRE_OFFSET = REGION_OFFSET + 0x100
 PREVIEW_DIM_HOOKS = [
     # rva, the bytes displaced, the entry
     (0x203499, bytes.fromhex("450fb6742420"), "dim_pose"),
@@ -67,6 +71,165 @@ ORDER_CALLS = [
 ]
 
 
+def vehicle_special_fire_source_call(img):
+    """Find the transport helper's call that binds one occupant gun to a mount."""
+    prefix = bytes.fromhex("488bcbe8")
+    after = bytes.fromhex("4c8be04885c0")
+    candidates = set()
+    for name, va, size, raw in img.sections:
+        if name != ".text":
+            continue
+        code = img.data[raw:raw + size]
+        start = 0
+        while (offset := code.find(prefix, start)) >= 0:
+            start = offset + 1
+            call = va + offset + 3
+            before = img.read(call, 5)
+            if (before[0] != 0xe8 or img.read(call + 5, len(after)) != after):
+                continue
+            if img.read(call - 11, 3) != bytes.fromhex("488bc8") or \
+                    img.read(call - 8, 1) != b"\xe8":
+                continue
+            original = call + 5 + int.from_bytes(before[1:], "little", signed=True)
+            if img.read(original, 3) == bytes.fromhex("48895c"):
+                candidates.add((call, before, original))
+    if len(candidates) != 1:
+        raise SystemExit(f"found {len(candidates)} passenger gun selector calls; expected one")
+    return next(iter(candidates))
+
+
+def vehicle_special_fire_disembark_call(img, tail, original):
+    """Find the disembark chooser that releases the same gun boarding selects."""
+    sections = [(va, size) for name, va, size, _ in img.sections
+                if name == ".text" and va <= tail < va + size]
+    if len(sections) != 1:
+        raise SystemExit("the passenger disembark tail is outside native code")
+    start = max(sections[0][0], tail - 0x500)
+    window = img.read(start, tail - start)
+    entries = []
+    offset = 0
+    while (offset := window.find(bytes.fromhex("4885d20f84"), offset)) >= 0:
+        if window[offset + 9:offset + 22] == bytes.fromhex("5541564883ec28488be94c8bf2"):
+            entries.append(start + offset)
+        offset += 1
+    if len(entries) != 1:
+        raise SystemExit("expected one native passenger disembark entry before its tail")
+    # The native routine has several chained unwind chunks; its verified entry
+    # and epilogue bound the selector search across those chunks.
+    start = entries[0]
+    window = img.read(start, tail - start)
+    prefix = bytes.fromhex("488bcbe8")
+    after = bytes.fromhex(
+        "488bd84885c0741e488b4d20488b11ff92b0000000488b48284885c97408488bd3e8")
+    arguments = bytes.fromhex("33d2488bcb4c897c2420e8")
+    candidates = set()
+    offset = 0
+    while (offset := window.find(prefix, offset)) >= 0:
+        site = start + offset + 3
+        offset += 1
+        before = img.read(site, 5)
+        if img.read(site - 18, len(arguments)) != arguments or \
+                img.read(site + 5, len(after)) != after:
+            continue
+        target = site + 5 + int.from_bytes(before[1:], "little", signed=True)
+        if target != original:
+            raise SystemExit("passenger boarding and disembark selectors have different native targets")
+        candidates.add((site, before))
+    if len(candidates) != 1:
+        raise SystemExit(f"found {len(candidates)} passenger disembark selector calls; expected one")
+    return next(iter(candidates))
+
+
+def vehicle_special_fire_rebind_site(img):
+    """Find the passenger gunner's source-gun move before it can use a dead gun."""
+    prefix = bytes.fromhex("85f60f88")
+    after = bytes.fromhex("4d63ee488b43204a8b0ce8")
+    candidates = set()
+    for name, va, size, raw in img.sections:
+        if name != ".text":
+            continue
+        code = img.data[raw:raw + size]
+        start = 0
+        while (offset := code.find(prefix, start)) >= 0:
+            start = offset + 1
+            if code[offset + 8:offset + 8 + len(after)] != after:
+                continue
+            site = va + offset
+            skip = site + 8 + int.from_bytes(code[offset + 4:offset + 8], "little", signed=True)
+            if img.function_of(site) == img.function_of(skip) and skip > site:
+                candidates.add((site, img.read(site, 8), site + 8, skip))
+    if len(candidates) != 1:
+        raise SystemExit(f"found {len(candidates)} passenger gun rebind sites; expected one")
+    return next(iter(candidates))
+
+
+def vehicle_special_fire_priority_sites(img, source_call):
+    """Find the transport epilogues and native AI helpers used by rebalance."""
+    tails = {
+        "board": bytes.fromhex("488b5c24784883c430415f415e415d415c5f5e5dc3"),
+        "disembark": bytes.fromhex(
+            "488b742448488b7c24504c8b642458488b5c24404883c428415e5dc3"),
+    }
+    window = img.read(source_call, 0x1500)
+    sites = {}
+    for name, pattern in tails.items():
+        at = window.find(pattern)
+        if at < 0 or window.find(pattern, at + 1) >= 0:
+            raise SystemExit(f"expected one passenger {name} epilogue after {source_call:#x}")
+        sites[name] = (source_call + at, pattern[:5])
+    if not sites["board"][0] < sites["disembark"][0]:
+        raise SystemExit("passenger epilogues are out of order")
+    calls = {"refresh_ai": source_call + 0x6a}
+    helpers = {}
+    for name, site in calls.items():
+        before = img.read(site, 5)
+        if before[0] != 0xe8:
+            raise SystemExit(f"passenger {name} helper at {site:#x} is not a direct call")
+        helpers[name] = site + 5 + int.from_bytes(before[1:], "little", signed=True)
+    return sites, helpers
+
+
+def vehicle_special_fire_dynamic_site(img, rebind_site):
+    """Find the once-per-second passenger mount update in the guarded gunner."""
+    function = img.function_of(rebind_site)
+    if function is None:
+        raise SystemExit("the passenger rebind site has no native function")
+    start, end = function
+    window = img.read(start, end - start)
+    pattern = SPECIAL_DYNAMIC_RESET + bytes.fromhex("488b435848394350")
+    at = window.find(pattern)
+    if at < 0 or window.find(pattern, at + 1) >= 0:
+        raise SystemExit("expected one passenger mount update timer in the guarded gunner")
+    site = start + at
+    return site, SPECIAL_DYNAMIC_RESET, site + len(SPECIAL_DYNAMIC_RESET)
+
+
+def vehicle_special_fire_client_site(img):
+    """Find the passenger client's mount-move event and its native continuation."""
+    before = bytes.fromhex("418b4744c1e80c4533e4a80174")
+    tail = bytes.fromhex("4c8924f8418b4744c1e802a801")
+    candidates = set()
+    for name, va, size, raw in img.sections:
+        if name != ".text":
+            continue
+        code = img.data[raw:raw + size]
+        start = 0
+        while (offset := code.find(SPECIAL_DYNAMIC_CLIENT, start)) >= 0:
+            start = offset + 1
+            site = va + offset
+            branch = img.read(site - len(before) - 1, len(before) + 1)
+            if len(branch) != len(before) + 1 or branch[:-1] != before:
+                continue
+            skip = site + int.from_bytes(branch[-1:], "little", signed=True)
+            function = img.function_of(site)
+            if skip > site and function is not None and img.function_of(skip) == function \
+                    and img.read(skip - 4, len(tail)) == tail:
+                candidates.add((site, SPECIAL_DYNAMIC_CLIENT[:7], site + 7, skip))
+    if len(candidates) != 1:
+        raise SystemExit(f"found {len(candidates)} passenger client mount events; expected one")
+    return next(iter(candidates))
+
+
 def main():
     source = pathlib.Path(b.SRC).read_bytes()
     sha = hashlib.sha256(source).hexdigest()
@@ -78,6 +241,16 @@ def main():
     name, profile = b.active_profile()
     if profile:
         b.load_layout(profile)
+    img = b.Image(b.SRC)
+    special_fire_rva, special_fire_before, special_fire_original = \
+        vehicle_special_fire_source_call(img)
+    rebind_rva, rebind_before, rebind_resume, rebind_skip = \
+        vehicle_special_fire_rebind_site(img)
+    priority_sites, priority_helpers = vehicle_special_fire_priority_sites(img, special_fire_rva)
+    disembark_fire_rva, disembark_fire_before = vehicle_special_fire_disembark_call(
+        img, priority_sites["disembark"][0], special_fire_original)
+    dynamic_rva, dynamic_before, dynamic_resume = vehicle_special_fire_dynamic_site(img, rebind_rva)
+    client_rva, client_before, client_resume, client_skip = vehicle_special_fire_client_site(img)
     payload_path = PAYLOAD if not name else PAYLOAD.with_name(f"payload-{name}.bin")
     descriptor_path = DESCRIPTOR if not name else DESCRIPTOR.with_name(f"payload-{name}.json")
 
@@ -119,6 +292,38 @@ def main():
     dim, dim_labels = b.assemble(
         pathlib.Path("patch/preview-dim.asm").read_text().splitlines(),
         BASE + PREVIEW_DIM_OFFSET, b.CURSOR_OFFSET, PREVIEW_DIM_CELL)
+    special_fire_symbols = dict(b.SYMBOLS)
+    special_fire_symbols.update({
+        "vehicle_special_fire_original": special_fire_original,
+        "vehicle_special_fire_guard_resume": rebind_resume,
+        "vehicle_special_fire_guard_skip": rebind_skip,
+    })
+    special_fire, special_fire_labels = b.assemble(
+        pathlib.Path("patch/vehicle-special-fire.asm").read_text().splitlines(),
+        BASE + SPECIAL_FIRE_OFFSET, b.CURSOR_OFFSET, symbols=special_fire_symbols)
+    priority_symbols = {**special_fire_symbols,
+                        "vehicle_special_fire_source": special_fire_labels["vehicle_special_fire_source"],
+                        "vehicle_special_fire_board_resume": priority_sites["board"][0] + 5,
+                        "vehicle_special_fire_disembark_resume": priority_sites["disembark"][0] + 5,
+                        **{f"vehicle_special_fire_{name}": rva
+                           for name, rva in priority_helpers.items()}}
+    priority, priority_labels = b.assemble(
+        pathlib.Path("patch/vehicle-priority-fire.asm").read_text().splitlines(),
+        BASE + SPECIAL_PRIORITY_OFFSET, b.CURSOR_OFFSET, symbols=priority_symbols)
+    dynamic_symbols = {**priority_symbols, **priority_labels, **special_fire_labels,
+                       "vehicle_special_fire_dynamic_resume": dynamic_resume,
+                       "vehicle_special_fire_dynamic_client_resume": client_resume,
+                       "vehicle_special_fire_dynamic_client_skip": client_skip}
+    dynamic, dynamic_labels = b.assemble(
+        pathlib.Path("patch/vehicle-dynamic-fire.asm").read_text().splitlines(),
+        BASE + SPECIAL_DYNAMIC_OFFSET, b.CURSOR_OFFSET, symbols=dynamic_symbols)
+    if SPECIAL_DYNAMIC_OFFSET + len(dynamic) > SPECIAL_PRIORITY_OFFSET:
+        raise SystemExit("the dynamic passenger mount code reaches the priority code")
+    if REGION_OFFSET + len(region) > SPECIAL_FIRE_OFFSET or \
+            SPECIAL_FIRE_OFFSET + len(special_fire) > REGION_CELL:
+        raise SystemExit("the vehicle special-fire gate does not fit before the region cell")
+    if SPECIAL_PRIORITY_OFFSET + len(priority) > PAYLOAD_BLOCK_SIZE:
+        raise SystemExit("the vehicle priority code exceeds the injector block")
     if ORDER_OFFSET + len(orders) > b.CURSOR_OFFSET:
         raise SystemExit("order filters would reach the rotation cursor")
     if len(code) > b.POSTURE_OFFSET or b.POSTURE_OFFSET + len(posture) > b.MOVE_OFFSET:
@@ -171,6 +376,11 @@ def main():
             PREVIEW_DIM_OFFSET + len(dim) > PREVIEW_DIM_CELL or PREVIEW_DIM_CELL + 0x10 > b.AMMO_SCRATCH:
         raise SystemExit("the preview dimming code does not fit between ammo mode and the ammo scratch")
     payload[PREVIEW_DIM_OFFSET:PREVIEW_DIM_OFFSET + len(dim)] = dim
+    payload[SPECIAL_FIRE_OFFSET:SPECIAL_FIRE_OFFSET + len(special_fire)] = special_fire
+    payload.extend(bytes(max(b.BLOCK_SIZE, SPECIAL_PRIORITY_OFFSET + len(priority),
+                             SPECIAL_DYNAMIC_OFFSET + len(dynamic)) - len(payload)))
+    payload[SPECIAL_PRIORITY_OFFSET:SPECIAL_PRIORITY_OFFSET + len(priority)] = priority
+    payload[SPECIAL_DYNAMIC_OFFSET:SPECIAL_DYNAMIC_OFFSET + len(dynamic)] = dynamic
     # Branches out of the block, into logic.dll: assembled here against a block
     # at zero, so the injector re-aims each rel32 from where the block landed.
     # Each carries the feature that owns the region it leaves, or 0 when the
@@ -183,16 +393,19 @@ def main():
                                  (prone, b.PRONE_OFFSET, 4), (census, b.CENSUS_OFFSET, 7),
                                  (firing, b.FIRING_OFFSET, 5), (ammo, b.AMMO_OFFSET, 6),
                                  (region, REGION_OFFSET, 2), (orders, ORDER_OFFSET, 9),
-                                 (dim, PREVIEW_DIM_OFFSET, 2)):
+                                 (dim, PREVIEW_DIM_OFFSET, 2),
+                                 (priority, SPECIAL_PRIORITY_OFFSET, 11),
+                                 (dynamic, SPECIAL_DYNAMIC_OFFSET, 11),
+                                 (special_fire, SPECIAL_FIRE_OFFSET, 11)):
         rel_fixups += [{"rel_offset": offset, "rel_target": target, "rel_feature": feature}
-                       for offset, target in b.module_branches(routine, BASE + at)]
+                       for offset, target in b.module_branches(routine, BASE + at)
+                       if not 0 <= target < PAYLOAD_BLOCK_SIZE]
 
 
     # The five bytes the call site must hold before patching. What it holds
     # afterwards depends on where the block is allocated, so the injector
     # computes that itself.
     before = b"\xe8" + struct.pack("<i", b.STOCK_CHOOSER - (b.CALL_SITE + 5))
-    img = b.Image(b.SRC)
     if img.read(b.CALL_SITE, 5) != before:
         raise SystemExit(f"{b.CALL_SITE:#x} does not hold the expected call")
     if img.read(b.MOVE_CALL_SITE, len(b.MOVE_DISPLACED)) != b.MOVE_DISPLACED:
@@ -229,6 +442,16 @@ def main():
     detours.append({"hook_rva": REGION_ICON_GATE[0],
                     "hook_displaced": REGION_ICON_GATE[1].hex(),
                     "hook_entry": region_labels[REGION_ICON_GATE[2]]})
+    detours.append({"hook_rva": rebind_rva, "hook_displaced": rebind_before.hex(),
+                    "hook_entry": special_fire_labels["vehicle_special_fire_rebind_guard"]})
+    detours.append({"hook_rva": dynamic_rva, "hook_displaced": dynamic_before.hex(),
+                    "hook_entry": dynamic_labels["vehicle_special_fire_dynamic_tick"]})
+    detours.append({"hook_rva": client_rva, "hook_displaced": client_before.hex(),
+                    "hook_entry": dynamic_labels["vehicle_special_fire_dynamic_client"]})
+    for name in ("board", "disembark"):
+        site, displaced = priority_sites[name]
+        detours.append({"hook_rva": site, "hook_displaced": displaced.hex(),
+                        "hook_entry": priority_labels[f"vehicle_special_fire_{name}_tail"]})
     # the squad preview's reads of a soldier's dead byte, and its part loop
     for rva, displaced, label in PREVIEW_DIM_HOOKS:
         if img.read(rva, len(displaced)) != displaced:
@@ -277,6 +500,11 @@ def main():
     # pose_stock is the function a site's rel32 reaches, for the injector to
     # follow in a build where it has moved; zero where there is none.
     pose_calls = []
+    for site, displaced in ((special_fire_rva, special_fire_before),
+                            (disembark_fire_rva, disembark_fire_before)):
+        pose_calls.append({"pose_site": site, "pose_before": displaced.hex(),
+                           "pose_entry": special_fire_labels["vehicle_special_fire_source"],
+                           "pose_tail": "", "pose_stock": 0})
     for site, displaced, label, feature in ORDER_CALLS + REGION_CALLS:
         if img.read(site, len(displaced)) != displaced:
             raise SystemExit(f"{site:#x} is not the expected order-distribution code")
@@ -419,6 +647,19 @@ def main():
     sites.append(("region_native_eligible", 0x418000, [0x418020]))
     sites.append((REGION_ICON_GATE[2], REGION_ICON_GATE[0], [0x41812e, 0x4181d3]))
     sites.append((BUILDING_SELECT[2], BUILDING_SELECT[0], [BUILDING_SELECT[0] + 5]))
+    sites.append(("vehicle_special_fire_source", special_fire_rva, [special_fire_rva + 5]))
+    sites.append(("vehicle_special_fire_disembark_source", disembark_fire_rva,
+                  [disembark_fire_rva + 5]))
+    sites.append(("vehicle_special_fire_original", special_fire_original,
+                  [special_fire_original + 8]))
+    sites.append(("vehicle_special_fire_rebind", rebind_rva, [rebind_resume]))
+    sites.append(("vehicle_special_fire_rebind_skip", rebind_skip, [rebind_skip + 8]))
+    sites.append(("vehicle_special_fire_dynamic_tick", dynamic_rva, [dynamic_resume]))
+    sites.append(("vehicle_special_fire_dynamic_client", client_rva, [client_resume, client_skip]))
+    for name, (site, displaced) in priority_sites.items():
+        sites.append((f"vehicle_special_fire_{name}", site, [site + len(displaced)]))
+    for name, rva in priority_helpers.items():
+        sites.append((f"vehicle_special_fire_{name}", rva, [rva + 8]))
     names = [name for name, _, _ in sites]
     if len(set(names)) != len(names):
         raise SystemExit(f"two sites share a name: {names}")
@@ -465,6 +706,8 @@ def main():
         (5, b.FIRING_HOOKS),
         (6, b.AMMO_HOOKS + b.AMMO_READER_HOOKS),
         (7, b.TRACE_HOOKS + [b.CENSUS_HOOK]),
+        (11, [(rebind_rva,), (dynamic_rva,), (client_rva,),
+              *[(site,) for site, _ in priority_sites.values()]]),
     ]:
         for hook in hooks:
             assert hook[0] not in owners
@@ -477,6 +720,8 @@ def main():
     call_owners.update({site: 5 for site, *_ in b.FIRING_CALLS})
     call_owners.update({site: 6 for site, *_ in b.AMMO_GATE_CALLS})
     call_owners.update({site: feature for site, _, _, feature in ORDER_CALLS + REGION_CALLS})
+    call_owners[special_fire_rva] = 11
+    call_owners[disembark_fire_rva] = 11
     for call in pose_calls:
         call["pose_feature"] = call_owners[call["pose_site"]]
 
@@ -495,7 +740,7 @@ def main():
     names = {0: {"chooser"}, b.MOVE_OFFSET: {"move_filter"}, b.SETTER_OFFSET: {"set_selected"}}
     for table in (labels, move_labels, trace_labels, setter_labels, pose_labels, posture_labels,
                   prone_labels, census_labels, firing_labels, ammo_labels, order_labels,
-                  region_labels, dim_labels):
+                  region_labels, dim_labels, special_fire_labels, priority_labels, dynamic_labels):
         for label, offset in table.items():
             names.setdefault(offset, set()).add(label)
     payload_path.parent.mkdir(exist_ok=True)
@@ -507,7 +752,7 @@ def main():
         "feature_schema": 1,
         "source_sha256": sha,
         "code_bytes": len(code),
-        "block_bytes": b.BLOCK_SIZE,
+        "block_bytes": PAYLOAD_BLOCK_SIZE,
         "cursor_offset": b.CURSOR_OFFSET,
         "call_site": b.CALL_SITE,
         "call_before": before.hex(),
@@ -526,6 +771,8 @@ def main():
         "marquee_cell": REGION_CELL,
         "setter_offset": b.SETTER_OFFSET,
         "detours": detours,
+        "vehicle_special_fire_helpers": priority_helpers,
+        "vehicle_special_fire_client_skip": client_skip,
         "trace_fixups": trace_fixups,
         "rel_fixups": rel_fixups,
         "census_offset": b.CENSUS_TABLE,
@@ -574,7 +821,7 @@ def main():
           f"branches into the module), "
           f"ammo mode {len(ammo)} at +{b.AMMO_OFFSET:#x}, "
           f"ring at +{b.TRACE_OFFSET:#x}")
-    print(f"block     {b.BLOCK_SIZE:#x} bytes, position independent; cursor at "
+    print(f"block     {PAYLOAD_BLOCK_SIZE:#x} bytes, position independent; cursor at "
           f"+{b.CURSOR_OFFSET:#x}")
     print(f"call site {b.CALL_SITE:#x} holds {before.hex()}; the injector "
           f"computes the new target")

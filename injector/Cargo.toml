@@ -4,10 +4,11 @@ version = "0.1.0"
 license = "MPL-2.0"
 edition = "2021"
 
-# The only dependency is the shared core; the Win32 calls are still declared
-# inline and SHA-256 still lives in the core, so nothing comes off crates.io.
+# The shared core supplies patching and SHA-256; the SDK supplies embedded
+# unit records. Win32 calls are declared inline, with no crates.io dependencies.
 [dependencies]
 defiance-core = { path = "../crates/core" }
+defiance-feature-sdk = { path = "../crates/feature-sdk" }
 
 [build-dependencies]
 defiance-build-support = { path = "../crates/build-support" }
