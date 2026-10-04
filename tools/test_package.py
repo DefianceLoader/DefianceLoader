@@ -315,5 +315,14 @@ class PackageTests(unittest.TestCase):
             self.assertTrue(any(row["binary"] == package.SQUAD_SCROLL_DLL for row in builds))
 
 
+class ReleaseWorkflowTests(unittest.TestCase):
+    def test_release_builds_every_packaged_standalone_plugin(self):
+        # package.py refuses a missing plugin, so a workspace the release
+        # workflow does not build fails the tagged release.
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        for folder, _ in package.stage.STANDALONE:
+            self.assertIn(f"cargo build --release --manifest-path {folder}/Cargo.toml", workflow)
+
+
 if __name__ == "__main__":
     unittest.main()

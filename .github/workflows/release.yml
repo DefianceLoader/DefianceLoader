@@ -47,6 +47,11 @@ jobs:
           cargo build --release --manifest-path plugins/vehicle-arrival/Cargo.toml
           cargo build --release --manifest-path plugins/cover-markers/Cargo.toml
           cargo build --release --manifest-path plugins/weapon-drops/Cargo.toml
+          cargo build --release --manifest-path plugins/moving-actions/Cargo.toml
+          cargo build --release --manifest-path plugins/moving-actions-animation/Cargo.toml
+          cargo build --release --manifest-path plugins/moving-actions-sync/Cargo.toml
+          cargo build --release --manifest-path plugins/moving-actions-render-sync/Cargo.toml
+          cargo build --release --manifest-path plugins/moving-grenades/Cargo.toml
           target\release\manifest-gen.exe --out target\release
       - name: Verify the release injector
         run: |

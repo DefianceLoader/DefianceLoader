@@ -38,6 +38,7 @@ class StagingTests(unittest.TestCase):
         self.source.mkdir()
         (self.source / stage.PROXY_LIB).write_bytes(b"defiance-loader test proxy")
         (self.source / stage.CRASH_HELPER).write_bytes(b"defiance-loader crash helper")
+        (self.source / stage.INJECTOR).write_bytes(b"defiance-loader injector")
         self.plugin = "defiance_plugin_test.dll"
         (self.source / self.plugin).write_bytes(b"defiance.test plugin")
         self.manifest = "defiance_plugin_test.plugin.json"
@@ -56,6 +57,29 @@ class StagingTests(unittest.TestCase):
         self.assertFalse(install.target.exists())
         install.uninstall()
         self.assertEqual(helper.read_bytes(), b"unrelated executable")
+
+    def test_injector_and_its_host_are_staged_beside_the_proxy(self):
+        install = self.staging()
+        injector_ini = self.game / "defiance-pickup-inject.ini"
+        injector_ini.write_text("mode = loader\n")
+        install.install()
+        self.assertEqual((self.game / stage.INJECTOR).read_bytes(), b"defiance-loader injector")
+        self.assertEqual((self.game / stage.PROXY_LIB).read_bytes(), b"defiance-loader test proxy")
+        self.assertEqual(install.target.read_bytes(), b"defiance-loader test proxy")
+        install.uninstall()
+        self.assertFalse((self.game / stage.INJECTOR).exists())
+        self.assertFalse((self.game / stage.PROXY_LIB).exists())
+        self.assertEqual(injector_ini.read_text(), "mode = loader\n")
+
+    def test_foreign_injector_is_not_overwritten_or_removed(self):
+        injector = self.game / stage.INJECTOR
+        injector.write_bytes(b"unrelated executable")
+        install = self.staging()
+        with self.assertRaises(SystemExit):
+            install.install()
+        self.assertFalse(install.target.exists())
+        install.uninstall()
+        self.assertEqual(injector.read_bytes(), b"unrelated executable")
 
     def test_default_install_uninstall_preserves_foreign_files_and_proxy(self):
         install = self.staging()

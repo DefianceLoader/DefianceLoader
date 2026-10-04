@@ -19,6 +19,12 @@ It never touches a file it did not write: the proxy is recognised by a string
 the loader carries, and an existing foreign DLL of the same name is moved aside
 to `<name>.defiance-backup` first, and put back on uninstall.
 
+The injector EXE (`defiance-pickup-inject.exe`) and the host DLL it loads
+(`defiance_loader.dll`) are staged into bin too, so either startup method can
+be tried without restaging. The injector writes its own INI on first run, and
+reports the running host instead of loading a second one when the proxy has
+already started it.
+
     python tools/stage.py --game "C:\\Games\\...\\bin"
     python tools/stage.py --game "..." --dry-run
     python tools/stage.py --game "..." --uninstall
@@ -44,6 +50,10 @@ GENERATED = ROOT / "crates" / "loader" / "src" / "proxy_generated.rs"
 DEFAULT_SOURCE = ROOT / "target" / "release"
 PROXY_LIB = "defiance_loader.dll"
 CRASH_HELPER = "defiance-crash-helper.exe"
+INJECTOR = "defiance-pickup-inject.exe"
+# Built files copied into bin under their own names: the crash helper, and the
+# injector with the host DLL it loads.
+COMPANIONS = (CRASH_HELPER, INJECTOR, PROXY_LIB)
 PLUGIN_GLOB = "defiance_plugin_*.dll"
 BACKUP_SUFFIX = ".defiance-backup"
 # Strings every file this project builds carries; they tell a file of ours from
@@ -270,10 +280,10 @@ class Staging:
         print(f"installing the loader as {self.real} and {len(self.plugins)} plugin(s) into {self.plugin_dir}")
         if not self.loader.is_file():
             raise SystemExit(f"{self.loader} is missing; build it first (cargo build --release)")
-        helper = self.source / CRASH_HELPER
-        helper_target = self.game / CRASH_HELPER
-        if helper.is_file() and helper_target.exists() and not looks_ours(helper_target) and not self.force:
-            raise SystemExit(f"{helper_target} is not ours; move it aside before installing")
+        companions = [(self.source / name, self.game / name) for name in COMPANIONS]
+        for built, target in companions:
+            if built.is_file() and target.exists() and not looks_ours(target) and not self.force:
+                raise SystemExit(f"{target} is not ours; move it aside before installing")
         if self.target.exists() and not looks_ours(self.target):
             if self.backup.exists() and not self.force:
                 raise SystemExit(
@@ -284,10 +294,13 @@ class Staging:
             if not self.dry:
                 os.replace(self.target, self.backup)
         self.copy(self.loader, self.target)
-        if helper.is_file():
-            self.copy(helper, helper_target)
-        else:
-            print("  warning: crash helper missing; native crash reports will be text only")
+        for built, target in companions:
+            if built.is_file():
+                self.copy(built, target)
+            elif built.name == CRASH_HELPER:
+                print("  warning: crash helper missing; native crash reports will be text only")
+            else:
+                print(f"  warning: {built.name} missing; the injector startup is not staged")
         if not self.plugins:
             print("  warning: no plugin DLLs were built; the loader will do nothing")
         if self.expect_standalone:
@@ -332,11 +345,12 @@ class Staging:
 
     def uninstall(self):
         print(f"removing the loader and its plugins from {self.game}")
-        helper = self.game / CRASH_HELPER
-        if helper.exists() and (looks_ours(helper) or self.force):
-            self.act("remove", helper)
-            if not self.dry:
-                helper.unlink()
+        for name in COMPANIONS:
+            companion = self.game / name
+            if companion.exists() and (looks_ours(companion) or self.force):
+                self.act("remove", companion)
+                if not self.dry:
+                    companion.unlink()
         if self.target.exists():
             if looks_ours(self.target) or self.force:
                 self.act("remove", self.target)
