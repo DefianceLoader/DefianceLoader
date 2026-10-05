@@ -1,32 +1,15 @@
 //! Resume the native movement request only after a hand grenade is confirmed.
 use core::cell::Cell;
 use core::ffi::{c_char, c_void};
-use defiance_api::{Api, Plugin, ABI_VERSION, LOG_DEBUG, LOG_ERROR, LOG_INFO};
+use defiance_api::{Api, Plugin, ABI_VERSION, LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_WARN};
+use defiance_core::sites::Image;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 mod sites;
-struct Build {
-    name: &'static str,
-    sha: &'static str,
-    mapping: &'static [(usize, usize)],
-    checks: &'static [(usize, &'static [u8])],
-}
-impl Build {
-    fn rva(&self, reference: usize) -> usize {
-        let index = self
-            .mapping
-            .binary_search_by_key(&reference, |&(rva, _)| rva)
-            .expect("generated native binding missing");
-        self.mapping[index].1
-    }
-}
-static BUILD_INDEX: AtomicUsize = AtomicUsize::new(usize::MAX);
-const SITES: [usize; 16] = [
-    0x2cabb0, 0x2cc9e0, 0x2ccaf0, 0x2c28f0, 0xd9470, 0x9e960, 0x2d8350, 0x299330, 0x2996e0,
-    0x2ccbe0, 0x2d9640, 0x2cc990, 0x333239, 0x2bafa0, 0x103250, 0x2bc400,
-];
+/// This build's sites, set before the first hook is installed.
+static SITES: OnceLock<sites::Sites> = OnceLock::new();
 static BASE: AtomicUsize = AtomicUsize::new(0);
 static SIZE: AtomicUsize = AtomicUsize::new(0);
 static LOGGER: AtomicUsize = AtomicUsize::new(0);
@@ -71,7 +54,6 @@ thread_local! { static SELECTING: Cell<SelectionTrace> = const { Cell::new(Selec
 
 #[link(name = "kernel32")]
 extern "system" {
-    fn GetModuleFileNameW(module: *mut c_void, path: *mut u16, capacity: u32) -> u32;
     fn GetTickCount64() -> u64;
     fn VirtualQuery(
         address: *const c_void,
@@ -163,7 +145,7 @@ struct FlareCompletion {
 impl Drop for FlareCompletion {
     fn drop(&mut self) {
         unsafe {
-            let release: ReleaseRef = core::mem::transmute(address(0x24070));
+            let release: ReleaseRef = core::mem::transmute(address(site().release_ref));
             let mut junction = self.stop_junction as *mut u8;
             release(&mut junction);
         }
@@ -173,7 +155,7 @@ impl Drop for FlareOrder {
     fn drop(&mut self) {
         if self.junction != 0 {
             unsafe {
-                let release: ReleaseRef = core::mem::transmute(address(0x24070));
+                let release: ReleaseRef = core::mem::transmute(address(site().release_ref));
                 let mut junction = self.junction as *mut u8;
                 release(&mut junction);
             }
@@ -197,8 +179,13 @@ unsafe fn read<T: Copy>(p: *const u8, offset: usize) -> T {
 unsafe fn write<T>(p: *mut u8, offset: usize, value: T) {
     p.add(offset).cast::<T>().write_unaligned(value);
 }
+fn site() -> &'static sites::Sites {
+    SITES
+        .get()
+        .expect("sites resolve before any hook is installed")
+}
 fn address(rva: usize) -> usize {
-    BASE.load(Ordering::Acquire) + sites::BUILDS[BUILD_INDEX.load(Ordering::Acquire)].rva(rva)
+    BASE.load(Ordering::Acquire) + rva
 }
 unsafe fn vt(p: *const u8, rva: usize) -> bool {
     !p.is_null() && read::<usize>(p, 0) == address(rva)
@@ -350,13 +337,13 @@ unsafe fn retain_flare_order(
         // A second positional ability must not replay the first ability as if
         // it were an ordinary attack-move order.
         || (attack_move && flare_target(reference(old, 0x28)))
-        || (!vt(g, 0x72cd00) && !vt(g, 0x72ced0))
+        || (!vt(g, site().gunner_vt) && !vt(g, site().gunner_client_vt))
         || read::<*mut u8>(g, 0x20) != s.unit
-        || method(s.ai, 0x60) != address(0x2bafa0)
+        || method(s.ai, 0x60) != address(site().submit)
     {
         return;
     }
-    let copy: CopyRef = core::mem::transmute(address(0x123f0));
+    let copy: CopyRef = core::mem::transmute(address(site().copy_ref));
     let mut junction = core::ptr::null_mut();
     copy(&mut junction, state.add(0x20).cast());
     let pending = FlareOrder {
@@ -397,7 +384,7 @@ unsafe fn release_order_call() -> bool {
                 .checked_sub(base)
                 .is_some_and(|rva| rva < size)
         })
-        .is_some_and(|p| *p as usize == address(0x2d913a))
+        .is_some_and(|p| *p as usize == address(site().release_order_return))
 }
 unsafe extern "C" fn submit(ai: *mut u8, incoming: *mut *mut u8, delay: f32) {
     sweep_flare_orders();
@@ -426,7 +413,7 @@ unsafe extern "C" fn submit(ai: *mut u8, incoming: *mut *mut u8, delay: f32) {
                 return None;
             }
             let next = reference(incoming.cast(), 0);
-            if !vt(next, 0x70e5d8) {
+            if !vt(next, site().stop_order_vt) {
                 return None;
             }
             let unit = reference(next, 0x18);
@@ -454,9 +441,9 @@ unsafe extern "C" fn submit(ai: *mut u8, incoming: *mut *mut u8, delay: f32) {
             }
             let g = reference(ai, 0x1f0);
             if g as usize != pending.gunner
-                || (!vt(g, 0x72cd00) && !vt(g, 0x72ced0))
+                || (!vt(g, site().gunner_vt) && !vt(g, site().gunner_client_vt))
                 || read::<*mut u8>(g, 0x20) != unit
-                || method(g, 0x58) != address(0x2d9dc0)
+                || method(g, 0x58) != address(site().gunner_slot)
                 || read::<i32>(g, 0x90) != 5
                 || reference(g, 0x88) as usize != pending.route.attack_target
             {
@@ -472,9 +459,9 @@ unsafe extern "C" fn submit(ai: *mut u8, incoming: *mut *mut u8, delay: f32) {
             if !vt(
                 old,
                 if pending.attack_move {
-                    0x705d50
+                    site().attack_order_vt
                 } else {
-                    0x70c068
+                    site().move_order_vt
                 },
             ) || reference(old, 0x18) != unit
                 || (pending.attack_move && flare_target(reference(old, 0x28)))
@@ -488,7 +475,7 @@ unsafe extern "C" fn submit(ai: *mut u8, incoming: *mut *mut u8, delay: f32) {
             // here leaves that state able to reinstall the same smoke target.
             // Own both references until Stop initialization and the enclosing
             // native AI update have completed; then submit the saved movement.
-            let copy: CopyRef = core::mem::transmute(address(0x123f0));
+            let copy: CopyRef = core::mem::transmute(address(site().copy_ref));
             let mut stop_junction = core::ptr::null_mut();
             copy(&mut stop_junction, incoming.cast());
             let completion = FlareCompletion {
@@ -539,7 +526,7 @@ unsafe extern "C" fn stop_order_init(order: *mut u8) {
     };
     let chassis = FLARE_COMPLETIONS.lock().ok().and_then(|orders| {
         let saved = orders.get(&(ai as usize))?;
-        (vt(order, 0x70e5d8)
+        (vt(order, site().stop_order_vt)
             && reference((&saved.stop_junction as *const usize).cast(), 0) == order
             && saved.order.route.unit == unit as usize)
             .then_some(saved.order.chassis)
@@ -605,7 +592,7 @@ unsafe extern "C" fn ai_update(ai: *mut u8, dt: f32) {
     }
     let g = reference(ai, 0x1f0);
     if g as usize != pending.gunner
-        || (!vt(g, 0x72cd00) && !vt(g, 0x72ced0))
+        || (!vt(g, site().gunner_vt) && !vt(g, site().gunner_client_vt))
         || read::<*mut u8>(g, 0x20) != unit
         || !reference(g, 0x88).is_null()
     {
@@ -615,9 +602,9 @@ unsafe extern "C" fn ai_update(ai: *mut u8, dt: f32) {
     if !vt(
         old,
         if pending.attack_move {
-            0x705d50
+            site().attack_order_vt
         } else {
-            0x70c068
+            site().move_order_vt
         },
     ) || reference(old, 0x18) != unit
         || (pending.attack_move && flare_target(reference(old, 0x28)))
@@ -659,7 +646,7 @@ unsafe fn fresh_movement_order(old: *mut u8, unit: *mut u8, attack_move: bool) -
             return None;
         }
         let factory: unsafe extern "C" fn(*mut u8, *mut u8, *const *mut u8) -> *mut u8 =
-            core::mem::transmute(address(0x8a0c0));
+            core::mem::transmute(address(site().attack_move_order_factory));
         factory(repo, unit, old.add(0x28).cast())
     } else {
         let destination = reference(old, 0x48);
@@ -667,7 +654,7 @@ unsafe fn fresh_movement_order(old: *mut u8, unit: *mut u8, attack_move: bool) -
             return None;
         }
         let factory: unsafe extern "C" fn(*mut u8, *mut u8, u32, *mut u8) -> *mut u8 =
-            core::mem::transmute(address(0x114fb0));
+            core::mem::transmute(address(site().move_order_factory));
         factory(repo, unit, read(old, 0x60), destination)
     };
     if fresh.is_null() {
@@ -676,7 +663,7 @@ unsafe fn fresh_movement_order(old: *mut u8, unit: *mut u8, attack_move: bool) -
     // Player-command submission converts the PersistentBase object into an
     // owned junction via 240c0, then acquires its auxiliary reference.
     let bind: unsafe extern "C" fn(*mut *mut u8, *mut u8) -> *mut *mut u8 =
-        core::mem::transmute(address(0x240c0));
+        core::mem::transmute(address(site().bind_junction));
     let mut junction = core::ptr::null_mut();
     bind(&mut junction, fresh);
     if junction.is_null() {
@@ -685,16 +672,23 @@ unsafe fn fresh_movement_order(old: *mut u8, unit: *mut u8, attack_move: bool) -
     if !reference((&junction as *const *mut u8).cast(), 0).is_null() {
         write(junction, 0x18, read::<i32>(junction, 0x18) + 1);
     }
-    if !vt(fresh, if attack_move { 0x705d50 } else { 0x70c068 })
-        || reference(fresh, 0x18) != unit
+    if !vt(
+        fresh,
+        if attack_move {
+            site().attack_order_vt
+        } else {
+            site().move_order_vt
+        },
+    ) || reference(fresh, 0x18) != unit
         || read::<u8>(fresh, 0x11) != 0
-        || method(fresh, 0x68) != address(0x762f0)
+        || method(fresh, 0x68) != address(site().set_flags)
     {
-        let release: ReleaseRef = core::mem::transmute(address(0x24070));
+        let release: ReleaseRef = core::mem::transmute(address(site().release_ref));
         release(&mut junction);
         return None;
     }
-    let set_flags: unsafe extern "C" fn(*mut u8, u32) = core::mem::transmute(address(0x762f0));
+    let set_flags: unsafe extern "C" fn(*mut u8, u32) =
+        core::mem::transmute(address(site().set_flags));
     set_flags(fresh, read(old, 0x14));
     if !attack_move {
         write(fresh, 0x54, read::<[f32; 2]>(old, 0x54));
@@ -705,7 +699,7 @@ unsafe fn fresh_movement_order(old: *mut u8, unit: *mut u8, attack_move: bool) -
 }
 // FlareTarget has a different layout from AttackTarget: vfunc5 returns +0x10.
 unsafe fn flare_target(target: *const u8) -> bool {
-    vt(target, 0x70f430) && method(target, 0x28) == address(0x116d80)
+    vt(target, site().flare_target_vt) && method(target, 0x28) == address(site().flare_target_slot)
 }
 unsafe fn trace_flare(chassis: *mut u8, event: &str, target: *mut u8) {
     if FLARE_REPORTS.load(Ordering::Relaxed) >= 96 {
@@ -715,7 +709,7 @@ unsafe fn trace_flare(chassis: *mut u8, event: &str, target: *mut u8) {
         return;
     };
     let object = reference(s.ai, 0x1f0);
-    if !vt(object, 0x72cd00) && !vt(object, 0x72ced0) {
+    if !vt(object, site().gunner_vt) && !vt(object, site().gunner_client_vt) {
         return;
     }
     let target = if target.is_null() {
@@ -744,7 +738,7 @@ unsafe fn trace_flare(chassis: *mut u8, event: &str, target: *mut u8) {
         (r.kind, "retained")
     };
     let animation: *const u8 = read(chassis, 0x58);
-    if !vt(animation, 0x72c118) || reference(animation, 0x10) != s.unit {
+    if !vt(animation, site().animation_vt) || reference(animation, 0x10) != s.unit {
         return;
     }
     if FLARE_REPORTS.fetch_add(1, Ordering::Relaxed) >= 96 {
@@ -781,11 +775,11 @@ unsafe fn trace_flare_order(state: *mut u8, incoming: *const *const u8, event: &
         return;
     }
     let next = reference(incoming.cast(), 0);
-    if !vt(next, 0x705f08) {
+    if !vt(next, site().attack_state_vt) {
         return;
     }
     let attack = reference(next, 0x20);
-    if !vt(attack, 0x705d50) {
+    if !vt(attack, site().attack_order_vt) {
         return;
     }
     let target = reference(attack, 0x28);
@@ -814,7 +808,7 @@ unsafe fn trace_flare_order(state: *mut u8, incoming: *const *const u8, event: &
     }
 }
 unsafe fn soldier(chassis: *mut u8) -> Option<Soldier> {
-    if !vt(chassis, 0x72c3b0) {
+    if !vt(chassis, site().chassis_vt) {
         return None;
     }
     let unit = reference(chassis, 0x10);
@@ -835,7 +829,7 @@ unsafe fn soldier(chassis: *mut u8) -> Option<Soldier> {
 }
 unsafe fn gunner(ai: *mut u8) -> Option<Gunner> {
     let g = reference(ai, 0x1f0);
-    if !vt(g, 0x72cd00) && !vt(g, 0x72ced0) {
+    if !vt(g, site().gunner_vt) && !vt(g, site().gunner_client_vt) {
         return None;
     }
     let begin = read::<usize>(g, 0x38);
@@ -861,7 +855,7 @@ unsafe fn gunner(ai: *mut u8) -> Option<Gunner> {
     Some(Gunner {
         object: g,
         target: reference(g, 0x88),
-        // Stock enum initializer 0x3c4ec0 maps move=3, deploy_trailer=5.
+        // The stock enum initializer maps move=3, deploy_trailer=5.
         grenade: is_grenade != 0 && shot_mode == 3 && matches!(state, 2 | 3 | 5),
     })
 }
@@ -886,7 +880,7 @@ unsafe fn moving_route(chassis: *mut u8) -> bool {
     read::<i32>(chassis, 0xec) == 1
         && read::<u8>(chassis, 0x18) != 0
         && read::<u8>(chassis, 0x28) & 1 != 0
-        // Native request 0x333140 marks a newly queued route as 3; it must
+        // The native route request marks a newly queued route as 3; it must
         // survive aiming while the manager prepares state 2 movement.
         && reserved_route(chassis).is_some_and(|r| matches!(read::<u8>(r, 0x2cc), 2 | 3))
 }
@@ -906,7 +900,7 @@ unsafe fn capture(
         return None;
     }
     let next: *mut u8 = read(junction, 0x10);
-    let attack = if vt(next, 0x705f08) {
+    let attack = if vt(next, site().attack_state_vt) {
         reference(next, 0x20)
     } else {
         core::ptr::null_mut()
@@ -933,13 +927,22 @@ unsafe fn capture(
     if s.unit != unit {
         return None;
     }
-    if !vt(next, 0x705f08) {
+    if !vt(next, site().attack_state_vt) {
         forget(chassis);
         return None;
     }
     // Attack-move stores its outer attack order at +0x20. Its live route is
     // in the chassis, while ordinary move stores an AiMoveOrder at +0x20.
-    if !vt(attack, 0x705d50) || !vt(old, if attack_move { 0x705d50 } else { 0x70c068 }) {
+    if !vt(attack, site().attack_order_vt)
+        || !vt(
+            old,
+            if attack_move {
+                site().attack_order_vt
+            } else {
+                site().move_order_vt
+            },
+        )
+    {
         return None;
     }
     if s.unit != unit || !active_route(chassis) {
@@ -999,7 +1002,7 @@ unsafe extern "C" fn order(state: *mut u8, incoming: *const *const u8) {
     // first Stop. That nested capture misses (mode=0), but its second Stop is
     // still part of the outer replacement. Retain that dynamic scope only for
     // an incoming attack; other incoming commands already invalidate the cache.
-    let inherited = if vt(reference(incoming.cast(), 0), 0x705f08) {
+    let inherited = if vt(reference(incoming.cast(), 0), site().attack_state_vt) {
         previous
     } else {
         0
@@ -1014,7 +1017,7 @@ unsafe extern "C" fn order_attack_move(state: *mut u8, incoming: *const *const u
     let chassis = capture(state, incoming, true);
     trace_flare_order(state, incoming, "attack-move-order-capture-result");
     let previous = REPLACING.with(|v| v.get());
-    let inherited = if vt(reference(incoming.cast(), 0), 0x705f08) {
+    let inherited = if vt(reference(incoming.cast(), 0), site().attack_state_vt) {
         previous
     } else {
         0
@@ -1042,10 +1045,10 @@ unsafe fn aim_call() -> bool {
     let n = RtlCaptureStackBackTrace(0, 16, frames.as_mut_ptr(), core::ptr::null_mut());
     frames[..n as usize]
         .iter()
-        .any(|p| *p as usize == address(0x2d3880))
+        .any(|p| *p as usize == address(site().aim_return))
 }
 unsafe fn candidate_chassis(g: *mut u8, index: usize) -> Option<*mut u8> {
-    if !vt(g, 0x72cd00) && !vt(g, 0x72ced0) {
+    if !vt(g, site().gunner_vt) && !vt(g, site().gunner_client_vt) {
         return None;
     }
     let begin = read::<usize>(g, 0x38);
@@ -1082,7 +1085,7 @@ unsafe fn candidate_chassis(g: *mut u8, index: usize) -> Option<*mut u8> {
     (s.unit == unit && reference(s.ai, 0x1f0) == g).then_some(chassis)
 }
 unsafe fn grenade_inventory(g: *mut u8) -> (u64, usize) {
-    if !vt(g, 0x72cd00) && !vt(g, 0x72ced0) {
+    if !vt(g, site().gunner_vt) && !vt(g, site().gunner_client_vt) {
         return (0, 0);
     }
     let begin = read::<usize>(g, 0x38);
@@ -1115,7 +1118,7 @@ unsafe fn grenade_inventory(g: *mut u8) -> (u64, usize) {
     (mask, count)
 }
 unsafe fn selector_chassis(g: *mut u8) -> Option<*mut u8> {
-    if !vt(g, 0x72cd00) && !vt(g, 0x72ced0) {
+    if !vt(g, site().gunner_vt) && !vt(g, site().gunner_client_vt) {
         return None;
     }
     let unit: *mut u8 = read(g, 0x20);
@@ -1205,7 +1208,7 @@ unsafe fn candidate_gate(g: *mut u8, index: usize) -> Option<CandidateGate> {
     }
     let animation: *mut u8 = read(chassis, 0x58);
     let s = soldier(chassis)?;
-    if !vt(animation, 0x72c118)
+    if !vt(animation, site().animation_vt)
         || reference(animation, 0x10) != s.unit
         || read::<i32>(animation, 0x74) != 1
         || !matches!(read::<i32>(animation, 0x68), 1 | 3 | 4)
@@ -1214,7 +1217,7 @@ unsafe fn candidate_gate(g: *mut u8, index: usize) -> Option<CandidateGate> {
         return None;
     }
     let target = reference(g, 0x88);
-    if target.is_null() || method(target, 0x28) != address(0x46a740) {
+    if target.is_null() || method(target, 0x28) != address(site().target_getter) {
         return None;
     }
     Some(CandidateGate {
@@ -1237,7 +1240,7 @@ unsafe fn candidate_gate_callsite() -> bool {
     let n = RtlCaptureStackBackTrace(0, 16, frames.as_mut_ptr(), core::ptr::null_mut());
     frames[..n as usize]
         .iter()
-        .any(|p| *p as usize == address(0x2d9744))
+        .any(|p| *p as usize == address(site().candidate_gate_return))
 }
 unsafe extern "C" fn chassis_can_move(chassis: *mut u8) -> u64 {
     let callback: ChassisCanMove = core::mem::transmute(original(11));
@@ -1266,7 +1269,7 @@ unsafe extern "C" fn chassis_can_move(chassis: *mut u8) -> u64 {
         log(
             LOG_DEBUG,
             &format!(
-                "moving grenade candidate gate passed: chassis={chassis:p} gunner={g:p} index={} callsite=0x2d9744 native={result:#x}",
+                "moving grenade candidate gate passed: chassis={chassis:p} gunner={g:p} index={} native={result:#x}",
                 gate.index,
             ),
         );
@@ -1278,7 +1281,7 @@ unsafe extern "C" fn chassis_can_move(chassis: *mut u8) -> u64 {
 unsafe extern "C" fn select(g: *mut u8) -> u8 {
     sweep_flare_orders();
     let callback: Select = core::mem::transmute(original(6));
-    let index = if vt(g, 0x72cd00) {
+    let index = if vt(g, site().gunner_vt) {
         read::<i32>(g, 0x94)
     } else {
         -1
@@ -1346,7 +1349,7 @@ unsafe extern "C" fn select(g: *mut u8) -> u8 {
     let Some(s) = soldier(chassis) else {
         return native;
     };
-    if !vt(animation, 0x72c118) || reference(animation, 0x10) != s.unit {
+    if !vt(animation, site().animation_vt) || reference(animation, 0x10) != s.unit {
         return native;
     }
     let branch = read::<i32>(g, 0xb8);
@@ -1363,8 +1366,8 @@ unsafe extern "C" fn select(g: *mut u8) -> u8 {
         && trace.eligible == 1
         && trace.idle == 1
         && pending == 3
-        && method(gun, 0x1c0) == address(0x299330)
-        && method(gun, 0x1f0) == address(0x2996e0)
+        && method(gun, 0x1c0) == address(site().weapon_eligible)
+        && method(gun, 0x1f0) == address(site().weapon_requires_idle)
         && moving_route(chassis);
     if diagnostic_context {
         let (grenade_mask, grenade_count) = grenade_inventory(g);
@@ -1429,10 +1432,10 @@ unsafe extern "C" fn grenade_heading(
     caller: usize,
     output: *mut f32,
 ) -> u8 {
-    if caller != address(0x2c92bc) && caller != address(0x2ca0fc) {
+    if caller != address(site().turn_return) && caller != address(site().move_return) {
         return 0;
     }
-    if !vt(chassis, 0x72c3b0) || !active_route(chassis) {
+    if !vt(chassis, site().chassis_vt) || !active_route(chassis) {
         return 0;
     }
     let Some(s) = soldier(chassis) else {
@@ -1445,7 +1448,7 @@ unsafe extern "C" fn grenade_heading(
         return 0;
     }
     let animation: *mut u8 = read(chassis, 0x58);
-    if !vt(animation, 0x72c118)
+    if !vt(animation, site().animation_vt)
         || reference(animation, 0x10) != s.unit
         || read::<i32>(animation, 0x74) != 1
         || !matches!(read::<i32>(animation, 0x6c), 0x17 | 0x2b)
@@ -1455,13 +1458,13 @@ unsafe extern "C" fn grenade_heading(
     // Only the verified AttackTarget getter or exact stock FlareTarget layout
     // is supported, including before the neutral-heading path.
     let target_getter = method(g.target, 0x28);
-    if target_getter != address(0x46a740) && !flare_target(g.target) {
+    if target_getter != address(site().target_getter) && !flare_target(g.target) {
         return 0;
     }
 
     // The aim helper already consumed this tick's one native turn-rate step.
     // Keep the later route-facing call neutral until that aim turn completes.
-    if caller == address(0x2ca0fc)
+    if caller == address(site().move_return)
         && read::<u8>(chassis, 0x108) != 0
         && read::<u8>(chassis, 0x10b) != 0
     {
@@ -1698,8 +1701,8 @@ unsafe fn resume(chassis: *mut u8, s: &Soldier, g: &Gunner) {
     if !reserved_route(chassis).is_some_and(|record| read::<u8>(record, 0x2cc) == 0) {
         return;
     }
-    let copy: CopyRef = core::mem::transmute(address(0x123f0));
-    let native: Resume = core::mem::transmute(address(0x2cb7a0));
+    let copy: CopyRef = core::mem::transmute(address(site().copy_ref));
+    let native: Resume = core::mem::transmute(address(site().native_resume));
     let mut target = core::ptr::null_mut();
     copy(&mut target, chassis.add(0xd8).cast());
     let direction = r
@@ -1755,7 +1758,7 @@ unsafe fn resume(chassis: *mut u8, s: &Soldier, g: &Gunner) {
 }
 unsafe extern "C" fn queue(animation: *mut u8, action: i32) {
     let callback: Queue = core::mem::transmute(original(3));
-    if matches!(action, 3 | 0x17 | 0x2b) && vt(animation, 0x72c118) {
+    if matches!(action, 3 | 0x17 | 0x2b) && vt(animation, site().animation_vt) {
         let unit = reference(animation, 0x10);
         let a = method(unit, 0xb0);
         if a != 0 {
@@ -1789,45 +1792,27 @@ unsafe extern "C" fn queue(animation: *mut u8, action: i32) {
     }
     callback(animation, action);
 }
-unsafe fn install(api: &Api) -> Result<(), String> {
+enum InstallError {
+    /// A site did not resolve: this build is not one the plugin supports.
+    UnsupportedBuild(String),
+    Failed(String),
+}
+unsafe fn install(api: &Api) -> Result<(), InstallError> {
     let base = (api.module_base)(c"logic.dll".as_ptr());
     if base.is_null() {
-        return Err("logic.dll missing".into());
+        return Err(InstallError::Failed("logic.dll is not loaded".into()));
     }
     let size = (api.module_size)(base);
-    let mut path = [0u16; 32768];
-    let len = GetModuleFileNameW(base, path.as_mut_ptr(), path.len() as u32) as usize;
-    if len == 0 || len >= path.len() {
-        return Err("logic.dll path unavailable".into());
+    let base = base.cast::<u8>();
+    // Every site resolves and matches before the first hook.
+    let resolved =
+        sites::sites(&Image::loaded(base, size)).map_err(InstallError::UnsupportedBuild)?;
+    let sites = SITES.get_or_init(|| resolved);
+    if *sites != resolved {
+        return Err(InstallError::Failed(
+            "logic.dll resolved differently than at the first install".into(),
+        ));
     }
-    use std::os::windows::ffi::OsStringExt;
-    let path = std::path::PathBuf::from(std::ffi::OsString::from_wide(&path[..len]));
-    let sha = defiance_core::sha256::file(&path).map_err(|e| e.to_string())?;
-    let (build_index, build) = sites::BUILDS
-        .iter()
-        .enumerate()
-        .find(|(_, build)| build.sha == sha)
-        .ok_or_else(|| format!("unsupported logic.dll SHA-256 {sha}"))?;
-    let mut manager_trace_ready = true;
-    // Exact fingerprints include hook spans, helper entry points and the two
-    // signed navigation bounds checks preceding the optional diagnostic body.
-    for &(reference, prefix) in build.checks {
-        let rva = build.rva(reference);
-        if rva + prefix.len() > size
-            || core::slice::from_raw_parts(base.cast::<u8>().add(rva), prefix.len()) != prefix
-        {
-            if reference == SITES[12] || reference == 0x333220 {
-                manager_trace_ready = false;
-                log(LOG_ERROR, "manager cancellation trace unavailable: bytes differ; core grenade movement remains active");
-                continue;
-            }
-            return Err(format!(
-                "native code differs at logic+{rva:#x} ({})",
-                build.name
-            ));
-        }
-    }
-    BUILD_INDEX.store(build_index, Ordering::Release);
     BASE.store(base as usize, Ordering::Release);
     SIZE.store(size, Ordering::Release);
     let detours = [
@@ -1848,38 +1833,25 @@ unsafe fn install(api: &Api) -> Result<(), String> {
         stop_order_init as *mut c_void,
         ai_update as *mut c_void,
     ];
-    let mut installed = Vec::with_capacity(SITES.len());
-    for (i, (reference, detour)) in SITES.into_iter().zip(detours).enumerate() {
-        let rva = build.rva(reference);
-        if i == 12 && !manager_trace_ready {
-            continue;
-        }
+    let mut installed = Vec::with_capacity(detours.len());
+    for (i, (rva, detour)) in sites.hooks().into_iter().zip(detours).enumerate() {
         let mut trampoline = core::ptr::null_mut();
-        let result = (api.hook)(base.cast::<u8>().add(rva).cast(), detour, &mut trampoline);
+        let result = (api.hook)(base.add(rva).cast(), detour, &mut trampoline);
         if result != 0 || trampoline.is_null() {
-            if i == 12 {
-                if result == 0 {
-                    (api.unhook)(base.cast::<u8>().add(rva).cast());
-                }
-                log(LOG_ERROR, "manager cancellation trace unavailable: hook refused; core grenade movement remains active");
-                continue;
+            if result == 0 {
+                (api.unhook)(base.add(rva).cast());
             }
             for prior in installed.iter().rev() {
-                (api.unhook)(base.cast::<u8>().add(*prior).cast());
+                (api.unhook)(base.add(*prior).cast());
             }
-            return Err(format!("hook refused at logic+{rva:#x}"));
+            return Err(InstallError::Failed(format!(
+                "hook refused at logic+{rva:#x}"
+            )));
         }
         ORIGINALS[i].store(trampoline as usize, Ordering::Release);
         installed.push(rva);
     }
-    log(
-        LOG_INFO,
-        &format!(
-            "grenade movement fix installed: build={}; manager_cancel_trace={}",
-            build.name,
-            ORIGINALS[12].load(Ordering::Acquire) != 0
-        ),
-    );
+    log(LOG_INFO, "grenade movement fix installed");
     Ok(())
 }
 unsafe extern "C" fn init(api: *const Api) -> i32 {
@@ -1892,7 +1864,14 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
     LOGGER.store(api.log as usize, Ordering::Release);
     match install(api) {
         Ok(()) => 0,
-        Err(e) => {
+        Err(InstallError::UnsupportedBuild(reason)) => {
+            log(
+                LOG_WARN,
+                &format!("grenade movement fix: not a supported build ({reason}); no writes made"),
+            );
+            0
+        }
+        Err(InstallError::Failed(e)) => {
             log(LOG_ERROR, &format!("grenade movement fix refused: {e}"));
             1
         }
@@ -1912,33 +1891,16 @@ defiance_feature_sdk::crash_handshake!();
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
-    fn all_builds_bind_every_hook_with_copyable_spans() {
-        assert_eq!(sites::BUILDS.len(), 4);
-        for build in sites::BUILDS {
-            assert!(build.mapping.windows(2).all(|pair| pair[0].0 < pair[1].0));
-            for reference in SITES {
-                assert!(build.rva(reference) != 0);
-                let (_, prefix) = build
-                    .checks
-                    .iter()
-                    .find(|&&(rva, _)| rva == reference)
-                    .unwrap();
-                let span = defiance_core::decode::displaced(prefix, 5).unwrap();
-                defiance_core::decode::validate_copy(&prefix[..span]).unwrap();
-            }
+    fn every_hook_entry_is_copyable() {
+        for entry in super::sites::HOOK_ENTRIES {
+            let span = defiance_core::decode::displaced(entry, 5).unwrap();
+            defiance_core::decode::validate_copy(&entry[..span]).unwrap();
         }
     }
     #[test]
     fn cancellation_body_is_copyable_by_the_actual_loader_decoder() {
-        let body = sites::BUILDS[0]
-            .checks
-            .iter()
-            .find(|&&(rva, _)| rva == SITES[12])
-            .unwrap()
-            .1;
+        let body = super::sites::HOOK_ENTRIES[12];
         let short = defiance_core::decode::displaced(body, 5).unwrap();
         assert_eq!(short, 5);
         defiance_core::decode::validate_copy(&body[..short]).unwrap();

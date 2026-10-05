@@ -2,112 +2,20 @@
 //! model-vector descriptor observed at switch completion.
 use core::ffi::{c_char, c_void};
 use defiance_api::{Api, Plugin, ABI_VERSION, LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_WARN};
+use defiance_core::sites::Image;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex};
 
-const WORLD_SHA: &str = "c39827bec79c0c4e1358259b5a2b3a6762e9270c6f5e1f25ce32d3f95b6a15c2";
-const PRIMARY_SHOT_BYTES: &[u8] = &[
-    0x48, 0x89, 0x5c, 0x24, 0x18, 0x55, 0x56, 0x57, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8b, 0xec, 0x48,
-    0x81, 0xec, 0x80, 0x00, 0x00, 0x00, 0x0f, 0x29, 0x74, 0x24, 0x70, 0x0f, 0x29, 0x7c, 0x24, 0x60,
-];
-const GUNNER_TICK_BYTES: &[u8] = &[
-    0x48, 0x89, 0x5c, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x48, 0x89, 0x7c, 0x24, 0x20, 0x55,
-    0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8b, 0xec, 0x48, 0x83, 0xec, 0x60, 0x0f,
-];
-const CLIENT_TICK_BYTES: &[u8] = &[
-    0x48, 0x89, 0x5c, 0x24, 0x10, 0x48, 0x89, 0x6c, 0x24, 0x18, 0x48, 0x89, 0x74, 0x24, 0x20, 0x57,
-    0x41, 0x56, 0x41, 0x57, 0x48, 0x83, 0xec, 0x60, 0x0f, 0x29, 0x74, 0x24, 0x50, 0x0f, 0x29, 0x7c,
-];
-const ATTACH: usize = 0x154d40;
-const DETACH: usize = 0x1551a0;
-#[derive(Clone, Copy)]
-struct Build {
-    sha: &'static str,
-    shot: usize,
-    primary_shot: usize,
-    gunner_tick: usize,
-    client_tick: usize,
-    rebind: usize,
-    handoff: usize,
-    animation_vt: usize,
-    gunner_vt: usize,
-    gunner_client_vt: usize,
-}
-// Generated and cross-checked against .pdata and exact MSVC RTTI class names.
-// The GOG and Steam releases are close in time, but their layouts have no
-// global RVA delta; bind every supported SHA independently.
-const BUILDS: [Build; 4] = [
-    Build {
-        sha: "adb3ad95926036809b4e554b466bef33d4ac7aa5303e59a9e4a940890bc334b5",
-        shot: 0x29ae10,
-        primary_shot: 0x29a690,
-        gunner_tick: 0x2d7b00,
-        client_tick: 0x2dca80,
-        rebind: 0x4327b0,
-        handoff: 0x2d8590,
-        animation_vt: 0x72c118,
-        gunner_vt: 0x72cd00,
-        gunner_client_vt: 0x72ced0,
-    },
-    Build {
-        sha: "30264904e1d5199b954bafbd7828cf7190930c246d35fa7b94eefa915e8f0c38",
-        shot: 0x29ae10,
-        primary_shot: 0x29a690,
-        gunner_tick: 0x2d7b00,
-        client_tick: 0x2dca80,
-        rebind: 0x432170,
-        handoff: 0x2d8590,
-        animation_vt: 0x72b118,
-        gunner_vt: 0x72bd00,
-        gunner_client_vt: 0x72bed0,
-    },
-    Build {
-        sha: "1216d627c7288c7db6940168363be582232ed4d3cb860b8b8c8d7489652eca74",
-        shot: 0x29ad80,
-        primary_shot: 0x29a600,
-        gunner_tick: 0x2d7a70,
-        client_tick: 0x2dc9f0,
-        rebind: 0x432720,
-        handoff: 0x2d8500,
-        animation_vt: 0x72c0d8,
-        gunner_vt: 0x72ccc0,
-        gunner_client_vt: 0x72ce78,
-    },
-    Build {
-        sha: "eb8674f1d16595a3e9cf6a9ec0062735b1184976495d8d6ade36f7e2574e8aab",
-        shot: 0x29ad80,
-        primary_shot: 0x29a600,
-        gunner_tick: 0x2d7a70,
-        client_tick: 0x2dc9f0,
-        rebind: 0x4320e0,
-        handoff: 0x2d8500,
-        animation_vt: 0x72b0d8,
-        gunner_vt: 0x72bcc0,
-        gunner_client_vt: 0x72be78,
-    },
-];
-const SHOT_BYTES: &[u8] = &[
-    0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x10, 0x48, 0x89, 0x70, 0x20, 0x55, 0x57, 0x41, 0x56, 0x48,
-    0x8d, 0x68, 0xa1, 0x48, 0x81, 0xec, 0x90, 0x00, 0x00, 0x00, 0x0f, 0x29, 0x70, 0xd8, 0x0f, 0x29,
-];
-const REBIND_BYTES: &[u8] = &[
-    0x48, 0x89, 0x5c, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x55, 0x57, 0x41, 0x56, 0x48, 0x8b,
-    0xec, 0x48, 0x83, 0xec, 0x60, 0x48, 0x8b, 0xf1, 0x33, 0xff, 0x4c, 0x8b, 0x81, 0x08, 0x01, 0x00,
-];
-const ATTACH_BYTES: &[u8] = &[
-    0x48, 0x89, 0x5c, 0x24, 0x18, 0x48, 0x89, 0x6c, 0x24, 0x20, 0x48, 0x89, 0x54, 0x24, 0x10, 0x56,
-    0x57, 0x41, 0x54, 0x41, 0x56, 0x41, 0x57, 0x48, 0x83, 0xec, 0x50, 0x4c, 0x8b, 0xfa, 0x48, 0x8b,
-];
-const DETACH_BYTES: &[u8] = &[
-    0x48, 0x89, 0x5c, 0x24, 0x10, 0x57, 0x48, 0x83, 0xec, 0x40, 0x4c, 0x8b, 0xc1, 0x48, 0x8b, 0x91,
-    0x70, 0x03, 0x00, 0x00, 0x48, 0x85, 0xd2, 0x0f, 0x84, 0xe0, 0x00, 0x00, 0x00, 0x83, 0x7a, 0x08,
-];
+mod sites;
+
 static ORIGINAL: AtomicUsize = AtomicUsize::new(0);
 static ORIGINAL_PRIMARY_SHOT: AtomicUsize = AtomicUsize::new(0);
 static LOGGER: AtomicUsize = AtomicUsize::new(0);
 static LOGIC: AtomicUsize = AtomicUsize::new(0);
 static WORLD: AtomicUsize = AtomicUsize::new(0);
+static WORLD_ATTACH_RVA: AtomicUsize = AtomicUsize::new(0);
+static WORLD_DETACH_RVA: AtomicUsize = AtomicUsize::new(0);
 static SHOT_RVA: AtomicUsize = AtomicUsize::new(0);
 static PRIMARY_SHOT_RVA: AtomicUsize = AtomicUsize::new(0);
 static GUNNER_TICK_RVA: AtomicUsize = AtomicUsize::new(0);
@@ -134,11 +42,6 @@ type Shot = unsafe extern "C" fn(*mut u8);
 type Tick = unsafe extern "C" fn(*mut u8, u8, u8, u32, f32);
 type Rebind = unsafe extern "C" fn(*mut u8, *const u8);
 type Log = unsafe extern "C" fn(u32, *const c_char);
-
-#[link(name = "kernel32")]
-extern "system" {
-    fn GetModuleFileNameW(module: *mut c_void, path: *mut u16, capacity: u32) -> u32;
-}
 
 unsafe fn read<T: Copy>(p: *const u8, offset: usize) -> T {
     p.add(offset).cast::<T>().read_unaligned()
@@ -314,8 +217,8 @@ unsafe fn snapshot(gun: *mut u8) -> Result<State, Skip> {
         && !hands.is_null()
         && !life.is_null()
         && read::<i32>(life, 8) > 0
-        && method(node, 0x208) == world + DETACH
-        && method(hands, 0x1f8) == world + ATTACH;
+        && method(node, 0x208) == world + WORLD_DETACH_RVA.load(Ordering::Acquire)
+        && method(hands, 0x1f8) == world + WORLD_ATTACH_RVA.load(Ordering::Acquire);
     Ok(State {
         unit,
         gunner,
@@ -548,77 +451,86 @@ unsafe extern "C" fn client_tick(gunner: *mut u8, a: u8, b: u8, c: u32, dt: f32)
     update(&ORIGINAL_CLIENT_TICK, gunner, a, b, c, dt);
 }
 
-unsafe fn checked_module(
-    api: &Api,
-    name: &core::ffi::CStr,
-    sha: &str,
-    windows: &[(usize, &[u8])],
-) -> Result<usize, String> {
-    let base = (api.module_base)(name.as_ptr());
-    if base.is_null() {
-        return Err(format!("{} missing", name.to_string_lossy()));
-    }
-    let size = (api.module_size)(base);
-    if windows.iter().any(|(rva, bytes)| rva + bytes.len() > size) {
-        return Err("module too small".into());
-    }
-    let mut path = [0u16; 32768];
-    let length = GetModuleFileNameW(base, path.as_mut_ptr(), path.len() as u32) as usize;
-    if length == 0 || length >= path.len() {
-        return Err("module path unavailable".into());
-    }
-    use std::os::windows::ffi::OsStringExt;
-    let path = std::path::PathBuf::from(std::ffi::OsString::from_wide(&path[..length]));
-    if defiance_core::sha256::file(&path).map_err(|e| e.to_string())? != sha {
-        return Err(format!("unsupported {} build", name.to_string_lossy()));
-    }
-    for (rva, bytes) in windows {
-        if core::slice::from_raw_parts(base.cast::<u8>().add(*rva), bytes.len()) != *bytes {
-            return Err(format!(
-                "{} helper {rva:#x} differs",
-                name.to_string_lossy()
-            ));
-        }
-    }
-    Ok(base as usize)
+enum InstallError {
+    /// A site did not resolve: this build is not one the plugin supports.
+    UnsupportedBuild(String),
+    Failed(String),
 }
 
-unsafe fn checked_logic(api: &Api) -> Result<(usize, Build), String> {
-    let name = c"logic.dll";
+unsafe fn module(api: &Api, name: &core::ffi::CStr) -> Result<(usize, usize), InstallError> {
     let base = (api.module_base)(name.as_ptr());
     if base.is_null() {
-        return Err("logic.dll missing".into());
+        return Err(InstallError::Failed(format!(
+            "{} is not loaded",
+            name.to_string_lossy()
+        )));
     }
-    let size = (api.module_size)(base);
-    let mut path = [0u16; 32768];
-    let length = GetModuleFileNameW(base, path.as_mut_ptr(), path.len() as u32) as usize;
-    if length == 0 || length >= path.len() {
-        return Err("logic.dll path unavailable".into());
+    Ok((base as usize, (api.module_size)(base)))
+}
+
+/// Both modules' sites, resolved before anything is hooked.
+unsafe fn resolve(api: &Api) -> Result<(usize, sites::Logic, usize, sites::World), InstallError> {
+    let (logic, logic_size) = module(api, c"logic.dll")?;
+    let (world, world_size) = module(api, c"world2.dll")?;
+    let logic_sites = sites::logic(&Image::loaded(logic as *const u8, logic_size))
+        .map_err(|error| InstallError::UnsupportedBuild(format!("logic.dll: {error}")))?;
+    let world_sites = sites::world(&Image::loaded(world as *const u8, world_size))
+        .map_err(|error| InstallError::UnsupportedBuild(format!("world2.dll: {error}")))?;
+    Ok((logic, logic_sites, world, world_sites))
+}
+
+unsafe fn install(api: &Api) -> Result<(), InstallError> {
+    let (logic, build, world, world_sites) = resolve(api)?;
+    LOGIC.store(logic, Ordering::Release);
+    WORLD.store(world, Ordering::Release);
+    WORLD_ATTACH_RVA.store(world_sites.attach, Ordering::Release);
+    WORLD_DETACH_RVA.store(world_sites.detach, Ordering::Release);
+    SHOT_RVA.store(build.shot, Ordering::Release);
+    PRIMARY_SHOT_RVA.store(build.primary_shot, Ordering::Release);
+    GUNNER_TICK_RVA.store(build.gunner_tick, Ordering::Release);
+    CLIENT_TICK_RVA.store(build.client_tick, Ordering::Release);
+    REBIND_RVA.store(build.rebind, Ordering::Release);
+    HANDOFF_RVA.store(build.handoff, Ordering::Release);
+    ANIMATION_VT_RVA.store(build.animation_vt, Ordering::Release);
+    GUNNER_VT_RVA.store(build.gunner_vt, Ordering::Release);
+    GUNNER_CLIENT_VT_RVA.store(build.gunner_client_vt, Ordering::Release);
+    ANOMALIES.store(0, Ordering::Relaxed);
+    for count in &SKIPS {
+        count.store(0, Ordering::Relaxed);
     }
-    use std::os::windows::ffi::OsStringExt;
-    let path = std::path::PathBuf::from(std::ffi::OsString::from_wide(&path[..length]));
-    let sha = defiance_core::sha256::file(&path).map_err(|e| e.to_string())?;
-    let build = BUILDS
-        .iter()
-        .copied()
-        .find(|build| build.sha == sha)
-        .ok_or_else(|| "unsupported logic.dll build".to_string())?;
-    let windows = [
-        (build.shot, SHOT_BYTES),
-        (build.primary_shot, PRIMARY_SHOT_BYTES),
-        (build.rebind, REBIND_BYTES),
-        (build.gunner_tick, GUNNER_TICK_BYTES),
-        (build.client_tick, CLIENT_TICK_BYTES),
-    ];
-    if windows.iter().any(|(rva, bytes)| rva + bytes.len() > size) {
-        return Err("logic.dll is too small for its known build".into());
+    if let Ok(mut watches) = WATCHES.lock() {
+        watches.clear();
     }
-    for (rva, bytes) in windows {
-        if core::slice::from_raw_parts(base.cast::<u8>().add(rva), bytes.len()) != bytes {
-            return Err(format!("logic.dll helper at {rva:#x} differs"));
+    for (rva, detour, storage, what) in [
+        (build.shot, shot as Shot as *mut c_void, &ORIGINAL, "shot"),
+        (
+            build.primary_shot,
+            primary_shot as Shot as *mut c_void,
+            &ORIGINAL_PRIMARY_SHOT,
+            "primary shot",
+        ),
+        (
+            build.gunner_tick,
+            tick as Tick as *mut c_void,
+            &ORIGINAL_TICK,
+            "gunner observer",
+        ),
+        (
+            build.client_tick,
+            client_tick as Tick as *mut c_void,
+            &ORIGINAL_CLIENT_TICK,
+            "client gunner observer",
+        ),
+    ] {
+        let mut original = core::ptr::null_mut();
+        if (api.hook)((logic + rva) as *mut c_void, detour, &mut original) != 0
+            || original.is_null()
+        {
+            return Err(InstallError::Failed(format!("{what} hook refused")));
         }
+        storage.store(original as usize, Ordering::Release);
     }
-    Ok((base as usize, build))
+    Ok(())
 }
 
 unsafe extern "C" fn init(api: *const Api) -> i32 {
@@ -629,92 +541,20 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
         return 1;
     }
     LOGGER.store(api.log as usize, Ordering::Release);
-    let result = (|| -> Result<(), String> {
-        let (logic, build) = checked_logic(api)?;
-        let world = checked_module(
-            api,
-            c"world2.dll",
-            WORLD_SHA,
-            &[(ATTACH, ATTACH_BYTES), (DETACH, DETACH_BYTES)],
-        )?;
-        LOGIC.store(logic, Ordering::Release);
-        WORLD.store(world, Ordering::Release);
-        SHOT_RVA.store(build.shot, Ordering::Release);
-        PRIMARY_SHOT_RVA.store(build.primary_shot, Ordering::Release);
-        GUNNER_TICK_RVA.store(build.gunner_tick, Ordering::Release);
-        CLIENT_TICK_RVA.store(build.client_tick, Ordering::Release);
-        REBIND_RVA.store(build.rebind, Ordering::Release);
-        HANDOFF_RVA.store(build.handoff, Ordering::Release);
-        ANIMATION_VT_RVA.store(build.animation_vt, Ordering::Release);
-        GUNNER_VT_RVA.store(build.gunner_vt, Ordering::Release);
-        GUNNER_CLIENT_VT_RVA.store(build.gunner_client_vt, Ordering::Release);
-        ANOMALIES.store(0, Ordering::Relaxed);
-        for count in &SKIPS {
-            count.store(0, Ordering::Relaxed);
+    match install(api) {
+        Ok(()) => {
+            log(LOG_INFO, "moving weapon render installed");
+            0
         }
-        let mut original = core::ptr::null_mut();
-        if (api.hook)(
-            (logic + build.shot) as *mut c_void,
-            shot as Shot as *mut c_void,
-            &mut original,
-        ) != 0
-            || original.is_null()
-        {
-            return Err("shot hook refused".into());
+        Err(InstallError::UnsupportedBuild(reason)) => {
+            log(
+                LOG_WARN,
+                &format!("moving weapon render: not a supported build ({reason}); no writes made"),
+            );
+            0
         }
-        ORIGINAL.store(original as usize, Ordering::Release);
-        let mut original = core::ptr::null_mut();
-        if (api.hook)(
-            (logic + build.primary_shot) as *mut c_void,
-            primary_shot as Shot as *mut c_void,
-            &mut original,
-        ) != 0
-            || original.is_null()
-        {
-            return Err("primary shot hook refused".into());
-        }
-        ORIGINAL_PRIMARY_SHOT.store(original as usize, Ordering::Release);
-        if let Ok(mut watches) = WATCHES.lock() {
-            watches.clear();
-        }
-        for (rva, detour, storage) in [
-            (build.gunner_tick, tick as Tick, &ORIGINAL_TICK),
-            (
-                build.client_tick,
-                client_tick as Tick,
-                &ORIGINAL_CLIENT_TICK,
-            ),
-        ] {
-            let mut original = core::ptr::null_mut();
-            if (api.hook)(
-                (logic + rva) as *mut c_void,
-                detour as *mut c_void,
-                &mut original,
-            ) != 0
-                || original.is_null()
-            {
-                return Err("gunner observer hook refused".into());
-            }
-            storage.store(original as usize, Ordering::Release);
-        }
-        log(
-            LOG_INFO,
-            &format!(
-                "moving weapon render installed: logic.dll sha256={}",
-                &build.sha[..16]
-            ),
-        );
-        Ok(())
-    })();
-    match result {
-        Ok(()) => 0,
-        Err(error) => {
-            let callback: Log = api.log;
-            if let Ok(text) =
-                std::ffi::CString::new(format!("moving weapon render refused: {error}"))
-            {
-                callback(LOG_ERROR, text.as_ptr());
-            }
+        Err(InstallError::Failed(error)) => {
+            log(LOG_ERROR, &format!("moving weapon render refused: {error}"));
             1
         }
     }

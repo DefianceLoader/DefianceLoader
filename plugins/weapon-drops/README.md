@@ -70,8 +70,9 @@ death_ammo = transfer
 ```
 
 Restart the game. With debug logging enabled, the startup log contains
-`experimental squad primary drops and swaps installed (GOG 2026-09-25)`, naming
-the detected build, followed by the selected ammo policies. Settings require a restart.
+`experimental squad primary drops and swaps installed`, followed by the selected
+ammo policies. On a build the plugin does not support, it logs a warning naming
+the site that did not resolve and installs nothing. Settings require a restart.
 
 The separate package includes `mods/defiance_weapon_drops/`, a companion overlay
 derived from the installed localization archives. Install that folder alongside
@@ -106,7 +107,5 @@ experimental build will be refused. The primary-plus-secondary death check
 remains pending; the confirmed live results are listed above.
 
 `weapon-drops-test` exercises the compiled death shim, replacement and special
-preservation on fabricated engine objects, and checks all generated code guards
-against local DLL images. It
-does not launch or modify the game. Refresh bindings with
-`mise run weapon-drops-bindings` after changing the generator.
+preservation on fabricated engine objects, and resolves the plugin's sites on
+every local logic.dll. It does not launch or modify the game.

@@ -64,10 +64,11 @@ directory (normally `Game/DefianceLoader/plugins/`):
 - `defiance_plugin_regroup.dll`
 - `defiance_plugin_regroup.plugin.json`
 
-Update Core along with regroup; keep selection and the other feature DLLs. This add-on requires
-the current ABI 5 loader and individual-selection plugin. It supports only the
-reference GOG/Steam logic.dll and game.dll builds; other DLL hashes are refused. It adds
-ten owned hooks and does not modify game files on disk.
+Update Core along with regroup; keep selection and the other feature DLLs.
+This add-on requires the current ABI 5 loader and individual-selection plugin.
+It supports the GOG and Steam releases of 2025-12-23 and of September 2026; on
+a build where its code does not match, it logs a warning and installs nothing.
+It adds ten owned hooks and does not modify game files on disk.
 
 Regroup is disabled by default. To opt in, set `enabled = true` in
 `[defiance.regroup]` in `config/infantry.ini` and restart. To disable it, set
@@ -115,18 +116,23 @@ runtime constructor failure is logged as an error; do not treat it as success.
 This crate is a separate workspace so it is not included in the normal package:
 
 ```powershell
-mise exec -- python tools/regroup_bindings.py
 mise exec -- cargo test --manifest-path plugins/regroup/Cargo.toml
 mise exec -- cargo build --release --manifest-path plugins/regroup/Cargo.toml
 mise exec -- python tools/test_regroup.py -v
 ```
 
-`regroup_bindings.py` resolves each function in both local reference images,
-validates the constructor and binding call targets, and generates exact-build
-tables. Runtime initialization checks the DLL hash and every used entry before
-installing hooks. Rust tests cover ammunition conservation, pin remapping and
-the transfer orchestration using fabricated engine objects. Python tests execute
-the original combat-list removal leaf routine. Neither substitutes for live
+Regroup finds its native code itself at startup (`src/sites.rs`): functions
+and call sites by byte signature, the three facet vtables by RTTI, and the
+class offsets it reads from the game code that uses them. Each hooked call
+site must call its expected function and each hooked entry must displace the
+expected instructions. If anything fails to resolve uniquely it logs a
+warning and installs nothing; if the loader refuses a hook, the hooks already
+installed are removed. The sites test checks every build in `bin/` against
+the tables the plugin used before.
+
+Rust tests cover ammunition conservation, pin remapping and the transfer
+orchestration using fabricated engine objects. Python tests execute the
+original combat-list removal leaf routine. Neither substitutes for live
 gameplay or save/load testing.
 
 ## Dormant icon fix 6

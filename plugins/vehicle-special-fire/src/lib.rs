@@ -1,8 +1,9 @@
-use defiance_api::{Api, Plugin, ABI_VERSION};
+use defiance_api::{Api, Plugin, ABI_VERSION, LOG_WARN};
 use defiance_feature_sdk::units::Embedded;
 
 mod native;
 mod orders;
+mod sites;
 mod targeting;
 mod ui;
 defiance_feature_sdk::service_handshake!();
@@ -13,21 +14,41 @@ static UNITS: &[Embedded] = include!(concat!(env!("OUT_DIR"), "/units.rs"));
 pub unsafe extern "C" fn defiance_patch_contract_v1(
     api: *const Api,
 ) -> *const defiance_api::PatchContractV1 {
+    let Some(resolved) =
+        (unsafe { api.as_ref() }).and_then(|api| unsafe { native::resolve(api) }.ok())
+    else {
+        return core::ptr::null();
+    };
     let units = unsafe { defiance_feature_sdk::units::patch_contract(api, UNITS, &[], false) };
-    unsafe { native::contract(units) }
+    unsafe { native::contract(units, &resolved) }
 }
 
+/// Resolves every native site before writing anything, so a build where one
+/// is missing gets neither the units nor the hooks.
 unsafe extern "C" fn init(api: *const Api) -> i32 {
+    let Some(host) = (unsafe { api.as_ref() }) else {
+        return 1;
+    };
+    let resolved = match unsafe { native::resolve(host) } {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            native::log(
+                host,
+                LOG_WARN,
+                &format!(
+                    "vehicle special fire: not a supported build ({error}); no hooks installed"
+                ),
+            );
+            return 1;
+        }
+    };
     let status = unsafe {
         defiance_feature_sdk::units::install(api, UNITS, |_| {}, &[], core::ptr::null_mut())
     };
     if status != 0 {
         return status;
     }
-    let Some(api) = (unsafe { api.as_ref() }) else {
-        return 1;
-    };
-    unsafe { native::install(api) }
+    unsafe { native::install(host, &resolved) }
 }
 
 #[no_mangle]

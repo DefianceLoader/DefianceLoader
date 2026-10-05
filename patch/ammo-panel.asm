@@ -40,9 +40,9 @@ ammo_panel:
     mov rcx, rdi
     mov r11, 0xaaaaaaaaaaaaaaaf
     call r11
-    ; The reload bar (slot+0x48) shows the ready share: the stock draw fills it
-    ; for any squad or multi-gun vehicle, however many users are disabled or
-    ; reloading. A negative share leaves the native bar alone.
+    ; The reload bar (slot+0x48) shows the ready share where the stock draw
+    ; fills it regardless of progress: a squad with several users. A negative
+    ; share leaves the native bar, the one gun's reload progress, alone.
     movss xmm0, dword ptr [rsp + 0x6c]
     xorps xmm1, xmm1
     comiss xmm0, xmm1
@@ -840,11 +840,11 @@ ammo_ui_usable:
 
 ; rcx entity, rdx record, r8 slot. Return 0 absent, 1 all enabled,
 ; 2 all disabled, 3 mixed; r8d enabled users, r9d total users; xmm0 the ready
-; share: the users' mean readiness (ammo_ui_ready; a disabled user counts 0),
-; or -1 where the native bar stays. Count each soldier once and finish the
-; scan even after discovering both states. Shared state is only an unpinned
-; user's default. A unit without a squad roster (a vehicle) keeps its native
-; state and count, and is one user for the share.
+; share: the users' mean readiness (ammo_ui_ready; a disabled user counts 0)
+; for a squad with several users, else -1: the native bar stays. Count each
+; soldier once and finish the scan even after discovering both states. Shared
+; state is only an unpinned user's default. A unit without a squad roster (a
+; vehicle) keeps its native state, count and bar.
 ammo_ui_state:
     mov r9d, 1
 ui_query:
@@ -880,11 +880,10 @@ ui_query_weapon:
     mov rcx, qword ptr [rax + 0x28]
     test rcx, rcx
     jz ui_usable_yes
-    mov qword ptr [rsp + 0x50], rcx
     mov rax, qword ptr [rcx]
     call qword ptr [rax + {squad_roster}]
     test rax, rax
-    jz ui_single_unit                  ; not a squad: native, but for the share
+    jz ui_usable_yes                   ; not a squad: native
     mov dword ptr [rsp + 0x44], 0
     mov rcx, rax
     mov rax, qword ptr [rcx]
@@ -966,21 +965,8 @@ ui_member_off:
 ui_merge_state:
     or dword ptr [rsp + 0x38], eax
     jmp ui_find_user                  ; keep counting after finding mixed
-ui_single_unit:
-    cmp dword ptr [rsp + 0x40], 0
-    je ui_usable_yes                   ; compatibility query: native
-    xor eax, eax
-    mov dword ptr [rsp + 0x48], eax    ; disabled by the native shared flag: 0
-    cmp dword ptr [rsp + 0x30], eax
-    jne ui_usable_native
-    mov rcx, qword ptr [rsp + 0x50]
-    mov rdx, qword ptr [rsp + 0x20]
-    call ammo_ui_ready
-    movss dword ptr [rsp + 0x48], xmm0
-    jmp ui_usable_native
 ui_usable_yes:
     mov dword ptr [rsp + 0x48], 0xbf800000
-ui_usable_native:
     mov eax, 1
     cmp dword ptr [rsp + 0x40], 0
     je ui_usable_done
@@ -994,8 +980,11 @@ ui_shared_off:
     jmp ui_usable_done
 ui_usable_no:
     mov eax, dword ptr [rsp + 0x44]
-    test eax, eax
-    jz ui_share_done                   ; no users: the slot is hidden anyway
+    cmp eax, 1
+    ja ui_share_mean
+    mov dword ptr [rsp + 0x48], 0xbf800000 ; one user: his native progress
+    jmp ui_share_done
+ui_share_mean:
     cvtsi2ss xmm1, rax
     movss xmm0, dword ptr [rsp + 0x48]
     divss xmm0, xmm1
@@ -1110,8 +1099,8 @@ ui_has_done:
 
 ; rcx member AI, rdx descriptor. Return xmm0, the member's readiness with this
 ; ammunition: the lowest reload progress (native vt+c8, in [0,1)) among his
-; guns that have it loaded (vt+158), or 1 when none is reloading it. A ready
-; gun reports 1, as the stock single-soldier bar shows.
+; guns that have it loaded (`gun_selected_ammo`), or 1 when none is reloading
+; it. A ready gun reports 1, as the stock single-soldier bar shows.
 ammo_ui_ready:
     push rbx
     push rbp
@@ -1157,7 +1146,7 @@ ui_ready_gun:
     mov qword ptr [rsp + 0x28], rax
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x158]
+    call qword ptr [rax + {gun_selected_ammo}]
     cmp rax, r14
     jne ui_ready_gun
     mov rcx, qword ptr [rsp + 0x28]

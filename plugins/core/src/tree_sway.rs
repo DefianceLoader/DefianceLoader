@@ -1,5 +1,7 @@
-//! Optional reduced living-tree sway sampling for verified game builds.
+//! Optional reduced living-tree sway sampling.
 //!
+//! The hooked functions are found by signature ([`crate::sites::tree`]); a build
+//! where any of them does not resolve keeps the engine rate and is not patched.
 //! The manager and sway functions both receive a time step. The original sway
 //! function advances its phase by that time step times its own rate. Half mode
 //! omits alternate sway samples and gives the next sample the sum of both
@@ -8,7 +10,8 @@
 
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
-use defiance_api::{Api, LOG_INFO, LOG_WARN};
+use defiance_api::{Api, LOG_ERROR, LOG_INFO, LOG_WARN};
+use defiance_core::sites::Image;
 use std::collections::HashMap;
 #[cfg(feature = "tree-rate-probe")]
 use std::sync::atomic::AtomicU8;
@@ -16,121 +19,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[cfg(feature = "tree-rate-probe")]
 use std::sync::OnceLock;
 
+use crate::sites::{Tree, TREE_ENTRY, TREE_MANAGER_ENTRY};
+
 type Update = unsafe extern "C" fn(*mut c_void, f32);
 type Sway = unsafe extern "C" fn(*mut c_void, f32) -> u8;
-
-#[derive(Clone, Copy)]
-struct Site {
-    rva: usize,
-    entry: &'static [u8],
-}
-
-struct Build {
-    name: &'static str,
-    logic_sha: &'static str,
-    manager: Site,
-    sway: Site,
-    facet: Site,
-}
-
-const BUILDS: &[Build] = &[
-    Build {
-        name: "gog-2025-12-23",
-        logic_sha: "17ef48350153306e210e14a24b0ad398c56fb99d3d46c88f246df260ade85780",
-        manager: Site {
-            rva: 0x46df70,
-            entry: &[0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x10],
-        },
-        sway: Site {
-            rva: 0x46b890,
-            entry: &[0x48, 0x89, 0x5c, 0x24, 0x08],
-        },
-        facet: Site {
-            rva: 0x46c6b0,
-            entry: &[0x48, 0x89, 0x5c, 0x24, 0x08],
-        },
-    },
-    Build {
-        name: "gog-2026-09-14",
-        logic_sha: "eb8674f1d16595a3e9cf6a9ec0062735b1184976495d8d6ade36f7e2574e8aab",
-        manager: Site {
-            rva: 0x4807f0,
-            entry: &[0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x10],
-        },
-        sway: Site {
-            rva: 0x47e110,
-            entry: &[0x48, 0x89, 0x5c, 0x24, 0x08],
-        },
-        facet: Site {
-            rva: 0x47ef30,
-            entry: &[0x48, 0x89, 0x5c, 0x24, 0x08],
-        },
-    },
-    Build {
-        name: "gog-2026-09-25",
-        logic_sha: "1216d627c7288c7db6940168363be582232ed4d3cb860b8b8c8d7489652eca74",
-        manager: Site {
-            rva: 0x480e30,
-            entry: &[0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x10],
-        },
-        sway: Site {
-            rva: 0x47e750,
-            entry: &[0x48, 0x89, 0x5c, 0x24, 0x08],
-        },
-        facet: Site {
-            rva: 0x47f570,
-            entry: &[0x48, 0x89, 0x5c, 0x24, 0x08],
-        },
-    },
-    Build {
-        name: "steam-2025-12-23",
-        logic_sha: "d320f848508c45c9f04df235204b5fbc9ffbb1b7f869e4c5a58d80bb2ecc10ed",
-        manager: Site {
-            rva: 0x46e000,
-            entry: &[0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x10],
-        },
-        sway: Site {
-            rva: 0x46b920,
-            entry: &[0x48, 0x89, 0x5c, 0x24, 0x08],
-        },
-        facet: Site {
-            rva: 0x46c740,
-            entry: &[0x48, 0x89, 0x5c, 0x24, 0x08],
-        },
-    },
-    Build {
-        name: "steam-2026-09-22",
-        logic_sha: "30264904e1d5199b954bafbd7828cf7190930c246d35fa7b94eefa915e8f0c38",
-        manager: Site {
-            rva: 0x480880,
-            entry: &[0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x10],
-        },
-        sway: Site {
-            rva: 0x47e1a0,
-            entry: &[0x48, 0x89, 0x5c, 0x24, 0x08],
-        },
-        facet: Site {
-            rva: 0x47efc0,
-            entry: &[0x48, 0x89, 0x5c, 0x24, 0x08],
-        },
-    },
-    Build {
-        name: "steam-2026-09-25",
-        logic_sha: "adb3ad95926036809b4e554b466bef33d4ac7aa5303e59a9e4a940890bc334b5",
-        manager: Site {
-            rva: 0x480ec0,
-            entry: &[0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x10],
-        },
-        sway: Site {
-            rva: 0x47e7e0,
-            entry: &[0x48, 0x89, 0x5c, 0x24, 0x08],
-        },
-        facet: Site {
-            rva: 0x47f600,
-            entry: &[0x48, 0x89, 0x5c, 0x24, 0x08],
-        },
-    },
-];
 
 static MANAGER_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
 static SWAY_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
@@ -361,65 +253,42 @@ unsafe extern "C" fn facet_update(facet: *mut c_void, dt: f32) {
     unsafe { original(facet, dt) };
 }
 
-fn module(api: &Api) -> Option<(*mut u8, usize, &'static Build)> {
-    let selected = crate::RUNTIME.get().and_then(|runtime| {
-        BUILDS
-            .iter()
-            .find(|entry| entry.logic_sha == runtime.logic.sha.as_str())
-    });
-    let Some(selected) = selected else {
-        crate::say(
-            api,
-            LOG_WARN,
-            "tree sway: requested mode has no verified hooks for this build; engine rate retained",
-        );
-        return None;
-    };
+/// The loaded `logic.dll` and its tree-sway functions, or why this build is
+/// unsupported.
+fn target(api: &Api) -> Result<(*mut u8, Tree), String> {
     let base = unsafe { (api.module_base)(c"logic.dll".as_ptr()) } as *mut u8;
     if base.is_null() {
-        crate::say(api, LOG_WARN, "tree sway: logic.dll is not loaded");
-        return None;
+        return Err("logic.dll is not loaded".into());
     }
-    Some((base, unsafe { (api.module_size)(base.cast()) }, selected))
+    let size = unsafe { (api.module_size)(base.cast()) };
+    let image = unsafe { Image::loaded(base, size) };
+    Ok((base, crate::sites::tree(&image)?))
 }
 
-fn verified_site(api: &Api, base: *mut u8, size: usize, site: Site) -> bool {
-    let valid = site
-        .rva
-        .checked_add(site.entry.len())
-        .is_some_and(|end| end <= size)
-        && unsafe { core::slice::from_raw_parts(base.add(site.rva), site.entry.len()) }
-            == site.entry;
-    if !valid {
-        crate::say(
-            api,
-            LOG_WARN,
-            "tree sway: a function entry differs; engine rate retained",
-        );
+/// The hooks a mode installs, in install order. Sway goes first: without the
+/// manager hook it forwards every call.
+fn hooks(sites: &Tree, facet: bool) -> Vec<(usize, usize, *mut c_void, &'static AtomicUsize)> {
+    let mut hooks = vec![(
+        sites.sway,
+        TREE_ENTRY.len(),
+        sway_update as *mut c_void,
+        &SWAY_ORIGINAL,
+    )];
+    if facet {
+        hooks.push((
+            sites.facet,
+            TREE_ENTRY.len(),
+            facet_update as *mut c_void,
+            &FACET_ORIGINAL,
+        ));
     }
-    valid
-}
-
-fn request_hook(api: &Api, base: *mut u8, site: Site, detour: *mut c_void) -> Option<usize> {
-    let mut original = core::ptr::null_mut();
-    if unsafe {
-        (api.hook_exact)(
-            base.add(site.rva).cast(),
-            detour,
-            site.entry.len(),
-            &mut original,
-        )
-    } != 0
-        || original.is_null()
-    {
-        crate::say(
-            api,
-            LOG_WARN,
-            "tree sway: hook failed; engine rate retained",
-        );
-        return None;
-    }
-    Some(original as usize)
+    hooks.push((
+        sites.manager,
+        TREE_MANAGER_ENTRY.len(),
+        manager_update as *mut c_void,
+        &MANAGER_ORIGINAL,
+    ));
+    hooks
 }
 
 pub(super) fn install(api: &Api, mode: &str) {
@@ -427,51 +296,49 @@ pub(super) fn install(api: &Api, mode: &str) {
         return;
     }
     let wants_facet = mode == "half_facet" || cfg!(feature = "facet-half-probe");
-    let Some((base, size, selected)) = module(api) else {
-        return;
-    };
-    #[cfg(feature = "tree-rate-probe")]
-    if selected.name != "steam-2026-09-25" {
-        crate::say(api, LOG_WARN, "tree sway rate probe: Steam 2026-09-25 only");
-        return;
-    }
-    let facet_valid = !wants_facet || verified_site(api, base, size, selected.facet);
-    if !verified_site(api, base, size, selected.manager)
-        || !verified_site(api, base, size, selected.sway)
-        || !facet_valid
-    {
-        return;
-    }
-    // Install sway first: without the manager hook it forwards every call.
-    let Some(sway) = request_hook(api, base, selected.sway, sway_update as *mut c_void) else {
-        return;
-    };
-    SWAY_ORIGINAL.store(sway, Ordering::Release);
-    if wants_facet {
-        let Some(facet) = request_hook(api, base, selected.facet, facet_update as *mut c_void)
-        else {
+    // Every function resolves and matches before the first hook.
+    let (base, sites) = match target(api) {
+        Ok(target) => target,
+        Err(error) => {
+            crate::say(
+                api,
+                LOG_WARN,
+                &format!("tree sway: not a supported build ({error}); engine rate retained, no writes made"),
+            );
             return;
-        };
-        FACET_ORIGINAL.store(facet, Ordering::Release);
-    }
-    let Some(manager) = request_hook(api, base, selected.manager, manager_update as *mut c_void)
-    else {
-        return;
+        }
     };
-    MANAGER_ORIGINAL.store(manager, Ordering::Release);
+    let hooks = hooks(&sites, wants_facet);
+    for (i, &(rva, displaced, detour, original)) in hooks.iter().enumerate() {
+        let site = unsafe { base.add(rva) };
+        let mut trampoline = core::ptr::null_mut();
+        let result = unsafe { (api.hook_exact)(site.cast(), detour, displaced, &mut trampoline) };
+        if result != 0 || trampoline.is_null() {
+            if result == 0 {
+                unsafe { (api.unhook)(site.cast()) };
+            }
+            for &(prior, _, _, original) in hooks[..i].iter().rev() {
+                unsafe { (api.unhook)(base.add(prior).cast()) };
+                original.store(0, Ordering::Release);
+            }
+            crate::say(
+                api,
+                LOG_ERROR,
+                &format!("tree sway: hook refused at logic+{rva:#x}; engine rate retained, no hooks installed"),
+            );
+            return;
+        }
+        original.store(trampoline as usize, Ordering::Release);
+    }
     FACET_HALF.store(mode == "half_facet", Ordering::Release);
     crate::say(
         api,
         LOG_INFO,
-        &format!(
-            "tree sway: {} enabled on {}",
-            if mode == "half_facet" {
-                "half-rate sway and facet refresh"
-            } else {
-                "half rate"
-            },
-            selected.name
-        ),
+        if mode == "half_facet" {
+            "tree sway: half-rate sway and facet refresh enabled"
+        } else {
+            "tree sway: half rate enabled"
+        },
     );
     #[cfg(feature = "tree-rate-probe")]
     {
@@ -492,30 +359,15 @@ pub(super) fn install(api: &Api, mode: &str) {
 
 /// Declare only the hooks actually requested at init, without changing their trampolines.
 pub(super) fn contract(api: &Api) {
-    let facet_uninstalled = FACET_ORIGINAL.load(Ordering::Acquire) == 0;
-    if MANAGER_ORIGINAL.load(Ordering::Acquire) == 0
-        && SWAY_ORIGINAL.load(Ordering::Acquire) == 0
-        && facet_uninstalled
-    {
+    if MANAGER_ORIGINAL.load(Ordering::Acquire) == 0 {
         return;
     }
-    let Some((base, size, selected)) = module(api) else {
+    let Ok((base, sites)) = target(api) else {
         return;
     };
-    let facet_valid = facet_uninstalled || verified_site(api, base, size, selected.facet);
-    if !verified_site(api, base, size, selected.manager)
-        || !verified_site(api, base, size, selected.sway)
-        || !facet_valid
-    {
-        return;
-    }
-    if SWAY_ORIGINAL.load(Ordering::Acquire) != 0 {
-        let _ = request_hook(api, base, selected.sway, sway_update as *mut c_void);
-    }
-    if FACET_ORIGINAL.load(Ordering::Acquire) != 0 {
-        let _ = request_hook(api, base, selected.facet, facet_update as *mut c_void);
-    }
-    if MANAGER_ORIGINAL.load(Ordering::Acquire) != 0 {
-        let _ = request_hook(api, base, selected.manager, manager_update as *mut c_void);
+    let facet = FACET_ORIGINAL.load(Ordering::Acquire) != 0;
+    for (rva, displaced, detour, _) in hooks(&sites, facet) {
+        let mut original = core::ptr::null_mut();
+        unsafe { (api.hook_exact)(base.add(rva).cast(), detour, displaced, &mut original) };
     }
 }

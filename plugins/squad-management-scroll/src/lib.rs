@@ -4,6 +4,7 @@ use defiance_api::{
     Api, PatchContractV1, Plugin, ABI_VERSION, LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_WARN,
     PATCH_KIND_ENTRY,
 };
+use defiance_core::sites::{code_ranges, Image};
 use std::sync::{
     atomic::{AtomicBool, AtomicPtr, Ordering},
     OnceLock,
@@ -11,80 +12,8 @@ use std::sync::{
 mod native;
 mod sites;
 mod viewport;
+use sites::Sites;
 
-struct Site {
-    rva: usize,
-    before: &'static [u8],
-}
-struct Build {
-    sha: &'static str,
-    refresh: Site,
-    dispatch: Site,
-    destroy: Site,
-    ammo: Site,
-    weapon: Site,
-    perk: Site,
-    /// The upgrade_slot_* column bind, shared by both panels: (widget, display).
-    upgrade: Site,
-    script: Site,
-    listen: Site,
-    thumb: Site,
-    slider_dispatch: Site,
-    training_vtable: usize,
-    training_destroy: Site,
-    training_layout: Site,
-    training_show: Site,
-    panel_vtable: usize,
-    vehicle_vtable: usize,
-    vehicle_destroy: Site,
-    vehicle_refresh: Site,
-    slider_vtable: usize,
-    slider_ctrl_vtable: usize,
-    context_service: usize,
-    /// The vtable slot of the squad's rank (from its experience) on the stock
-    /// perk refresh's service object (0x878; 0x880 in the 2026-09 builds).
-    perk_limit: usize,
-    /// The getter of the training table's key: it stores a static pointer in
-    /// its out-parameter, and pointer + 8 resolves training names.
-    training_key: Site,
-    /// The lazily-initialised upgrade key static: the stock upgrade loop reads
-    /// the pointer here and passes pointer + 8 to the script service's display
-    /// resolver. The stock refresh initialises it before the rerun.
-    upgrade_key: usize,
-    /// The squad and vehicle panels' drop-target choosers, which the army
-    /// presets window calls as an item drag starts: (panel, &out, item).
-    squad_chooser: Site,
-    vehicle_chooser: Site,
-    /// Where an entry of an upgrade record's squad list names its squad (a
-    /// std::string; empty fits every squad), as the squad chooser's match
-    /// reads it (0x850; 0x860 in the 2026-09 builds).
-    squad_fit_name: usize,
-}
-impl Build {
-    fn functions(&self) -> [&Site; 19] {
-        [
-            &self.training_destroy,
-            &self.training_layout,
-            &self.training_show,
-            &self.refresh,
-            &self.dispatch,
-            &self.destroy,
-            &self.ammo,
-            &self.weapon,
-            &self.perk,
-            &self.upgrade,
-            &self.script,
-            &self.listen,
-            &self.thumb,
-            &self.slider_dispatch,
-            &self.training_key,
-            &self.vehicle_destroy,
-            &self.vehicle_refresh,
-            &self.squad_chooser,
-            &self.vehicle_chooser,
-        ]
-    }
-}
 static ENGINE: OnceLock<native::Engine> = OnceLock::new();
 static ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ORIGINAL_VEHICLE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
@@ -99,98 +28,140 @@ unsafe fn log(api: &Api, level: u32, text: &str) {
         (api.log)(level, text.as_ptr());
     }
 }
-#[link(name = "kernel32")]
-extern "system" {
-    fn GetModuleFileNameW(module: *mut c_void, path: *mut u16, capacity: u32) -> u32;
+/// game.dll's sites, resolved on its original bytes, and the entry bytes each
+/// hook relocates, from [`Sites::hooks`].
+struct Resolved {
+    base: *mut u8,
+    size: usize,
+    sites: Sites,
+    entries: Vec<(usize, Vec<u8>, &'static str)>,
 }
 
-unsafe fn selected_build(api: &Api) -> Result<(*mut c_void, usize, &'static Build), String> {
-    let base = (api.module_base)(c"game.dll".as_ptr());
+unsafe fn resolve(api: &Api) -> Result<Resolved, InstallError> {
+    let base = (api.module_base)(c"game.dll".as_ptr()).cast::<u8>();
     if base.is_null() {
-        return Err("game.dll is not loaded".into());
+        return Err(InstallError::Failed("game.dll is not loaded".into()));
     }
-    let size = (api.module_size)(base);
-    let mut path = [0u16; 32768];
-    let length = GetModuleFileNameW(base, path.as_mut_ptr(), path.len() as u32) as usize;
-    if length == 0 || length >= path.len() {
-        return Err("cannot resolve game.dll path".into());
-    }
-    use std::os::windows::ffi::OsStringExt;
-    let path = std::path::PathBuf::from(std::ffi::OsString::from_wide(&path[..length]));
-    let sha = defiance_core::sha256::file(&path).map_err(|e| e.to_string())?;
-    let build = sites::BUILDS
-        .iter()
-        .find(|b| b.sha == sha)
-        .ok_or("unsupported game.dll; no writes made")?;
-    for site in build.functions() {
-        if site
-            .rva
-            .checked_add(site.before.len())
-            .is_none_or(|end| end > size)
-            || core::slice::from_raw_parts(base.cast::<u8>().add(site.rva), site.before.len())
-                != site.before
-        {
-            return Err(format!(
-                "native code differs at {:#x}; no writes made",
-                site.rva
-            ));
+    let size = (api.module_size)(base.cast());
+    let mut image = core::slice::from_raw_parts(base, size).to_vec();
+    if let Some(original) = defiance_feature_sdk::services::original() {
+        for (start, end) in code_ranges(&image) {
+            let end = end.min(size);
+            if start < end {
+                // A failed read keeps the live bytes, which the signatures
+                // then judge.
+                (original.read)(
+                    base as usize + start,
+                    image[start..end].as_mut_ptr(),
+                    end - start,
+                );
+            }
         }
     }
-    Ok((base, size, build))
+    let game = Image {
+        image: &image,
+        base: base as usize,
+    };
+    let sites = sites::sites(&game).map_err(InstallError::UnsupportedBuild)?;
+    if sites.training_vtable + 16 > size
+        || sites.panel_vtable + 16 > size
+        || sites.vehicle_vtable + 16 > size
+        || sites.slider_vtable + 8 > size
+        || sites.slider_ctrl_vtable + 16 > size
+    {
+        return Err(InstallError::UnsupportedBuild(
+            "vtable outside game.dll".into(),
+        ));
+    }
+    let entries = sites
+        .hooks()
+        .into_iter()
+        .map(|(rva, len, name)| (rva, image[rva..rva + len].to_vec(), name))
+        .collect();
+    Ok(Resolved {
+        base,
+        size,
+        sites,
+        entries,
+    })
 }
 
-fn vtable_patches(base: usize, build: &Build) -> [(usize, usize, usize); 7] {
+enum InstallError {
+    /// The build is not one the plugin supports; nothing was written.
+    UnsupportedBuild(String),
+    Failed(String),
+}
+
+impl From<&str> for InstallError {
+    fn from(error: &str) -> Self {
+        Self::Failed(error.into())
+    }
+}
+
+impl From<String> for InstallError {
+    fn from(error: String) -> Self {
+        Self::Failed(error)
+    }
+}
+
+fn vtable_patches(base: usize, sites: &Sites) -> [(usize, usize, usize); 7] {
     [
         (
-            base + build.training_vtable,
-            base + build.training_destroy.rva,
+            base + sites.training_vtable,
+            base + sites.training_destroy,
             native::destroy as *const () as usize,
         ),
         (
-            base + build.training_vtable + 8,
-            base + build.dispatch.rva,
+            base + sites.training_vtable + 8,
+            base + sites.dispatch,
             native::dispatch as *const () as usize,
         ),
         (
-            base + build.panel_vtable,
-            base + build.destroy.rva,
+            base + sites.panel_vtable,
+            base + sites.destroy,
             native::destroy as *const () as usize,
         ),
         (
-            base + build.panel_vtable + 8,
-            base + build.dispatch.rva,
+            base + sites.panel_vtable + 8,
+            base + sites.dispatch,
             native::dispatch as *const () as usize,
         ),
         (
-            base + build.vehicle_vtable,
-            base + build.vehicle_destroy.rva,
+            base + sites.vehicle_vtable,
+            base + sites.vehicle_destroy,
             native::destroy as *const () as usize,
         ),
         (
-            base + build.vehicle_vtable + 8,
-            base + build.dispatch.rva,
+            base + sites.vehicle_vtable + 8,
+            base + sites.dispatch,
             native::dispatch as *const () as usize,
         ),
         (
-            base + build.slider_ctrl_vtable + 8,
-            base + build.slider_dispatch.rva,
+            base + sites.slider_ctrl_vtable + 8,
+            base + sites.slider_dispatch,
             native::slider_dispatch as *const () as usize,
         ),
     ]
 }
 
-unsafe fn install(api: &Api) -> Result<(), String> {
-    let (base, size, build) = unsafe { selected_build(api) }?;
-    if build.training_vtable + 16 > size
-        || build.panel_vtable + 16 > size
-        || build.vehicle_vtable + 16 > size
-        || build.slider_vtable + 8 > size
-        || build.slider_ctrl_vtable + 16 > size
-    {
-        return Err("vtable outside game.dll".into());
+unsafe fn install(api: &Api) -> Result<(), InstallError> {
+    let Resolved {
+        base,
+        size,
+        sites,
+        entries,
+    } = resolve(api)?;
+    // The bytes the plugin overwrites or relocates must still be the
+    // original ones; another patch's edit refuses the plugin before any write.
+    for (rva, before, name) in &entries {
+        if rva + before.len() > size
+            || core::slice::from_raw_parts(base.add(*rva), before.len()) != before.as_slice()
+        {
+            return Err(format!("{name} entry already modified; no writes made").into());
+        }
     }
     let base = base as usize;
-    let patches = vtable_patches(base, build);
+    let patches = vtable_patches(base, &sites);
     for &(at, before, _) in &patches {
         if *(at as *const usize) != before {
             return Err("panel vtable already modified; no writes made".into());
@@ -231,7 +202,7 @@ unsafe fn install(api: &Api) -> Result<(), String> {
     ENGINE
         .set(native::Engine::new(
             base,
-            build,
+            &sites,
             api.log,
             perk_slots,
             upgrade_slots,
@@ -258,61 +229,32 @@ unsafe fn install(api: &Api) -> Result<(), String> {
     }
     // The loader publishes each ORIGINAL before opening its detour to other
     // threads. Both panels have their own refresh and share one detour body.
-    for (site, detour, original, name) in [
-        (
-            &build.training_show,
-            native::training_show as *mut _,
-            ORIGINAL_TRAINING_SHOW.as_ptr(),
-            "training show",
-        ),
-        (
-            &build.refresh,
-            native::refresh as *mut _,
-            ORIGINAL.as_ptr(),
-            "refresh",
-        ),
-        (
-            &build.vehicle_refresh,
-            native::refresh_vehicle as *mut _,
-            ORIGINAL_VEHICLE.as_ptr(),
-            "vehicle refresh",
-        ),
+    let detours = [
+        native::training_show as *mut c_void,
+        native::refresh as *mut _,
+        native::refresh_vehicle as *mut _,
         // The slider thumb layout, for the vertical upgrade sliders.
-        (
-            &build.thumb,
-            native::thumb_layout as *mut _,
-            ORIGINAL_THUMB.as_ptr(),
-            "thumb layout",
-        ),
+        native::thumb_layout as *mut _,
         // The drag-start choosers, which the upgrade column scrolls ahead of.
-        (
-            &build.squad_chooser,
-            native::choose_squad as *mut _,
-            ORIGINAL_SQUAD_CHOOSER.as_ptr(),
-            "squad chooser",
-        ),
-        (
-            &build.vehicle_chooser,
-            native::choose_vehicle as *mut _,
-            ORIGINAL_VEHICLE_CHOOSER.as_ptr(),
-            "vehicle chooser",
-        ),
-    ] {
-        if (api.hook_exact)(
-            (base + site.rva) as *mut _,
-            detour,
-            site.before.len(),
-            original,
-        ) != 0
-        {
+        native::choose_squad as *mut _,
+        native::choose_vehicle as *mut _,
+    ];
+    let originals = [
+        ORIGINAL_TRAINING_SHOW.as_ptr(),
+        ORIGINAL.as_ptr(),
+        ORIGINAL_VEHICLE.as_ptr(),
+        ORIGINAL_THUMB.as_ptr(),
+        ORIGINAL_SQUAD_CHOOSER.as_ptr(),
+        ORIGINAL_VEHICLE_CHOOSER.as_ptr(),
+    ];
+    for (((rva, before, name), detour), original) in entries.iter().zip(detours).zip(originals) {
+        if (api.hook_exact)((base + rva) as *mut _, detour, before.len(), original) != 0 {
             for address in applied.into_iter().rev() {
                 (api.unhook)(address);
             }
-            return Err(format!(
-                "{name} hook refused; host will finish owned rollback"
-            ));
+            return Err(format!("{name} hook refused; host will finish owned rollback").into());
         }
-        applied.push((base + site.rva) as *mut c_void);
+        applied.push((base + rva) as *mut c_void);
     }
     ACTIVE.store(true, Ordering::Release);
     log(
@@ -331,20 +273,17 @@ unsafe extern "C" fn patch_contract(api: *const Api) -> *const PatchContractV1 {
     let Some(api_ref) = (unsafe { api.as_ref() }) else {
         return core::ptr::null();
     };
-    let (base, size, build) = match unsafe { selected_build(api_ref) } {
-        Ok(selected) => selected,
-        Err(_) => return core::ptr::null(),
-    };
-    if build.training_vtable + 16 > size
-        || build.panel_vtable + 16 > size
-        || build.vehicle_vtable + 16 > size
-        || build.slider_vtable + 8 > size
-        || build.slider_ctrl_vtable + 16 > size
-    {
+    let Ok(Resolved {
+        base,
+        sites,
+        entries,
+        ..
+    }) = (unsafe { resolve(api_ref) })
+    else {
         return core::ptr::null();
-    }
+    };
     let base = base as usize;
-    let mut patches = vtable_patches(base, build)
+    let mut patches = vtable_patches(base, &sites)
         .into_iter()
         .map(|(at, before, _)| {
             defiance_feature_sdk::contract::Patch::bytes(
@@ -354,24 +293,15 @@ unsafe extern "C" fn patch_contract(api: *const Api) -> *const PatchContractV1 {
             )
         })
         .collect::<Vec<_>>();
-    patches.extend(
-        [
-            &build.training_show,
-            &build.refresh,
-            &build.vehicle_refresh,
-            &build.thumb,
-            &build.squad_chooser,
-            &build.vehicle_chooser,
-        ]
-        .into_iter()
-        .map(|site| defiance_feature_sdk::contract::Patch {
+    patches.extend(entries.into_iter().map(|(rva, before, _)| {
+        defiance_feature_sdk::contract::Patch {
             module: c"game.dll",
-            rva: site.rva,
+            rva,
             kind: PATCH_KIND_ENTRY,
-            before: site.before.to_vec(),
+            before,
             after: None,
-        }),
-    );
+        }
+    }));
     unsafe { defiance_feature_sdk::contract::build(api, patches) }
 }
 
@@ -384,7 +314,15 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
     }
     match install(api) {
         Ok(()) => 0,
-        Err(error) => {
+        Err(InstallError::UnsupportedBuild(error)) => {
+            log(
+                api,
+                LOG_WARN,
+                &format!("squad scrolling: not a supported build ({error}); no hooks installed"),
+            );
+            1
+        }
+        Err(InstallError::Failed(error)) => {
             log(api, LOG_ERROR, &format!("squad scrolling refused: {error}"));
             1
         }
@@ -406,23 +344,3 @@ pub unsafe extern "C" fn defiance_patch_contract_v1(api: *const Api) -> *const P
     unsafe { patch_contract(api) }
 }
 defiance_feature_sdk::crash_handshake!();
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn displaced_prologues_need_no_relocation() {
-        for b in super::sites::BUILDS {
-            for site in [
-                &b.refresh,
-                &b.vehicle_refresh,
-                &b.training_show,
-                &b.thumb,
-                &b.squad_chooser,
-                &b.vehicle_chooser,
-            ] {
-                assert!(site.before.len() >= 14);
-                defiance_core::decode::validate_copy(site.before).unwrap();
-            }
-        }
-    }
-}

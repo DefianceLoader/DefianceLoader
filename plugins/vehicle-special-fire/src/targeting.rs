@@ -7,7 +7,6 @@
 use defiance_api::Api;
 use std::cell::Cell;
 use std::collections::HashMap;
-use std::ffi::CStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -188,51 +187,27 @@ fn should_acquire_from_facts(
     automatic && passenger && live_source && source_enabled && gun_enabled
 }
 
-/// Resolve the gun methods and the native `PtrJunction` release helper. The
-/// hook entry points and their trampolines are owned by the plugin registry.
-pub unsafe fn configure(api: &Api) -> Result<(), String> {
+/// Record the gun methods, the target identity helper and the native
+/// `PtrJunction` release helper (the game's own destructor path), all
+/// resolved in logic.dll at `base` by [`crate::sites`]. The hook entry points
+/// and their trampolines are owned by the plugin registry.
+pub unsafe fn configure(
+    api: &Api,
+    base: usize,
+    setter: usize,
+    range: usize,
+    target_equals: usize,
+    release: usize,
+) -> Result<(), String> {
     if api.abi_version != defiance_api::ABI_VERSION || api.reserved != 0 {
         return Err("vehicle targeting: incompatible API".into());
     }
-    let method = |class: &CStr, slot| unsafe { (api.vtable_slot)(class.as_ptr(), slot) as usize };
-    let gun = c"Gun@Leonardo";
-    let setter = method(gun, 5);
-    let range = method(gun, 60);
-    if [setter, range].contains(&0) {
-        return Err("vehicle targeting: Gun RTTI methods are unavailable".into());
-    }
-    let base = (api.module_base)(c"logic.dll".as_ptr());
-    if base.is_null() {
-        return Err("vehicle targeting: logic.dll is unavailable".into());
-    }
-    let size = (api.module_size)(base);
-    if !inside_module(base as usize, size, setter) || !inside_module(base as usize, size, range) {
-        return Err("vehicle targeting: native setter or range method is outside logic.dll".into());
-    }
-    // This signature is unique in every supported logic.dll image.
-    let target_equals = (api.find_pattern)(
-        base,
-        size,
-        c"48 89 54 24 10 48 89 4c 24 08 53 56 57 48 83 ec 20 48 8b f2".as_ptr(),
-    ) as usize;
-    if !inside_module(base as usize, size, target_equals) {
-        return Err("vehicle targeting: native target identity helper was not found".into());
-    }
-    let release = (api.find_pattern)(
-        base,
-        (api.module_size)(base),
-        c"40 53 48 83 ec 20 48 8b d9 48 8b 09 48 85 c9 74 ?? 48 83 79 10 00 74 ?? ff 15 ?? ?? ?? ?? 90 48 8b 0b 48 85 c9 74 ?? 83 41 08 ff 75 ?? 48 8b 01 ff 50 10 90 48 83 c4 20 5b c3".as_ptr(),
-    ) as usize;
-    if release == 0 {
-        return Err("vehicle targeting: native owning-target release helper was not found".into());
-    }
-    // The helper is the game's own destructor path; retain its address only
-    // after its complete signature has matched uniquely in logic.dll.
+    let size = (api.module_size)(base as *mut core::ffi::c_void);
     RELEASE_HANDLE.store(release, Ordering::Release);
     SET_TARGET.store(setter, Ordering::Release);
     IN_RANGE.store(range, Ordering::Release);
     TARGET_EQUALS.store(target_equals, Ordering::Release);
-    LOGIC_BASE.store(base as usize, Ordering::Release);
+    LOGIC_BASE.store(base, Ordering::Release);
     LOGIC_SIZE.store(size, Ordering::Release);
     rebind::LOG.store(api.log as usize, Ordering::Release);
     Ok(())

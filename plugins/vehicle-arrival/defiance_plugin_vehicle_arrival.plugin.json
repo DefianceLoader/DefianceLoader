@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.vehicle-arrival",
   "dll": "defiance_plugin_vehicle_arrival.dll",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "abi": 5,
   "group": "vehicles",
   "hot_reload": false,

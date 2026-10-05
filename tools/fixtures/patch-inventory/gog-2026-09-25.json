@@ -55,7 +55,18 @@
     ["world2", 1649197, 7, "function"],
     ["world2", 1658450, 2, "byte patch"]
   ]},
-   "defiance.cover-markers": {"state": "Disabled", "spans": []},
+   "defiance.cover-markers": {"state": "Active", "spans": [
+    ["game", 3306256, 9, "function"],
+    ["game", 3355152, 10, "function"],
+    ["game", 3356416, 5, "function"],
+    ["game", 3448128, 10, "function"],
+    ["logic", 1110397, 5, "call site"],
+    ["logic", 4510751, 5, "call site"],
+    ["logic", 4513509, 5, "call site"],
+    ["logic", 4516032, 11, "function"],
+    ["logic", 4522266, 5, "call site"],
+    ["world2", 1628064, 7, "function"]
+  ]},
    "defiance.diagnostics": {"state": "Active", "spans": []},
    "defiance.expanded-ammo-menu": {"state": "Active", "spans": [
     ["game", 254044, 5, "byte patch"],
@@ -101,6 +112,7 @@
     ["game", 261925, 7, "byte patch"],
     ["game", 261963, 7, "byte patch"],
     ["game", 261970, 7, "byte patch"],
+    ["game", 262336, 14, "function"],
     ["game", 262701, 7, "byte patch"],
     ["game", 262708, 7, "byte patch"],
     ["game", 262841, 7, "byte patch"],
@@ -232,6 +244,7 @@
     ["logic", 4367352, 6, "byte patch"],
     ["logic", 4370346, 124, "byte patch"],
     ["logic", 4370671, 5, "byte patch"],
+    ["logic", 4370784, 29, "byte patch"],
     ["logic", 4371303, 5, "byte patch"],
     ["logic", 4371456, 5, "byte patch"],
     ["logic", 4371929, 11, "byte patch"],

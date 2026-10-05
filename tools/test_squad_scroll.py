@@ -13,7 +13,6 @@ import ctypes as C
 import builds
 from ctypes import wintypes as W
 import pathlib
-import re
 import struct
 import subprocess
 import sys
@@ -45,21 +44,27 @@ PANELS = {
 }
 
 
-def parse_table(build):
-    """RVAs and preflight lengths for the generated build entry."""
-    table = (ROOT / 'plugins/squad-management-scroll/src/sites.rs').read_text().split('    Build {')[build + 1]
-    rvas = {n: int(r, 16) for n, r in re.findall(r'(\w+): (?:Site \{\s*rva: )?0x([a-f0-9]+)', table)}
-    before = {}
-    for name, body in re.findall(r'(\w+): Site \{\s*rva: 0x[0-9a-f]+,\s*before: &\[(.*?)\]', table, re.S):
-        before[name] = body.count('0x')
-    return rvas, before
+# Per build, in BUILDS order: the sites plugins/squad-management-scroll/src/sites.rs
+# resolves. Its TABLE test holds the same values, so a drift fails there first.
+SITES = (
+    dict(training_show=0x299360, training_layout=0x299dc0, dispatch=0x2c2da0, destroy=0x29c4e0, ammo=0x3cb00, weapon=0x3674b0, script=0x709e0, listen=0x2d3270, thumb=0x2c6180, slider_dispatch=0x2c52d0, perk=0x2cff30, upgrade=0x365740, training_destroy=0x2990a0, vehicle_destroy=0x2a25c0, vehicle_refresh=0x2a3c40, refresh=0x29e6c0, training_key=0x298950, squad_chooser=0x29cc40, vehicle_chooser=0x2a2ed0, training_vtable=0x518368, panel_vtable=0x5187c8, vehicle_vtable=0x518b28, slider_vtable=0x51a1e0, slider_ctrl_vtable=0x51a1b0, upgrade_key=0x6080e8, context_service=0x118, perk_limit=0x878, squad_fit_name=0x850),
+    dict(training_show=0x29e6f0, training_layout=0x29f150, dispatch=0x2c8130, destroy=0x2a1870, ammo=0x3cb00, weapon=0x36d960, script=0x70a60, listen=0x2d8600, thumb=0x2cb510, slider_dispatch=0x2ca660, perk=0x2d52c0, upgrade=0x36bbf0, training_destroy=0x29e430, vehicle_destroy=0x2a7950, vehicle_refresh=0x2a8fd0, refresh=0x2a3a50, training_key=0x29dce0, squad_chooser=0x2a1fd0, vehicle_chooser=0x2a8260, training_vtable=0x51ea50, panel_vtable=0x51eea8, vehicle_vtable=0x51f208, slider_vtable=0x5208c0, slider_ctrl_vtable=0x520890, upgrade_key=0x60f748, context_service=0x138, perk_limit=0x878, squad_fit_name=0x850),
+    dict(training_show=0x29b220, training_layout=0x29bd30, dispatch=0x2c4e20, destroy=0x29e500, ammo=0x3cca0, weapon=0x3698c0, script=0x70b80, listen=0x2d5400, thumb=0x2c8200, slider_dispatch=0x2c7350, perk=0x2d20c0, upgrade=0x367b50, training_destroy=0x29af60, vehicle_destroy=0x2a4640, vehicle_refresh=0x2a5cc0, refresh=0x2a08a0, training_key=0x29a810, squad_chooser=0x29ec60, vehicle_chooser=0x2a4f50, training_vtable=0x51a4a0, panel_vtable=0x51a908, vehicle_vtable=0x51ac58, slider_vtable=0x51c310, slider_ctrl_vtable=0x51c2e0, upgrade_key=0x60a228, context_service=0x118, perk_limit=0x880, squad_fit_name=0x860),
+    dict(training_show=0x2a05e0, training_layout=0x2a10f0, dispatch=0x2ca1e0, destroy=0x2a38c0, ammo=0x3cca0, weapon=0x36fda0, script=0x70c00, listen=0x2da7c0, thumb=0x2cd5c0, slider_dispatch=0x2cc710, perk=0x2d7480, upgrade=0x36e030, training_destroy=0x2a0320, vehicle_destroy=0x2a9a00, vehicle_refresh=0x2ab080, refresh=0x2a5c60, training_key=0x29fbd0, squad_chooser=0x2a4020, vehicle_chooser=0x2aa310, training_vtable=0x521bb0, panel_vtable=0x522018, vehicle_vtable=0x522368, slider_vtable=0x523a20, slider_ctrl_vtable=0x5239f0, upgrade_key=0x613848, context_service=0x138, perk_limit=0x880, squad_fit_name=0x860),
+    dict(training_show=0x29b220, training_layout=0x29bd30, dispatch=0x2c4e20, destroy=0x29e500, ammo=0x3cca0, weapon=0x3698d0, script=0x70b80, listen=0x2d5400, thumb=0x2c8200, slider_dispatch=0x2c7350, perk=0x2d20c0, upgrade=0x367b60, training_destroy=0x29af60, vehicle_destroy=0x2a4640, vehicle_refresh=0x2a5cc0, refresh=0x2a08a0, training_key=0x29a810, squad_chooser=0x29ec60, vehicle_chooser=0x2a4f50, training_vtable=0x51a4a0, panel_vtable=0x51a908, vehicle_vtable=0x51ac58, slider_vtable=0x51c310, slider_ctrl_vtable=0x51c2e0, upgrade_key=0x60a228, context_service=0x118, perk_limit=0x880, squad_fit_name=0x860),
+    dict(training_show=0x2a05e0, training_layout=0x2a10f0, dispatch=0x2ca1e0, destroy=0x2a38c0, ammo=0x3cca0, weapon=0x36fdb0, script=0x70c00, listen=0x2da7c0, thumb=0x2cd5c0, slider_dispatch=0x2cc710, perk=0x2d7480, upgrade=0x36e040, training_destroy=0x2a0320, vehicle_destroy=0x2a9a00, vehicle_refresh=0x2ab080, refresh=0x2a5c60, training_key=0x29fbd0, squad_chooser=0x2a4020, vehicle_chooser=0x2aa310, training_vtable=0x521bb0, panel_vtable=0x522018, vehicle_vtable=0x522368, slider_vtable=0x523a20, slider_ctrl_vtable=0x5239f0, upgrade_key=0x613848, context_service=0x138, perk_limit=0x880, squad_fit_name=0x860),
+)
+
+# The entry bytes each hook relocates, from sites.rs's Sites::hooks.
+BEFORE = dict(refresh=21, vehicle_refresh=21, training_show=22, thumb=24,
+              squad_chooser=21, vehicle_chooser=22)
 
 
 def case(build, mode, kind='squad'):
     panel_kind = PANELS[kind]
     path = ROOT / PATHS[build]
     image = Image(path)
-    rvas, before = parse_table(build)
+    rvas, before = SITES[build], BEFORE
     base = K.LoadLibraryExW(str(path), None, 1)  # imports intentionally unresolved
     assert base, C.get_last_error()
     size = image.pe.OPTIONAL_HEADER.SizeOfImage

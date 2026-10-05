@@ -1,9 +1,16 @@
 # Moving-action animation sampler (experimental)
 
 This plugin keeps a lower-body locomotion pose during standing grenade throws
-and weapon changes. Exact native bindings support GOG 2026-09-14, Steam
-2026-09-22, GOG 2026-09-25, and Steam 2026-09-25 `logic.dll` builds. Other builds
-are refused by the hash and native-byte guards. It depends on
+and weapon changes. It finds its hooked samplers, the animation update, the
+quaternion helper and the two facet vtables by signature and RTTI in the loaded
+`logic.dll` ([`src/sites.rs`](src/sites.rs)), and checks each entry and the
+HumanAnimationFacet layout before hooking. Its sites test resolves every site
+uniquely on the four September 2026 snapshots in `bin/` and proves they equal
+the addresses the plugin used before. The December 2025 builds have an older
+facet layout, so they are refused. A site that does not resolve, or a changed
+entry or layout, logs a warning ("not a supported build") and hooks nothing;
+if the loader refuses any hook, the plugin removes the hooks it installed
+before it. It depends on
 `defiance.moving-actions`; both are off by default (set `enabled = true` in
 each one's section of `DefianceLoader/config/infantry.ini`) and a full game
 restart is required.

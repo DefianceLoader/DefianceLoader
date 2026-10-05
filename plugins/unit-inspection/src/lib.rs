@@ -51,10 +51,11 @@
 //! first, and then calls it for its combined view, whose cards are the
 //! player's own.
 //!
-//! The panel offsets are the 2026 builds' (GOG 2026-09-14 and 2026-09-25, Steam
-//! 2026-09-22);
-//! the relation label's function differs in the 2025 builds, where the plugin
-//! finds nothing and changes nothing. Vehicles and platforms need nothing of
+//! The five sites are found by signature in `game.dll`'s bytes from before any
+//! hook ([`sites`]) before anything is hooked; when one does not match exactly
+//! once, the plugin logs a warning and changes nothing. The panel offsets are
+//! the 2026 builds'; the relation label's function differs in the 2025 builds,
+//! which do not resolve. Vehicles and platforms need nothing of
 //! their own: the ammo refresh asks the same ownership question for any shown
 //! unit, and the click gate applies to them too. Not multiplayer-safe: the
 //! ally toggles change another player's units.
@@ -63,56 +64,16 @@ use defiance_api::{
     Api, PatchContractV1, Plugin, ABI_VERSION, LOG_DEBUG, LOG_INFO, LOG_WARN, PATCH_KIND_CALL,
     PATCH_KIND_ENTRY,
 };
+use defiance_core::sites::{code_ranges, Image};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
+
+mod patterns;
+mod sites;
+
+pub use patterns::*;
 
 const ID: &str = "defiance.unit-inspection";
 
-/// In the squad setter: the owner from entity vt+0xb0 → `+0x20`, `call
-/// [rax+0x80]`, `sete al`, the flag at `+0x28`, then the panel at `+0x18`
-/// and its entity at `+0x3f0`.
-pub const SQUAD_PATTERN: &str = "ff 90 b0 00 00 00 48 8b 48 20 48 85 c9 74 11 48 8b 01 \
-     ff 90 80 00 00 00 84 c0 0f 94 c0 88 47 28 48 8b 47 18 40 b6 01 48 8b 88 f0 03 00 00";
-/// Offset in [`SQUAD_PATTERN`] of its `call [rax+0x80]` (six bytes).
-const SQUAD_CALL_AT: usize = 0x12;
-/// In the ammo menu's refresh: the shown entity in `rsi`, its owner asked
-/// `call [rdx+0x80]`, and dropped (`xor esi, esi`) when it answers no.
-pub const AMMO_PATTERN: &str = "48 8b 10 48 8b c8 ff 92 b0 00 00 00 48 8b 48 20 48 85 c9 74 0d \
-     48 8b 11 ff 92 80 00 00 00 84 c0 75 02 33 f6 48 8b af ?? ?? ?? ?? 48 8b 9f ?? ?? ?? ??";
-/// Offset in [`AMMO_PATTERN`] of its `call [rdx+0x80]` (six bytes).
-const AMMO_CALL_AT: usize = 0x18;
-/// The ammo grid's click handler from its `sub rsp, 0x40` (its first 20 bytes
-/// may be another plugin's hook), through its call to the menu's shown-entity
-/// getter (`fn_40c20`).
-pub const CLICK_PATTERN: &str = "48 83 ec 40 48 8b f9 45 33 ff 48 8d a9 80 01 00 00 \
-     48 8d 85 ?? ?? ?? ?? 48 8b dd 48 3b e8 \
-     74 2a 48 39 53 18 74 2d 48 39 53 20 74 1e 48 39 53 30 74 18 48 39 53 38 74 12 48 39 53 28 \
-     74 0c 48 81 c3 b8 00 00 00 48 3b d8 75 d6 48 3b d8 0f 84 ?? ?? ?? ?? 48 8b cb e8 ?? ?? ?? ?? \
-     84 c0 0f 85 ?? ?? ?? ?? 48 8b f3 48 2b f5 48 c1 fe 03 48 b8 a7 37 bd e9 4d 6f 7a d3 \
-     48 0f af f0 8b 6b 08 ff c5 89 6b 08 48 8b cf e8 ?? ?? ?? ??";
-/// Offset in [`CLICK_PATTERN`] of its call to the shown-entity getter.
-const CLICK_SHOWN_CALL_AT: usize = 0x86;
-/// The start of the panel's relation label (`fn_366ad0`): the label at
-/// `+0x580` (visible at `+0x5b`, shown by vt+0x48), then `LogicUtilsImpl` at
-/// `+0x410` asked vt+0x620, the player's own.
-pub const LABEL_PATTERN: &str =
-    "48 89 74 24 20 57 48 83 ec 40 48 8b f9 48 8b f2 48 8b 89 80 05 00 00 \
-     48 85 c9 74 0e 80 79 5b 00 74 08 48 8b 01 33 d2 ff 50 48 48 8b 8f 10 04 00 00 48 8b d6 \
-     48 8b 01 ff 90 20 06 00 00 84 c0 0f 85 ?? ?? ?? ??";
-/// The label function's relation calls, at their offsets: ally (`mov r8,
-/// [rdx+0x628]`), abandoned, enemy and neutral. They vouch for [`RELATION`].
-const LABEL_SLOTS: [(usize, &[u8]); 4] = [
-    (0x18a, &[0x4c, 0x8b, 0x82, 0x28, 0x06, 0, 0]),
-    (0x1be, &[0xff, 0x90, 0x40, 0x06, 0, 0]),
-    (0x1de, &[0xff, 0x90, 0x30, 0x06, 0, 0]),
-    (0x1fe, &[0xff, 0x90, 0x38, 0x06, 0, 0]),
-];
-
-/// The start of the ammo menu's `fillSlot(menu, index, record)`: the card at
-/// `menu + 0x180 + index * 0xb8`.
-pub const FILL_PATTERN: &str = "48 89 5c 24 10 48 89 74 24 18 55 57 41 54 41 56 41 57 \
-     48 8d ac 24 60 ff ff ff 48 81 ec a0 01 00 00 49 8b f8 48 8b d9 45 33 e4 44 89 a5 d0 00 00 00 \
-     48 69 c2 b8 00 00 00 48 8d b1 80 01 00 00 48 03 f0 41 8b 50 3c 85 d2 0f 84 ?? ?? ?? ?? \
-     83 fa 01 74 6c";
 /// The companion mod's greyscale reload fill, (width, height); the stock one
 /// is 88x4. `tools/package_unit_inspection.py` writes it.
 const GREY_BAR: (u32, u32) = (88, 8);
@@ -529,58 +490,54 @@ unsafe extern "C" fn fill(menu: usize, index: usize, record: usize) -> usize {
     result
 }
 
-fn find(api: &Api, base: *mut c_void, size: usize, pattern: &str) -> usize {
-    let pattern = std::ffi::CString::new(pattern).unwrap_or_default();
-    unsafe { (api.find_pattern)(base, size, pattern.as_ptr()) as usize }
-}
-
 fn say(api: &Api, level: u32, text: &str) {
     let text = std::ffi::CString::new(text).unwrap_or_default();
     unsafe { (api.log)(level, text.as_ptr()) };
 }
 
 enum InstallError {
-    UnsupportedBuild(&'static str),
+    UnsupportedBuild(String),
     Failed(String),
 }
 
-/// The four sites, found and vouched for: (squad call, ammo call, the click
-/// handler's shown-entity call, label function).
-fn sites(api: &Api) -> Result<(usize, usize, usize, usize), InstallError> {
-    let base = unsafe { (api.module_base)(c"game.dll".as_ptr()) };
+/// game.dll's base, its five sites, and a copy of its image whose code is the
+/// bytes from before any hook, so the signatures match whichever plugin
+/// started first.
+fn resolve(api: &Api) -> Result<(usize, sites::Sites, Vec<u8>), InstallError> {
+    let base = unsafe { (api.module_base)(c"game.dll".as_ptr()) }.cast::<u8>();
     if base.is_null() {
         return Err(InstallError::Failed("game.dll is not loaded".into()));
     }
-    let size = unsafe { (api.module_size)(base) };
-    let (squad, ammo, click, label) = (
-        find(api, base, size, SQUAD_PATTERN),
-        find(api, base, size, AMMO_PATTERN),
-        find(api, base, size, CLICK_PATTERN),
-        find(api, base, size, LABEL_PATTERN),
-    );
-    if squad == 0 || ammo == 0 || click == 0 || label == 0 {
-        return Err(InstallError::UnsupportedBuild(
-            "not a supported build (the 2026 updates are)",
-        ));
+    let size = unsafe { (api.module_size)(base.cast()) };
+    let mut image = unsafe { core::slice::from_raw_parts(base, size) }.to_vec();
+    if let Some(original) = unsafe { defiance_feature_sdk::services::original() } {
+        for (start, end) in code_ranges(&image) {
+            let end = end.min(size);
+            if start < end {
+                // A failed read keeps the live bytes, which the signatures
+                // then judge.
+                unsafe {
+                    (original.read)(
+                        base as usize + start,
+                        image[start..end].as_mut_ptr(),
+                        end - start,
+                    )
+                };
+            }
+        }
     }
-    let slots_match = LABEL_SLOTS.iter().all(|(at, bytes)| {
-        (0..bytes.len()).all(|i| unsafe { *((label + at + i) as *const u8) } == bytes[i])
-    });
-    if !slots_match {
-        return Err(InstallError::UnsupportedBuild(
-            "the relation queries are laid out differently",
-        ));
-    }
-    Ok((
-        squad + SQUAD_CALL_AT,
-        ammo + AMMO_CALL_AT,
-        click + CLICK_SHOWN_CALL_AT,
-        label,
-    ))
+    let game = Image {
+        image: &image,
+        base: base as usize,
+    };
+    let sites = sites::sites(&game).map_err(InstallError::UnsupportedBuild)?;
+    Ok((base as usize, sites, image))
 }
 
-fn install(api: &Api) -> Result<(), InstallError> {
-    let (squad, ammo, click_call, label_fn) = sites(api)?;
+/// Places all five hooks. A failure leaves the earlier ones for the loader to
+/// remove when `init` refuses.
+fn install(api: &Api, base: usize, sites: &sites::Sites) -> Result<(), InstallError> {
+    let (squad, ammo) = (base + sites.squad, base + sites.ammo);
     SQUAD_RESUME.store(squad + 6, Ordering::Release);
     AMMO_RESUME.store(ammo + 6, Ordering::Release);
     for (site, stub) in [
@@ -590,13 +547,14 @@ fn install(api: &Api) -> Result<(), InstallError> {
         let mut trampoline = core::ptr::null_mut();
         if unsafe { (api.hook_exact)(site as *mut c_void, stub, 6, &mut trampoline) } != 0 {
             return Err(InstallError::Failed(format!(
-                "the ownership test at game+{site:#x} could not be hooked"
+                "the ownership test at game+{:#x} could not be hooked",
+                site - base
             )));
         }
     }
     let mut shown = core::ptr::null_mut();
     let detour = clicked_entity as Shown as *mut c_void;
-    if unsafe { (api.hook_call)(click_call as *mut c_void, detour, &mut shown) } != 0
+    if unsafe { (api.hook_call)((base + sites.click) as *mut c_void, detour, &mut shown) } != 0
         || shown.is_null()
     {
         return Err(InstallError::Failed(
@@ -606,7 +564,7 @@ fn install(api: &Api) -> Result<(), InstallError> {
     SHOWN.store(shown as usize, Ordering::Release);
     let mut original = core::ptr::null_mut();
     let detour = label as Label as *mut c_void;
-    if unsafe { (api.hook)(label_fn as *mut c_void, detour, &mut original) } != 0
+    if unsafe { (api.hook)((base + sites.label) as *mut c_void, detour, &mut original) } != 0
         || original.is_null()
     {
         return Err(InstallError::Failed(
@@ -614,66 +572,35 @@ fn install(api: &Api) -> Result<(), InstallError> {
         ));
     }
     LABEL_ORIGINAL.store(original as usize, Ordering::Release);
-    Ok(())
-}
-
-/// Hook `fillSlot` to colour the reload bars; the rest works without it.
-fn colour_target(api: &Api) -> Option<usize> {
-    let base = unsafe { (api.module_base)(c"game.dll".as_ptr()) };
-    if base.is_null() {
-        return None;
-    }
-    let size = unsafe { (api.module_size)(base) };
-    let target = find(api, base, size, FILL_PATTERN);
-    (target != 0).then_some(target)
-}
-
-fn install_colours(api: &Api, target: usize) -> Result<(), String> {
     let mut original = core::ptr::null_mut();
     let detour = fill as Fill as *mut c_void;
-    if unsafe { (api.hook)(target as *mut c_void, detour, &mut original) } != 0
+    if unsafe { (api.hook)((base + sites.fill) as *mut c_void, detour, &mut original) } != 0
         || original.is_null()
     {
-        return Err("the ammo card fill could not be hooked".into());
+        return Err(InstallError::Failed(
+            "the ammo card fill could not be hooked".into(),
+        ));
     }
     FILL_ORIGINAL.store(original as usize, Ordering::Release);
     Ok(())
 }
 
-fn original_bytes(base: usize, size: usize, target: usize, len: usize) -> Option<Vec<u8>> {
-    let rva = target.checked_sub(base)?;
-    if rva.checked_add(len)? > size || len == 0 {
-        return None;
-    }
-    let mut bytes = vec![0; len];
-    if let Some(original) = unsafe { defiance_feature_sdk::services::original() } {
-        if unsafe { (original.read)(target, bytes.as_mut_ptr(), bytes.len()) } == 0 {
-            return Some(bytes);
-        }
-    }
-    bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(target as *const u8, len) });
-    Some(bytes)
-}
-
 fn contract_entry(
-    base: usize,
-    size: usize,
-    target: usize,
+    image: &[u8],
+    rva: usize,
     kind: u32,
     exact_len: Option<usize>,
 ) -> Option<defiance_feature_sdk::contract::Patch> {
-    let available = (size.checked_sub(target.checked_sub(base)?)?).min(64);
-    let bytes = original_bytes(base, size, target, available)?;
+    let bytes = image.get(rva..rva.checked_add(64)?.min(image.len()))?;
     let len = match exact_len {
         Some(len) => len,
-        None => defiance_core::decode::displaced(&bytes, 5).ok()?,
+        None => defiance_core::decode::displaced(bytes, 5).ok()?,
     };
-    let before = bytes.get(..len)?.to_vec();
     Some(defiance_feature_sdk::contract::Patch {
         module: c"game.dll",
-        rva: target.checked_sub(base)?,
+        rva,
         kind,
-        before,
+        before: bytes.get(..len)?.to_vec(),
         after: None,
     })
 }
@@ -685,33 +612,22 @@ unsafe extern "C" fn patch_contract(api: *const Api) -> *const PatchContractV1 {
     if api_ref.abi_version != ABI_VERSION || api_ref.reserved != 0 {
         return core::ptr::null();
     }
-    let (squad, ammo, click_call, label_fn) = match sites(api_ref) {
-        Ok(sites) => sites,
+    let (_, sites, image) = match resolve(api_ref) {
+        Ok(resolved) => resolved,
         Err(InstallError::UnsupportedBuild(_)) => {
             return unsafe { defiance_feature_sdk::contract::build(api, Vec::new()) };
         }
         Err(InstallError::Failed(_)) => return core::ptr::null(),
     };
-    let base = unsafe { (api_ref.module_base)(c"game.dll".as_ptr()) } as usize;
-    let size = unsafe { (api_ref.module_size)(base as *mut c_void) };
     let mut patches = Vec::with_capacity(5);
-    for target in [squad, ammo] {
-        let Some(patch) = contract_entry(base, size, target, PATCH_KIND_ENTRY, Some(6)) else {
-            return core::ptr::null();
-        };
-        patches.push(patch);
-    }
-    for (target, kind, exact_len) in [
-        (click_call, PATCH_KIND_CALL, Some(5)),
-        (label_fn, PATCH_KIND_ENTRY, None),
+    for (rva, kind, exact_len) in [
+        (sites.squad, PATCH_KIND_ENTRY, Some(6)),
+        (sites.ammo, PATCH_KIND_ENTRY, Some(6)),
+        (sites.click, PATCH_KIND_CALL, Some(5)),
+        (sites.label, PATCH_KIND_ENTRY, None),
+        (sites.fill, PATCH_KIND_ENTRY, None),
     ] {
-        let Some(patch) = contract_entry(base, size, target, kind, exact_len) else {
-            return core::ptr::null();
-        };
-        patches.push(patch);
-    }
-    if let Some(target) = colour_target(api_ref) {
-        let Some(patch) = contract_entry(base, size, target, PATCH_KIND_ENTRY, None) else {
+        let Some(patch) = contract_entry(&image, rva, kind, exact_len) else {
             return core::ptr::null();
         };
         patches.push(patch);
@@ -756,24 +672,8 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
         slot.store(colour, Ordering::Relaxed);
     }
     LOG.store(api.log as usize, Ordering::Relaxed);
-    match install(api) {
+    match resolve(api).and_then(|(base, sites, _)| install(api, base, &sites)) {
         Ok(()) => {
-            if let Some(target) = colour_target(api) {
-                if let Err(e) = install_colours(api, target) {
-                    say(
-                        api,
-                        LOG_WARN,
-                        &format!("unit inspection: {e}; the reload bars keep the game's colour"),
-                    );
-                    return 1;
-                }
-            } else {
-                say(
-                    api,
-                    LOG_WARN,
-                    "unit inspection: the ammo card fill was not found; the reload bars keep the game's colour",
-                );
-            }
             let who: Vec<&str> = [(allied, "allied"), (neutral, "neutral"), (enemy, "enemy")]
                 .into_iter()
                 .filter(|(on, _)| *on)
@@ -802,7 +702,9 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
             say(
                 api,
                 LOG_WARN,
-                &format!("unit inspection: {reason}; the game's panel stays"),
+                &format!(
+                    "unit inspection: not a supported build ({reason}); the game's panel stays"
+                ),
             );
             0
         }

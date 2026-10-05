@@ -78,7 +78,7 @@ pub const BUILTINS: &[Builtin] = &[
     Builtin {
         id: CORE_ID,
         dll: "defiance_plugin_core.dll",
-        version: "0.4.3",
+        version: "0.4.4",
         group: "core",
         summary: "Required support for the infantry and weapon features. Core has no enabled toggle; disable individual features instead.",
         depends: &[],
@@ -89,7 +89,7 @@ pub const BUILTINS: &[Builtin] = &[
     Builtin {
         id: "defiance.selection",
         dll: "defiance_plugin_feature_selection.dll",
-        version: "0.6.1",
+        version: "0.6.2",
         group: "infantry",
         summary: "Select individual soldiers within a squad and show which soldiers are selected. Disabling this also prevents posture, movement, attack, garrison, firing, ammunition, expanded ammo menu and regroup from loading. Pickup and squad-management scrolling can remain enabled. Restart required.",
         depends: &[CORE_ID],
@@ -155,7 +155,7 @@ pub const BUILTINS: &[Builtin] = &[
     Builtin {
         id: "defiance.vehicle-special-fire",
         dll: "defiance_plugin_feature_vehicle_special_fire.dll",
-        version: "0.3.0",
+        version: "0.4.0",
         group: "weapons",
         summary: "Prefer special weapons for passenger firing mounts. Mounted weapons acquire targets independently; select the vehicle and use Attack to order its passengers against an enemy. Move special weapons to useful firing mounts as targets change. Applies to vehicles with passenger firing mounts. Reboard passengers after enabling.",
         depends: &[CORE_ID],
@@ -166,7 +166,7 @@ pub const BUILTINS: &[Builtin] = &[
     Builtin {
         id: "defiance.ammunition",
         dll: "defiance_plugin_feature_ammunition.dll",
-        version: "0.7.0",
+        version: "0.7.1",
         group: "weapons",
         summary: "Use the in-mission ammo panel to enable or disable weapons/ammo for selected soldiers. Show relevant weapons and selected-user counts, including mixed on/off states. Select the whole squad to apply a toggle to everyone. Ctrl+mouse wheel over a card enables or disables one soldier at a time (step_modifier; step_click adds Ctrl+left and Ctrl+right click); with expanded-ammo-menu all_selected_squads enabled, this spans selected squads. Individual overrides support each squad's first eight ammo slots; later local slots need whole-squad selection. Requires selection. Expanded ammo menu also requires this feature; out-of-mission squad scrolling does not. Restart required.",
         depends: &[CORE_ID, "defiance.selection"],

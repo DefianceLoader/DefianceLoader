@@ -16,7 +16,7 @@
 //! click on its button ([`click`], `game+2b0d30`, every GUI button's click)
 //! opens the row: the order panel is put away as the mine button does it
 //! (a stock submenu closed first, then the three calls and the two game menu
-//! fields of [`crate::Build`]), each of the group's windows is shown and
+//! fields of [`crate::sites::Sites`]), each of the group's windows is shown and
 //! moved from the slot to a cell of the order panel ([`CELLS`]), and the order key label of that cell is shown.
 //! The order keys reach [`order_key`] (`game+23d900`, one call per order
 //! button bound to the key), which picks the entry under the key; a click
@@ -29,7 +29,7 @@
 //!
 //! All of it runs on the game's main thread. No state borrow is held across
 //! a call into the game, which may call these hooks again.
-use crate::Build;
+use crate::sites::{self, Sites};
 use core::ffi::c_void;
 use defiance_api::{Api, LOG_DEBUG};
 use std::cell::{Cell, RefCell};
@@ -722,53 +722,37 @@ pub unsafe extern "C" fn bar_destroy(bar: usize) -> usize {
     original::<BarDestroy>(&BAR_DESTROY)(bar)
 }
 
-pub unsafe fn install(api: &Api, base: usize, build: &'static Build) -> Result<(), String> {
-    let function = |site: &crate::Site| base + site.rva;
+pub unsafe fn install(api: &Api, base: usize, sites: &Sites) -> Result<(), String> {
+    let function = |index: usize| base + sites.rvas[index];
     GAME.set(Game {
-        hide: core::mem::transmute::<usize, Hide>(function(&build.hide)),
-        move_widget: core::mem::transmute::<usize, MoveWidget>(function(&build.move_widget)),
-        label: core::mem::transmute::<usize, Label>(function(&build.label)),
-        close_submenus: core::mem::transmute::<usize, Bar>(function(&build.close_submenus)),
-        clear_order: core::mem::transmute::<usize, Menu>(function(&build.clear_order)),
-        order_reset: core::mem::transmute::<usize, Menu>(function(&build.order_reset)),
-        hide_orders: core::mem::transmute::<usize, Menu>(function(&build.hide_orders)),
-        orders_hidden: build.orders_hidden,
-        submenu: build.submenu,
+        hide: core::mem::transmute::<usize, Hide>(function(sites::HIDE)),
+        move_widget: core::mem::transmute::<usize, MoveWidget>(function(sites::MOVE_WIDGET)),
+        label: core::mem::transmute::<usize, Label>(function(sites::LABEL)),
+        close_submenus: core::mem::transmute::<usize, Bar>(function(sites::CLOSE_SUBMENUS)),
+        clear_order: core::mem::transmute::<usize, Menu>(function(sites::CLEAR_ORDER)),
+        order_reset: core::mem::transmute::<usize, Menu>(function(sites::ORDER_RESET)),
+        hide_orders: core::mem::transmute::<usize, Menu>(function(sites::HIDE_ORDERS)),
+        orders_hidden: sites.orders_hidden,
+        submenu: sites.submenu,
         log: api.log,
     })
     .map_err(|_| "already initialized")?;
-    let hooks: [(&crate::Site, *mut c_void, &AtomicUsize, &str); 6] = [
+    let detours: [(*mut c_void, &AtomicUsize, &str); 6] = [
+        (update as *mut c_void, &UPDATE, "ability update"),
+        (reset as *mut c_void, &RESET, "ability reset"),
+        (key as *mut c_void, &KEY, "ability key"),
         (
-            &build.update,
-            update as *mut c_void,
-            &UPDATE,
-            "ability update",
-        ),
-        (&build.reset, reset as *mut c_void, &RESET, "ability reset"),
-        (&build.key, key as *mut c_void, &KEY, "ability key"),
-        (
-            &build.bar_destroy,
             bar_destroy as *mut c_void,
             &BAR_DESTROY,
             "ability bar destructor",
         ),
-        (
-            &build.order_key,
-            order_key as *mut c_void,
-            &ORDER_KEY,
-            "order key",
-        ),
-        (&build.click, click as *mut c_void, &CLICK, "button click"),
+        (order_key as *mut c_void, &ORDER_KEY, "order key"),
+        (click as *mut c_void, &CLICK, "button click"),
     ];
     let mut applied = Vec::new();
-    for (site, detour, original, name) in hooks {
-        if (api.hook_exact)(
-            function(site) as *mut c_void,
-            detour,
-            site.before.len(),
-            original.as_ptr().cast(),
-        ) != 0
-        {
+    for ((index, span), (detour, original, name)) in sites::HOOKS.into_iter().zip(detours) {
+        let address = function(index) as *mut c_void;
+        if (api.hook_exact)(address, detour, span, original.as_ptr().cast()) != 0 {
             for address in applied.into_iter().rev() {
                 (api.unhook)(address);
             }
@@ -776,7 +760,7 @@ pub unsafe fn install(api: &Api, base: usize, build: &'static Build) -> Result<(
                 "{name} hook refused; host will finish owned rollback"
             ));
         }
-        applied.push(function(site) as *mut c_void);
+        applied.push(address);
     }
     Ok(())
 }

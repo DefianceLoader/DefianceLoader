@@ -1,13 +1,17 @@
 #[path = "history.rs"]
 mod history;
 use crate::{
-    bindings as b,
     model::{remap_pins, Supply},
+    sites::{
+        self, CLEANUP_DISPLACED, HOVER_DISPLACED, INPUT_DISPLACED, PERK_DISPLACED,
+        ROSTER_DISPLACED, UPDATE_DISPLACED,
+    },
 };
 use defiance_api::{
     Api, PatchContractV1, ABI_VERSION, LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_WARN, PATCH_KIND_CALL,
     PATCH_KIND_ENTRY,
 };
+use defiance_core::sites::Image;
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet},
@@ -28,77 +32,24 @@ static SELECTION: OnceLock<&'static defiance_api::SelectionV1> = OnceLock::new()
 static LIMITS: OnceLock<crate::limits::Limits> = OnceLock::new();
 static MENU: OnceLock<&'static defiance_api::AmmoMenuV1> = OnceLock::new();
 
-/// Class offsets the 2026-09 update moved without moving the functions regroup
-/// calls. The reference build's values are the defaults.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Offsets {
-    pub roster: usize,
-    pub world_manager: usize,
-    pub input_player: usize,
-    pub input_ui: usize,
-}
-const REFERENCE_OFFSETS: Offsets = Offsets {
-    roster: 0x3b8,
-    world_manager: 0x700,
-    input_player: 0x860,
-    input_ui: 0x888,
-};
-const UPDATE_OFFSETS: Offsets = Offsets {
-    roster: 0x3d0,
-    world_manager: 0x708,
-    input_player: 0x870,
-    input_ui: 0x890,
-};
-/// The supported (logic.dll, game.dll) pairs and the offsets each reads. A
-/// pair, as in Core, because the offsets span both modules: the roster getter
-/// is a logic.dll class slot and the input fields are game.dll's, so a
-/// logic.dll from one build with a game.dll from another would read one of
-/// them stale.
-const PAIRS: &[(&str, &str, Offsets)] = &[
-    // GOG and Steam, 23 Dec 2025
-    (
-        "17ef48350153306e210e14a24b0ad398c56fb99d3d46c88f246df260ade85780",
-        "f0184b9fe358172c83261419c8ba3d822a0aa6b06ed3cddb2f7aa3ebb9653db4",
-        REFERENCE_OFFSETS,
-    ),
-    (
-        "d320f848508c45c9f04df235204b5fbc9ffbb1b7f869e4c5a58d80bb2ecc10ed",
-        "dc10419f417aed4ecff348b7c96b3c7c574a9a2541f76c5fbc35eb92dbc716d6",
-        REFERENCE_OFFSETS,
-    ),
-    // GOG 14 Sep 2026, the 22 Sep 2026 (DLC3) build both stores share, and
-    // 25 Sep 2026 (GOG, then Steam)
-    (
-        "eb8674f1d16595a3e9cf6a9ec0062735b1184976495d8d6ade36f7e2574e8aab",
-        "bc2af42369f9f6fe70e206ae4846f8f0e46ac01cca9a325c8159ee04a9b5e405",
-        UPDATE_OFFSETS,
-    ),
-    (
-        "30264904e1d5199b954bafbd7828cf7190930c246d35fa7b94eefa915e8f0c38",
-        "d926a213731d73bac8ccc56b50e2b4292fe8613c7a9bb7c8b9fc9132c122ed25",
-        UPDATE_OFFSETS,
-    ),
-    (
-        "1216d627c7288c7db6940168363be582232ed4d3cb860b8b8c8d7489652eca74",
-        "8ec30a0b59aebf2240f00229d54a0f58e2e338f9ab3511046c9ff36970dd1489",
-        UPDATE_OFFSETS,
-    ),
-    (
-        "adb3ad95926036809b4e554b466bef33d4ac7aa5303e59a9e4a940890bc334b5",
-        "c336b5ed4a367628a9c370457d82b1d4e75cab9007cffe5354e27688e836f98e",
-        UPDATE_OFFSETS,
-    ),
-];
-fn offsets_for(logic_sha: &str, game_sha: &str) -> Option<Offsets> {
-    PAIRS
-        .iter()
-        .find(|&&(logic, game, _)| logic == logic_sha && game == game_sha)
-        .map(|&(_, _, o)| o)
-}
-static OFFSETS: OnceLock<Offsets> = OnceLock::new();
+/// The class offsets [`init`] resolved for this build.
+static OFFSETS: OnceLock<sites::Offsets> = OnceLock::new();
 
-pub(crate) fn offsets() -> Offsets {
-    *OFFSETS.get().unwrap_or(&REFERENCE_OFFSETS)
+/// The resolved class offsets. Tests that never run [`init`] read the
+/// December 2025 builds' values, which their fake objects are laid out for.
+pub(crate) fn offsets() -> sites::Offsets {
+    #[cfg(test)]
+    if OFFSETS.get().is_none() {
+        return sites::Offsets {
+            roster: 0x3b8,
+            world_manager: 0x700,
+            input_player: 0x860,
+            input_ui: 0x888,
+        };
+    }
+    *OFFSETS
+        .get()
+        .expect("regroup reads offsets only after init")
 }
 #[cfg(test)]
 thread_local! {
@@ -119,8 +70,6 @@ fn ammo_limit() -> usize {
     limits().ammo(MENU.get().map_or(9, |menu| unsafe { (menu.capacity)() }))
 }
 static INPUT: AtomicUsize = AtomicUsize::new(0);
-// Three five-byte register saves; room for a distant absolute detour.
-const INPUT_DISPLACED: usize = 15;
 static CREATE: AtomicUsize = AtomicUsize::new(0);
 static SPAWN_FALLBACK: AtomicUsize = AtomicUsize::new(0);
 // Do not risk repeated creation after an unverified native result. Thread-local
@@ -152,9 +101,6 @@ static WIRE: AtomicUsize = AtomicUsize::new(0);
 static TEMPLATES: AtomicUsize = AtomicUsize::new(0);
 static CLEANUP_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
 static UPDATE_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
-const CLEANUP_DISPLACED: usize = 16;
-const UPDATE_DISPLACED: usize = 14;
-const PERK_DISPLACED: usize = 19;
 static PERK_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
 
 /// Stock perk refresh copies the entire squad into Entity*[20] on its stack.
@@ -196,8 +142,8 @@ unsafe extern "C" fn refresh_perks(perk: usize) {
     }
     // Same order as the native squad branch: prepare shared effects, update
     // squad state, then snapshot the current roster and refresh each member.
-    call(b::PERK_PREPARE, perk);
-    call(b::PERK_UPDATE, perk);
+    call(sites::PERK_PREPARE, perk);
+    call(sites::PERK_UPDATE, perk);
     let members = match pointers(holder, 0xa0, 64) {
         Ok(members) => members,
         Err(reason) => {
@@ -208,7 +154,7 @@ unsafe extern "C" fn refresh_perks(perk: usize) {
     for member in members {
         let member_perk = q(facets(member), 0x70);
         if member_perk != 0 {
-            call(b::PERK_MEMBER, member_perk);
+            call(sites::PERK_MEMBER, member_perk);
         }
     }
 }
@@ -217,7 +163,6 @@ unsafe extern "C" fn refresh_perks(perk: usize) {
 // zeroes entries 21 onward. Use the game's allocator before copying.
 type ExportRoster = unsafe extern "C" fn(usize, usize, usize);
 static ROSTER_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
-const ROSTER_DISPLACED: usize = 16;
 
 unsafe extern "C" fn export_roster(service: usize, e: usize, out: usize) {
     let original = || unsafe {
@@ -243,7 +188,7 @@ unsafe extern "C" fn export_roster(service: usize, e: usize, out: usize) {
         Ok(members) => members,
         Err(reason) => {
             log(LOG_ERROR, &format!("UI roster export refused: {reason}"));
-            std::mem::transmute::<usize, Pair>(address(b::RESIZE_ROSTER))(out, 0);
+            std::mem::transmute::<usize, Pair>(address(sites::RESIZE_ROSTER))(out, 0);
             return;
         }
     };
@@ -251,11 +196,10 @@ unsafe extern "C" fn export_roster(service: usize, e: usize, out: usize) {
         original();
         return;
     }
-    std::mem::transmute::<usize, Pair>(address(b::RESIZE_ROSTER))(out, members.len());
+    std::mem::transmute::<usize, Pair>(address(sites::RESIZE_ROSTER))(out, members.len());
     std::ptr::copy_nonoverlapping(members.as_ptr(), q(out, 0) as *mut usize, members.len());
 }
 static HOVER_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
-const HOVER_DISPLACED: usize = 16;
 
 // SquadHoverIcon::update, also called by PlayerSquadHoverIcon::update.
 // Its root widget is +140; virtual +48 is the stock visibility setter used
@@ -292,7 +236,6 @@ extern "system" {
 #[link(name = "kernel32")]
 extern "system" {
     fn GetCurrentProcessId() -> u32;
-    fn GetModuleFileNameW(module: usize, path: *mut u16, size: u32) -> u32;
 }
 
 fn address(id: usize) -> usize {
@@ -479,7 +422,7 @@ unsafe fn member(e: usize, pool: usize) -> Result<Member, &'static str> {
     let f = facets(e);
     let (ai, select, team) = (q(f, 0x28), q(f, 0x50), q(f, 0x20));
     if ai == 0
-        || q(ai, 0) != address(b::HUMAN_AI)
+        || q(ai, 0) != address(sites::HUMAN_AI)
         || select == 0
         || byte(select, 0x18) == 0
         || byte(ai, 0x130) != 0
@@ -510,7 +453,7 @@ unsafe fn member(e: usize, pool: usize) -> Result<Member, &'static str> {
         let gun = std::mem::transmute::<usize, unsafe extern "C" fn(usize, usize) -> usize>(
             method(gunner, 0xe0),
         )(gunner, index);
-        if gun == 0 || q(gun, 0) != address(b::GUN) || junction(q(gun, 0x58)) != pool {
+        if gun == 0 || q(gun, 0) != address(sites::GUN) || junction(q(gun, 0x58)) != pool {
             return Err("unsupported weapon or ammunition ownership");
         }
         let spec = q(gun, 0x40);
@@ -595,7 +538,7 @@ unsafe fn plan_for(
             return Err("missing source squad");
         }
         let ai = q(facets(e), 0x28);
-        if ai == 0 || q(ai, 0) != address(b::SQUAD_AI) || byte(ai, 0x130) != 0 {
+        if ai == 0 || q(ai, 0) != address(sites::SQUAD_AI) || byte(ai, 0x130) != 0 {
             return Err("unsupported source squad AI");
         }
         let holder = get(ai, offsets().roster);
@@ -759,12 +702,12 @@ unsafe extern "C" fn wire(holder: usize, e: usize) {
         let gun = std::mem::transmute::<usize, unsafe extern "C" fn(usize, usize) -> usize>(
             method(gunner, 0xe0),
         )(gunner, n);
-        pair(b::BIND, gun + 0x58, pool);
+        pair(sites::BIND, gun + 0x58, pool);
     }
-    pair(b::BIND, member_ai + 0x148, pool);
+    pair(sites::BIND, member_ai + 0x148, pool);
     // The stock reallocation helper is used only when the vector is full.
     let append: unsafe extern "C" fn(usize, usize, *const usize) =
-        std::mem::transmute(address(b::APPEND));
+        std::mem::transmute(address(sites::APPEND));
     let end = q(ai, 0x1f0);
     if end < q(ai, 0x1f8) {
         *(end as *mut usize) = gunner;
@@ -825,7 +768,7 @@ unsafe fn populate(holder: usize, p: &Plan) -> Result<(), &'static str> {
         return Err("constructor did not produce the requested squad type");
     }
     let ai = q(facets(e), 0x28);
-    if ai == 0 || q(ai, 0) != address(b::SQUAD_AI) {
+    if ai == 0 || q(ai, 0) != address(sites::SQUAD_AI) {
         return Err("destination has no squad AI");
     }
     let pool = junction(q(ai, 0x148));
@@ -881,8 +824,8 @@ unsafe fn transfer_into(holder: usize, p: &Plan, existing: &[Member]) -> Result<
     if combined.len() > ammo_limit() {
         return Err("restored ammunition types exceed max_weapon_types or installed menu capacity");
     }
-    pair(b::RESERVE, holder + 0xa0, total);
-    pair(b::RESERVE, ai + 0x1e8, total);
+    pair(sites::RESERVE, holder + 0xa0, total);
+    pair(sites::RESERVE, ai + 0x1e8, total);
     let insert: unsafe extern "C" fn(usize, usize, u32, u32, u32) =
         std::mem::transmute(method(pool, 0x30));
     // Allocate missing records with zero counts. Commit counts only after all
@@ -928,9 +871,9 @@ unsafe fn transfer_into(holder: usize, p: &Plan, existing: &[Member]) -> Result<
         let old_slots: Vec<_> = source.slots.iter().map(|s| s.ammo).collect();
         let moved = source.members.iter().filter(|m| m.picked).count() as u32;
         for m in source.members.iter().filter(|m| m.picked) {
-            pair(b::REMOVE_GUNNER, source.ai, m.gunner);
-            pair(b::REMOVE, source.holder, m.entity);
-            pair(b::ADD, holder, m.entity);
+            pair(sites::REMOVE_GUNNER, source.ai, m.gunner);
+            pair(sites::REMOVE, source.holder, m.entity);
+            pair(sites::ADD, holder, m.entity);
             let pins = remap_pins(&old_slots, &new_slots, m.pins.0, m.pins.1);
             *((m.select + 0x1e) as *mut u8) = pins.0;
             *((m.select + 0x1f) as *mut u8) = pins.1;
@@ -1016,7 +959,7 @@ unsafe extern "C" fn create_members(holder: usize, owned_names: usize) {
         CREATION_ABORTED.with(|v| v.set(true));
         log(LOG_ERROR, "regroup constructor was not claimed or was repeated; suppressed default soldier creation");
         // This by-value vector must be consumed even when the request aborts.
-        call(b::FREE_STRINGS, owned_names);
+        call(sites::FREE_STRINGS, owned_names);
         return;
     }
     DESTINATION.with(|v| v.set(entity(holder)));
@@ -1029,7 +972,7 @@ unsafe extern "C" fn create_members(holder: usize, owned_names: usize) {
     }
     // Stock takes this MSVC vector by value and destroys it. Do the same even
     // though the default member names are deliberately unused.
-    call(b::FREE_STRINGS, owned_names);
+    call(sites::FREE_STRINGS, owned_names);
 }
 
 unsafe fn regroup(manager: usize, p: Plan) -> usize {
@@ -1055,7 +998,7 @@ unsafe fn regroup(manager: usize, p: Plan) -> usize {
         usize,
         u32,
     ) -> usize;
-    let spawn: Spawn = std::mem::transmute(address(b::SPAWN));
+    let spawn: Spawn = std::mem::transmute(address(sites::SPAWN));
     DESTINATION.with(|v| v.set(0));
     PREPARED_HOLDER.with(|v| v.set(0));
     CONSTRUCTED.with(|v| v.set(false));
@@ -1090,10 +1033,10 @@ unsafe fn regroup(manager: usize, p: Plan) -> usize {
             let ai = q(facets(result), 0x28);
             // Cleanup is only valid for an empty squad. Never delete a populated
             // result or one holding transferred soldiers after a partial failure.
-            if ai != 0 && q(ai, 0) == address(b::SQUAD_AI) {
+            if ai != 0 && q(ai, 0) == address(sites::SQUAD_AI) {
                 let holder = get(ai, offsets().roster);
                 if holder != 0 && pointers(holder, 0xa0, 64).is_ok_and(|m| m.is_empty()) {
-                    call(b::CLEANUP, ai);
+                    call(sites::CLEANUP, ai);
                     log(
                         LOG_DEBUG,
                         "requested native cleanup of empty failed destination",
@@ -1107,7 +1050,7 @@ unsafe fn regroup(manager: usize, p: Plan) -> usize {
     }
     std::mem::transmute::<usize, Unary>(method(manager, 0x98))(manager);
     for source in &p.sources {
-        call(b::CLEANUP, source.ai);
+        call(sites::CLEANUP, source.ai);
     }
     std::mem::transmute::<usize, Pair>(method(manager, 0x60))(manager, result);
     let actual = q(facets(result), 0x28);
@@ -1305,47 +1248,19 @@ unsafe extern "C" fn input_dispatch(
     BUSY.store(false, Ordering::Release);
 }
 
-unsafe fn validated_build(
-    api: &Api,
-    name: &[u8],
-    builds: &'static [b::Build],
-) -> Result<(usize, &'static b::Build), &'static str> {
-    let base = (api.module_base)(name.as_ptr().cast()) as usize;
-    if base == 0 {
-        return Err("required game module is not loaded");
-    }
-    let mut path = vec![0u16; 32768];
-    let size = GetModuleFileNameW(base, path.as_mut_ptr(), path.len() as u32) as usize;
-    if size == 0 || size >= path.len() {
-        return Err("cannot resolve module path");
-    }
-    use std::os::windows::ffi::OsStringExt;
-    let path = std::ffi::OsString::from_wide(&path[..size]);
-    let bytes = std::fs::read(path).map_err(|_| "cannot validate module on disk")?;
-    let mut hasher = defiance_core::sha256::Sha256::new();
-    hasher.update(&bytes);
-    let hash = defiance_core::sha256::hex(&hasher.finish());
-    let build = builds
-        .iter()
-        .find(|b| b.sha == hash)
-        .ok_or("unsupported module build")?;
-    let module_size = (api.module_size)(base as *mut _);
-    for &(rva, expected) in build.checks {
-        if rva + expected.len() > module_size
-            || std::slice::from_raw_parts((base + rva) as *const u8, expected.len()) != expected
-        {
-            return Err("native entry validation failed");
+/// The loaded logic.dll and game.dll, as images.
+unsafe fn modules(api: &Api) -> Result<(Image<'static>, Image<'static>), String> {
+    let image = |name: &[u8]| -> Result<Image<'static>, String> {
+        let base = unsafe { (api.module_base)(name.as_ptr().cast()) } as usize;
+        if base == 0 {
+            return Err(format!(
+                "{} is not loaded",
+                String::from_utf8_lossy(&name[..name.len() - 1])
+            ));
         }
-    }
-    Ok((base, build))
-}
-
-fn checked_bytes(build: &b::Build, rva: usize, length: usize) -> Option<&'static [u8]> {
-    build
-        .checks
-        .iter()
-        .find(|(at, bytes)| *at == rva && bytes.len() >= length)
-        .map(|(_, bytes)| &bytes[..length])
+        Ok(unsafe { Image::loaded(base as *const u8, (api.module_size)(base as *mut _)) })
+    };
+    Ok((image(b"logic.dll\0")?, image(b"game.dll\0")?))
 }
 
 pub unsafe fn patch_contract(api: *const Api) -> *const PatchContractV1 {
@@ -1355,68 +1270,53 @@ pub unsafe fn patch_contract(api: *const Api) -> *const PatchContractV1 {
     if api_ref.abi_version != ABI_VERSION || api_ref.reserved != 0 {
         return core::ptr::null();
     }
-    let (_, logic) = match unsafe { validated_build(api_ref, b"logic.dll\0", b::BUILDS) } {
-        Ok(selected) => selected,
-        Err(_) => return core::ptr::null(),
-    };
-    let (_, game) = match unsafe { validated_build(api_ref, b"game.dll\0", b::GAME_BUILDS) } {
-        Ok(selected) => selected,
-        Err(_) => return core::ptr::null(),
-    };
-    if offsets_for(logic.sha, game.sha).is_none() {
+    let Ok((logic, game)) = (unsafe { modules(api_ref) }) else {
         return core::ptr::null();
-    }
+    };
+    let Ok(sites) = sites::sites(&logic, &game) else {
+        return core::ptr::null();
+    };
+    let patch = |module, image: &Image, rva: usize, kind, length: usize| {
+        defiance_feature_sdk::contract::Patch {
+            module,
+            rva,
+            kind,
+            before: image.image[rva..rva + length].to_vec(),
+            after: None,
+        }
+    };
     let mut patches = Vec::with_capacity(10);
     for index in [
-        b::SPAWN_FALLBACK_CALL,
-        b::CREATE_CALL,
-        b::WIRE_CALL,
-        b::TEMPLATES_CALL,
+        sites::SPAWN_FALLBACK_CALL,
+        sites::CREATE_CALL,
+        sites::WIRE_CALL,
+        sites::TEMPLATES_CALL,
     ] {
-        let rva = logic.rvas[index];
-        let Some(before) = checked_bytes(logic, rva, 5) else {
-            return core::ptr::null();
-        };
-        patches.push(defiance_feature_sdk::contract::Patch {
-            module: c"logic.dll",
-            rva,
-            kind: PATCH_KIND_CALL,
-            before: before.to_vec(),
-            after: None,
-        });
+        patches.push(patch(
+            c"logic.dll",
+            &logic,
+            sites.logic[index],
+            PATCH_KIND_CALL,
+            5,
+        ));
     }
-    for (rva, length) in [
-        (game.rvas[0], INPUT_DISPLACED),
-        (game.rvas[4], HOVER_DISPLACED),
-    ] {
-        let Some(before) = checked_bytes(game, rva, length) else {
-            return core::ptr::null();
-        };
-        patches.push(defiance_feature_sdk::contract::Patch {
-            module: c"game.dll",
-            rva,
-            kind: PATCH_KIND_ENTRY,
-            before: before.to_vec(),
-            after: None,
-        });
+    for (index, length) in sites::GAME_ENTRIES {
+        patches.push(patch(
+            c"game.dll",
+            &game,
+            sites.game[index],
+            PATCH_KIND_ENTRY,
+            length,
+        ));
     }
-    for (index, length) in [
-        (b::PERK_REFRESH, PERK_DISPLACED),
-        (b::EXPORT_ROSTER, ROSTER_DISPLACED),
-        (b::CLEANUP, CLEANUP_DISPLACED),
-        (b::SQUAD_UPDATE, UPDATE_DISPLACED),
-    ] {
-        let rva = logic.rvas[index];
-        let Some(before) = checked_bytes(logic, rva, length) else {
-            return core::ptr::null();
-        };
-        patches.push(defiance_feature_sdk::contract::Patch {
-            module: c"logic.dll",
-            rva,
-            kind: PATCH_KIND_ENTRY,
-            before: before.to_vec(),
-            after: None,
-        });
+    for (index, length) in sites::LOGIC_ENTRIES {
+        patches.push(patch(
+            c"logic.dll",
+            &logic,
+            sites.logic[index],
+            PATCH_KIND_ENTRY,
+            length,
+        ));
     }
     unsafe { defiance_feature_sdk::contract::build(api, patches) }
 }
@@ -1469,119 +1369,128 @@ pub unsafe extern "C" fn init(api: *const Api) -> i32 {
         log(LOG_ERROR, &reason);
         return 1;
     }
-    let (base, build) = match validated_build(api, b"logic.dll\0", b::BUILDS) {
-        Ok(v) => v,
-        Err(reason) => {
-            log(LOG_ERROR, &format!("logic.dll: {reason}"));
+    let resolved = modules(api).and_then(|(logic, game)| {
+        sites::sites(&logic, &game).map(|sites| (logic.base, game.base, sites))
+    });
+    let (base, game_base, sites) = match resolved {
+        Ok(resolved) => resolved,
+        Err(e) => {
+            log(
+                LOG_WARN,
+                &format!("regroup: not a supported build ({e}); no writes made"),
+            );
             return 1;
         }
     };
-    let (game_base, game_build) = match validated_build(api, b"game.dll\0", b::GAME_BUILDS) {
-        Ok(v) => v,
-        Err(reason) => {
-            log(LOG_ERROR, &format!("game.dll: {reason}"));
-            return 1;
-        }
-    };
-    // The 2026-09 builds moved the roster getter, the world manager getter and
-    // two input fields; the two modules are selected together, as a pair.
-    let Some(offsets) = offsets_for(build.sha, game_build.sha) else {
-        log(
-            LOG_ERROR,
-            "logic.dll and game.dll are from different builds; no hooks installed",
-        );
-        return 1;
-    };
-    let _ = OFFSETS.set(offsets);
-    if ADDRESSES
-        .set(build.rvas.iter().map(|rva| base + rva).collect())
-        .is_err()
+    if OFFSETS.set(sites.offsets).is_err()
+        || ADDRESSES
+            .set(sites.logic.iter().map(|rva| base + rva).collect())
+            .is_err()
     {
         return 1;
     }
+    // Every hook goes in or none stays: a refusal removes the ones before it.
+    let mut installed: Vec<usize> = Vec::with_capacity(10);
+    let refused = |installed: &[usize], what: &str| {
+        for &target in installed.iter().rev() {
+            (api.unhook)(target as *mut _);
+        }
+        log(
+            LOG_WARN,
+            &format!("regroup: the loader refused the {what} hook; no hooks left installed"),
+        );
+        1
+    };
     for (index, detour, original) in [
         (
-            b::SPAWN_FALLBACK_CALL,
+            sites::SPAWN_FALLBACK_CALL,
             keep_requested_species as *const () as usize,
             &SPAWN_FALLBACK,
         ),
         (
-            b::CREATE_CALL,
+            sites::CREATE_CALL,
             create_members as *const () as usize,
             &CREATE,
         ),
-        (b::WIRE_CALL, wire as *const () as usize, &WIRE),
+        (sites::WIRE_CALL, wire as *const () as usize, &WIRE),
         (
-            b::TEMPLATES_CALL,
+            sites::TEMPLATES_CALL,
             prepare_templates as *const () as usize,
             &TEMPLATES,
         ),
     ] {
         // The loader stores the original into this atomic *before* it publishes
         // the branch, so a detour that fires immediately never sees a zero.
-        if (api.hook_call)(
-            address(index) as *mut _,
-            detour as *mut _,
-            original.as_ptr().cast(),
-        ) != 0
-        {
-            return 1;
+        let target = address(index);
+        if (api.hook_call)(target as *mut _, detour as *mut _, original.as_ptr().cast()) != 0 {
+            return refused(&installed, "call-site");
         }
-    }
-    if (api.hook_exact)(
-        (game_base + game_build.rvas[0]) as *mut _,
-        input_dispatch as *mut _,
-        INPUT_DISPLACED,
-        INPUT.as_ptr().cast(),
-    ) != 0
-    {
-        return 1;
-    }
-    if (api.hook_exact)(
-        (game_base + game_build.rvas[4]) as *mut _,
-        update_hover as *mut _,
-        HOVER_DISPLACED,
-        HOVER_ORIGINAL.as_ptr().cast(),
-    ) != 0
-    {
-        return 1;
+        installed.push(target);
     }
     for (index, detour, span, original) in [
         (
-            b::PERK_REFRESH,
+            sites::INPUT,
+            input_dispatch as *const () as usize,
+            INPUT_DISPLACED,
+            &INPUT,
+        ),
+        (
+            sites::HOVER,
+            update_hover as *const () as usize,
+            HOVER_DISPLACED,
+            &HOVER_ORIGINAL,
+        ),
+    ] {
+        let target = game_base + sites.game[index];
+        if (api.hook_exact)(
+            target as *mut _,
+            detour as *mut _,
+            span,
+            original.as_ptr().cast(),
+        ) != 0
+        {
+            return refused(&installed, "game.dll entry");
+        }
+        installed.push(target);
+    }
+    for (index, detour, span, original) in [
+        (
+            sites::PERK_REFRESH,
             refresh_perks as *const () as usize,
             PERK_DISPLACED,
             &PERK_ORIGINAL,
         ),
         (
-            b::EXPORT_ROSTER,
+            sites::EXPORT_ROSTER,
             export_roster as *const () as usize,
             ROSTER_DISPLACED,
             &ROSTER_ORIGINAL,
         ),
         (
-            b::CLEANUP,
+            sites::CLEANUP,
             cleanup_empty as *const () as usize,
             CLEANUP_DISPLACED,
             &CLEANUP_ORIGINAL,
         ),
         (
-            b::SQUAD_UPDATE,
+            sites::SQUAD_UPDATE,
             update_squad as *const () as usize,
             UPDATE_DISPLACED,
             &UPDATE_ORIGINAL,
         ),
     ] {
         // As above: the loader fills the atomic before publication.
+        let target = address(index);
         if (api.hook_exact)(
-            address(index) as *mut _,
+            target as *mut _,
             detour as *mut _,
             span,
             original.as_ptr().cast(),
         ) != 0
         {
-            return 1;
+            return refused(&installed, "logic.dll entry");
         }
+        installed.push(target);
     }
     log(
         LOG_INFO,
@@ -1595,62 +1504,6 @@ mod tests {
     use super::*;
     static HISTORY_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    /// Every generated build belongs to exactly one pair, and a logic.dll is
-    /// never accepted with another build's game.dll.
-    #[test]
-    fn offsets_are_chosen_by_the_module_pair() {
-        for build in b::BUILDS {
-            assert_eq!(
-                PAIRS.iter().filter(|p| p.0 == build.sha).count(),
-                1,
-                "logic {}",
-                build.sha
-            );
-        }
-        for build in b::GAME_BUILDS {
-            assert_eq!(
-                PAIRS.iter().filter(|p| p.1 == build.sha).count(),
-                1,
-                "game {}",
-                build.sha
-            );
-        }
-        for &(logic, game, offsets) in PAIRS {
-            assert_eq!(offsets_for(logic, game), Some(offsets));
-            for &(_, other, _) in PAIRS.iter().filter(|p| p.1 != game) {
-                assert_eq!(offsets_for(logic, other), None, "{logic} with {other}");
-            }
-        }
-    }
-    #[test]
-    fn preservation_hook_spans_are_copyable_in_both_builds() {
-        for build in b::GAME_BUILDS {
-            let bytes = build
-                .checks
-                .iter()
-                .find(|(at, _)| *at == build.rvas[4])
-                .unwrap()
-                .1;
-            defiance_core::decode::validate_copy(&bytes[..HOVER_DISPLACED]).unwrap();
-        }
-        for build in b::BUILDS {
-            for (index, span) in [
-                (b::PERK_REFRESH, PERK_DISPLACED),
-                (b::EXPORT_ROSTER, ROSTER_DISPLACED),
-                (b::CLEANUP, CLEANUP_DISPLACED),
-                (b::SQUAD_UPDATE, UPDATE_DISPLACED),
-            ] {
-                let bytes = build
-                    .checks
-                    .iter()
-                    .find(|(at, _)| *at == build.rvas[index])
-                    .unwrap()
-                    .1;
-                assert!(span >= 14);
-                defiance_core::decode::validate_copy(&bytes[..span]).unwrap();
-            }
-        }
-    }
     #[test]
     fn empty_original_parks_wakes_and_releases_after_last_survivor_dies() {
         let _serial = HISTORY_TEST.lock().unwrap();
@@ -1791,24 +1644,6 @@ mod tests {
             assert!(input_manager(input).is_err());
             set(input, 0x860, 0);
             assert!(input_manager(input).is_err());
-        }
-    }
-    #[test]
-    fn input_entry_supports_an_absolute_jump_in_every_supported_build() {
-        assert!(INPUT_DISPLACED >= 14);
-        for build in b::GAME_BUILDS {
-            let (_, bytes) = build
-                .checks
-                .iter()
-                .find(|(rva, _)| *rva == build.rvas[0])
-                .unwrap();
-            // The runtime fingerprint covers the entire displaced span.
-            assert!(bytes.len() >= INPUT_DISPLACED);
-            assert_eq!(
-                defiance_core::decode::displaced(bytes, 14).unwrap(),
-                INPUT_DISPLACED
-            );
-            defiance_core::decode::validate_copy(&bytes[..INPUT_DISPLACED]).unwrap();
         }
     }
     thread_local! {
@@ -1977,20 +1812,20 @@ mod tests {
         };
         SELECTION.get_or_init(|| &MOCK_SELECTION);
         ADDRESSES.get_or_init(|| {
-            let mut v = vec![0; b::BUILDS[0].rvas.len()];
+            let mut v = vec![0; sites::COUNT];
             for (i, f) in [
-                (b::SPAWN, mock_spawn as *const () as usize),
-                (b::PERK_PREPARE, perk_prepare as *const () as usize),
-                (b::PERK_UPDATE, perk_update as *const () as usize),
-                (b::PERK_MEMBER, perk_member as *const () as usize),
-                (b::RESIZE_ROSTER, resize_roster as *const () as usize),
-                (b::RESERVE, reserve as *const () as usize),
-                (b::BIND, bind as *const () as usize),
-                (b::WEAK_BIND, weak_bind as *const () as usize),
-                (b::REMOVE_GUNNER, remove_gunner as *const () as usize),
-                (b::REMOVE, remove as *const () as usize),
-                (b::ADD, add as *const () as usize),
-                (b::FREE_STRINGS, free_strings as *const () as usize),
+                (sites::SPAWN, mock_spawn as *const () as usize),
+                (sites::PERK_PREPARE, perk_prepare as *const () as usize),
+                (sites::PERK_UPDATE, perk_update as *const () as usize),
+                (sites::PERK_MEMBER, perk_member as *const () as usize),
+                (sites::RESIZE_ROSTER, resize_roster as *const () as usize),
+                (sites::RESERVE, reserve as *const () as usize),
+                (sites::BIND, bind as *const () as usize),
+                (sites::WEAK_BIND, weak_bind as *const () as usize),
+                (sites::REMOVE_GUNNER, remove_gunner as *const () as usize),
+                (sites::REMOVE, remove as *const () as usize),
+                (sites::ADD, add as *const () as usize),
+                (sites::FREE_STRINGS, free_strings as *const () as usize),
             ] {
                 v[i] = f;
             }
@@ -1999,7 +1834,7 @@ mod tests {
             }
             let mut table = Box::new([0usize; 128]);
             table[0x3b8 / 8] = holder as *const () as usize;
-            v[b::SQUAD_AI] = Box::into_raw(table) as usize;
+            v[sites::SQUAD_AI] = Box::into_raw(table) as usize;
             v
         });
         EVENTS.with(|v| v.borrow_mut().clear());
@@ -2027,7 +1862,7 @@ mod tests {
     }
     unsafe fn source(world: usize, species: usize, picks: &[bool], base_ammo: usize) -> Source {
         let ai = alloc(0x300);
-        set(ai, 0, address(b::SQUAD_AI));
+        set(ai, 0, address(sites::SQUAD_AI));
         let (e, select) = entity_with(ai, world);
         let holder = alloc(0x160);
         bind(ai + 0x10, e);

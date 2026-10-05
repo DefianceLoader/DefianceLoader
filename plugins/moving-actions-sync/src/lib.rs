@@ -1,21 +1,15 @@
 //! Complete a weapon model handoff when a frame skips its timer window.
 use core::ffi::{c_char, c_void};
-use defiance_api::{Api, Plugin, ABI_VERSION, LOG_ERROR, LOG_INFO};
+use defiance_api::{Api, Plugin, ABI_VERSION, LOG_ERROR, LOG_INFO, LOG_WARN};
+use defiance_core::sites::Image;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-// Generated signatures bind this companion to verified 2026 Steam/GOG builds.
 mod sites;
-use sites::BUILDS;
 static ORIGINAL: AtomicUsize = AtomicUsize::new(0);
 static LOGGER: AtomicUsize = AtomicUsize::new(0);
 static REPORTS: AtomicUsize = AtomicUsize::new(0);
 type Step = unsafe extern "C" fn(*mut u8, f32) -> bool;
 type Log = unsafe extern "C" fn(u32, *const c_char);
-
-#[link(name = "kernel32")]
-extern "system" {
-    fn GetModuleFileNameW(module: *mut c_void, path: *mut u16, capacity: u32) -> u32;
-}
 
 unsafe fn read<T: Copy>(base: *const u8, offset: usize) -> T {
     base.add(offset).cast::<T>().read_unaligned()
@@ -144,51 +138,36 @@ unsafe extern "C" fn step(gunner: *mut u8, dt: f32) -> bool {
     done
 }
 
-unsafe fn install(api: &Api) -> Result<(), String> {
+enum InstallError {
+    /// A site did not resolve: this build is not one the plugin supports.
+    UnsupportedBuild(String),
+    Failed(String),
+}
+
+unsafe fn install(api: &Api) -> Result<(), InstallError> {
     let base = (api.module_base)(c"logic.dll".as_ptr());
     if base.is_null() {
-        return Err("logic.dll missing".into());
+        return Err(InstallError::Failed("logic.dll missing".into()));
     }
     let size = (api.module_size)(base);
-    let mut path = [0u16; 32768];
-    let length = GetModuleFileNameW(base, path.as_mut_ptr(), path.len() as u32) as usize;
-    if length == 0 || length >= path.len() {
-        return Err("logic.dll path unavailable".into());
-    }
-    use std::os::windows::ffi::OsStringExt;
-    let path = std::path::PathBuf::from(std::ffi::OsString::from_wide(&path[..length]));
-    let digest = defiance_core::sha256::file(&path).map_err(|e| e.to_string())?;
-    let build = BUILDS
-        .iter()
-        .find(|build| build.sha == digest)
-        .ok_or_else(|| {
-            "weapon sync supports only verified September 2026 Steam/GOG builds".to_string()
-        })?;
-    if build.step + build.step_bytes.len() > size || build.helper + build.helper_bytes.len() > size
-    {
-        return Err("logic.dll image is too small".into());
-    }
     let bytes = base.cast::<u8>();
-    if core::slice::from_raw_parts(bytes.add(build.step), build.step_bytes.len())
-        != build.step_bytes
-        || core::slice::from_raw_parts(bytes.add(build.helper), build.helper_bytes.len())
-            != build.helper_bytes
-    {
-        return Err("weapon-change helper or handoff helper differs".into());
-    }
+    let step_rva =
+        sites::step(&Image::loaded(bytes, size)).map_err(InstallError::UnsupportedBuild)?;
     REPORTS.store(0, Ordering::Relaxed);
     let mut original = core::ptr::null_mut();
     if (api.hook)(
-        bytes.add(build.step).cast(),
+        bytes.add(step_rva).cast(),
         step as Step as *mut c_void,
         &mut original,
     ) != 0
         || original.is_null()
     {
-        return Err("weapon-change helper hook refused".into());
+        return Err(InstallError::Failed(
+            "weapon-change helper hook refused".into(),
+        ));
     }
     ORIGINAL.store(original as usize, Ordering::Release);
-    message(LOG_INFO, &format!("moving weapon sync installed ({}): completed switches check the displayed weapon; missed handoffs use the stock zero-time handoff branch", build.name));
+    message(LOG_INFO, "moving weapon sync installed: completed switches check the displayed weapon; missed handoffs use the stock zero-time handoff branch");
     Ok(())
 }
 
@@ -200,7 +179,14 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
     LOGGER.store(api.log as usize, Ordering::Release);
     match install(api) {
         Ok(()) => 0,
-        Err(error) => {
+        Err(InstallError::UnsupportedBuild(reason)) => {
+            message(
+                LOG_WARN,
+                &format!("moving weapon sync: not a supported build ({reason}); no writes made"),
+            );
+            0
+        }
+        Err(InstallError::Failed(error)) => {
             message(LOG_ERROR, &format!("moving weapon sync refused: {error}"));
             1
         }

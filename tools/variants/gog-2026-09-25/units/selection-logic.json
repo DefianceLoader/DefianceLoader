@@ -4,7 +4,7 @@
  "plugin": "selection",
  "module": "logic.dll",
  "source_sha256": "1216d627c7288c7db6940168363be582232ed4d3cb860b8b8c8d7489652eca74",
- "unit_bytes": 830,
+ "unit_bytes": 1054,
  "code_offset": 32,
  "cells": [
   {
@@ -24,7 +24,7 @@
    "rva": 1990432,
    "before": "885130c3cc",
    "tail": "",
-   "entry": 646,
+   "entry": 876,
    "label": "building_select"
   },
   {
@@ -32,7 +32,7 @@
    "rva": 2167753,
    "before": "450fb6742420",
    "tail": "90",
-   "entry": 656,
+   "entry": 880,
    "label": "dim_pose"
   },
   {
@@ -40,7 +40,7 @@
    "rva": 2168608,
    "before": "488b4588807820000f8499000000",
    "tail": "909090909090909090",
-   "entry": 676,
+   "entry": 900,
    "label": "dim_mode"
   },
   {
@@ -48,7 +48,7 @@
    "rva": 2168672,
    "before": "488b0e488b01498d5720",
    "tail": "9090909090",
-   "entry": 758,
+   "entry": 982,
    "label": "dim_part"
   },
   {
@@ -56,7 +56,7 @@
    "rva": 4367352,
    "before": "498b06498bce",
    "tail": "90",
-   "entry": 584,
+   "entry": 814,
    "label": "region_icon_gate"
   },
   {
@@ -73,6 +73,15 @@
    "stock": 0,
    "entry": 448,
    "label": "region_individual"
+  },
+  {
+   "kind": "call",
+   "rva": 4370784,
+   "before": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff5050",
+   "tail": "909090909090909090909090909090909090909090909090",
+   "stock": 0,
+   "entry": 726,
+   "label": "marquee_select"
   },
   {
    "kind": "call",
@@ -139,52 +148,62 @@
  "fixups": [
   {
    "kind": "rel32",
-   "offset": 512,
+   "offset": 545,
    "target": 4367056
   },
   {
    "kind": "rel32",
-   "offset": 572,
+   "offset": 662,
    "target": 4367056
   },
   {
    "kind": "rel32",
-   "offset": 637,
+   "offset": 757,
+   "target": 4370304
+  },
+  {
+   "kind": "rel32",
+   "offset": 802,
+   "target": 4367056
+  },
+  {
+   "kind": "rel32",
+   "offset": 867,
    "target": 4367358
   },
   {
    "kind": "rel32",
-   "offset": 642,
+   "offset": 872,
    "target": 4367523
   },
   {
    "kind": "rel32",
-   "offset": 672,
+   "offset": 896,
    "target": 2167759
   },
   {
    "kind": "rel32",
-   "offset": 749,
+   "offset": 973,
    "target": 2168622
   },
   {
    "kind": "rel32",
-   "offset": 754,
+   "offset": 978,
    "target": 2168775
   },
   {
    "kind": "rel32",
-   "offset": 806,
+   "offset": 1030,
    "target": 2168682
   },
   {
    "kind": "rel32",
-   "offset": 821,
+   "offset": 1045,
    "target": 2168682
   },
   {
    "kind": "rel32",
-   "offset": 826,
+   "offset": 1050,
    "target": 2168685
   },
   {
@@ -308,6 +327,13 @@
    "site_offset": 0
   },
   {
+   "site_name": "marquee_select",
+   "site_start": 4370784,
+   "site_group": 4370560,
+   "site_pattern": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff50504883c308483b5dff",
+   "site_offset": 0
+  },
+  {
    "site_name": "dim_pose",
    "site_start": 2167753,
    "site_group": 2164976,
@@ -368,25 +394,29 @@
   "is_done": 430,
   "is_end": 436,
   "region_individual": 448,
-  "marquee_vanilla": 502,
-  "marquee_soldiers": 518,
-  "marquee_reject": 555,
-  "marquee_done": 557,
-  "native_eligible": 567,
-  "region_native_return": 576,
-  "region_reject": 581,
-  "region_icon_gate": 584,
-  "region_icon_stock": 630,
-  "region_position_only": 641,
-  "building_select": 646,
-  "dim_pose": 656,
-  "dim_pose_done": 671,
-  "dim_mode": 676,
-  "dim_mode_scan": 726,
-  "dim_mode_parts": 748,
-  "dim_mode_skip": 753,
-  "dim_part": 758,
-  "dim_part_stock": 810,
-  "dim_part_next": 825
+  "marquee_squads": 510,
+  "marquee_member": 638,
+  "marquee_soldiers": 677,
+  "marquee_reject": 714,
+  "marquee_done": 716,
+  "marquee_select": 726,
+  "marquee_select_stock": 763,
+  "marquee_select_done": 792,
+  "native_eligible": 797,
+  "region_native_return": 806,
+  "region_reject": 811,
+  "region_icon_gate": 814,
+  "region_icon_stock": 860,
+  "region_position_only": 871,
+  "building_select": 876,
+  "dim_pose": 880,
+  "dim_pose_done": 895,
+  "dim_mode": 900,
+  "dim_mode_scan": 950,
+  "dim_mode_parts": 972,
+  "dim_mode_skip": 977,
+  "dim_part": 982,
+  "dim_part_stock": 1034,
+  "dim_part_next": 1049
  }
 }

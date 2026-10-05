@@ -1,13 +1,14 @@
 //! Temporary main-view and shadow timing probe (feature `render-profile`).
 //!
-//! The probe is pinned to the Steam 2026-09-25 `world2.dll` layout. It records
-//! paired main-view/shadow samples. Formatting runs after a measured pass,
-//! only when a report window fills.
+//! The probe finds its `world2.dll` sites by signature
+//! ([`crate::sites::render`]) and hooks all of them or none. It records paired
+//! main-view/shadow samples. Formatting runs after a measured pass, only when
+//! a report window fills.
 
 use core::ffi::{c_char, c_void};
 #[cfg(feature = "render-profile-toggle")]
-use core::sync::atomic::AtomicBool;
-use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8};
+use core::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(feature = "shadow-cull-profile")]
 use std::cell::Cell;
 use std::cell::RefCell;
@@ -16,19 +17,11 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
 
-use defiance_api::{Api, LOG_INFO, LOG_WARN};
+use defiance_api::{Api, LOG_ERROR, LOG_INFO, LOG_WARN};
+use defiance_core::sites::Image;
 
-const GAME_SHA: &str = "c336b5ed4a367628a9c370457d82b1d4e75cab9007cffe5354e27688e836f98e";
-#[cfg(feature = "shadow-cull-profile")]
-const WORLD2_SHA: &str = "c39827bec79c0c4e1358259b5a2b3a6762e9270c6f5e1f25ce32d3f95b6a15c2";
-const WORLD2_IMAGE_SIZE: usize = 0x4bd000;
-const MAIN_CALL: usize = 0x18d9d9;
-const MAIN_FN: usize = 0x18f940;
-const BATCH_CALLS: [usize; 2] = [0x19031f, 0x190391];
-const BATCH_FN: usize = 0x18f0c0;
-const DIRTY_FN: usize = 0x154160;
-#[cfg(feature = "shadow-cull-profile")]
-const CULL_FN: usize = 0x1da490;
+use crate::sites::Render;
+
 const REPORT_SAMPLES: usize = 240;
 const MAX_GROUPS: usize = 64;
 #[cfg(feature = "render-profile-toggle")]
@@ -37,14 +30,6 @@ const MODE_OFF: u8 = 0;
 const MODE_CPU: u8 = 1;
 #[cfg(feature = "render-profile-toggle")]
 const MODE_GPU: u8 = 2;
-
-const INSTALLED_MAIN: u8 = 1;
-const INSTALLED_BATCH_0: u8 = 2;
-const INSTALLED_BATCH_1: u8 = 4;
-#[cfg(not(feature = "render-profile-light"))]
-const INSTALLED_DIRTY: u8 = 8;
-#[cfg(feature = "shadow-cull-profile")]
-const INSTALLED_CULL: u8 = 16;
 
 type Log = unsafe extern "C" fn(level: u32, message: *const c_char);
 type MainFn = unsafe extern "C" fn(*mut c_void) -> usize;
@@ -57,8 +42,6 @@ type DirtyFn = unsafe extern "C" fn(*mut c_void) -> usize;
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn GetCurrentThreadId() -> u32;
-    #[cfg(feature = "shadow-cull-profile")]
-    fn GetModuleFileNameW(module: *mut c_void, path: *mut u16, capacity: u32) -> u32;
 }
 #[cfg(feature = "render-profile-toggle")]
 #[link(name = "user32")]
@@ -67,7 +50,8 @@ unsafe extern "system" {
 }
 
 static LOG: OnceLock<Log> = OnceLock::new();
-static INSTALLED: AtomicU8 = AtomicU8::new(0);
+/// The `world2.dll` base and sites, set once every hook is installed.
+static HOOKED: OnceLock<(usize, Render)> = OnceLock::new();
 static MAIN_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
 static BATCH_ORIGINAL: [AtomicUsize; 2] = [AtomicUsize::new(0), AtomicUsize::new(0)];
 #[cfg(feature = "shadow-cull-profile")]
@@ -154,102 +138,80 @@ struct Report {
     samples: Vec<Sample>,
 }
 
-fn call_target(call: *const u8) -> usize {
-    let displacement = unsafe { core::ptr::read_unaligned(call.add(1).cast::<i32>()) } as isize;
-    (call as isize + 5 + displacement) as usize
-}
-
-fn exact(base: *mut u8, size: usize, rva: usize, bytes: &[u8]) -> bool {
-    rva.checked_add(bytes.len()).is_some_and(|end| end <= size)
-        && unsafe { core::slice::from_raw_parts(base.add(rva), bytes.len()) } == bytes
-}
-
-fn range(base: *mut u8, size: usize, rva: usize, length: usize) -> bool {
-    !base.is_null() && rva.checked_add(length).is_some_and(|end| end <= size)
-}
-
-#[cfg(feature = "shadow-cull-profile")]
-fn expected_world2(base: *mut u8) -> bool {
-    use std::os::windows::ffi::OsStringExt;
-    let mut path = [0u16; 32768];
-    let length =
-        unsafe { GetModuleFileNameW(base.cast(), path.as_mut_ptr(), path.len() as u32) } as usize;
-    if length == 0 || length >= path.len() {
-        return false;
-    }
-    let path = std::path::PathBuf::from(std::ffi::OsString::from_wide(&path[..length]));
-    defiance_core::sha256::file(&path).is_ok_and(|sha| sha == WORLD2_SHA)
-}
-
-fn target(api: &Api) -> Result<(*mut u8, usize), &'static str> {
-    let Some(runtime) = crate::RUNTIME.get() else {
-        return Err("Core runtime is unavailable");
-    };
-    if runtime.game.sha != GAME_SHA {
-        return Err("game.dll SHA-256 is not the verified Steam 2026-09-25 build");
-    }
+/// The loaded `world2.dll` and its sites, or why this build is unsupported.
+fn target(api: &Api) -> Result<(*mut u8, Render), String> {
     let base = unsafe { (api.module_base)(c"world2.dll".as_ptr()) } as *mut u8;
     if base.is_null() {
-        return Err("world2.dll is not loaded");
+        return Err("world2.dll is not loaded".into());
     }
     let size = unsafe { (api.module_size)(base.cast()) };
-    if size != WORLD2_IMAGE_SIZE {
-        return Err("world2.dll image size does not match the verified Steam build");
-    }
+    let image = unsafe { Image::loaded(base, size) };
+    Ok((base, crate::sites::render(&image)?))
+}
+
+/// How a hook attaches: by redirecting one call, or at a function entry.
+#[derive(Clone, Copy)]
+#[cfg_attr(
+    all(feature = "render-profile-light", not(feature = "shadow-cull-profile")),
+    allow(dead_code)
+)]
+enum Kind {
+    Call,
+    Entry,
+}
+
+/// Every hook this feature set installs, in install order.
+fn hooks(sites: &Render) -> Vec<(Kind, usize, *mut c_void, &'static AtomicUsize)> {
+    #[allow(unused_mut)]
+    let mut hooks = vec![
+        (
+            Kind::Call,
+            sites.main_call,
+            main_view as *mut c_void,
+            &MAIN_ORIGINAL,
+        ),
+        (
+            Kind::Call,
+            sites.batch_calls[0],
+            batch_0 as *mut c_void,
+            &BATCH_ORIGINAL[0],
+        ),
+        (
+            Kind::Call,
+            sites.batch_calls[1],
+            batch_1 as *mut c_void,
+            &BATCH_ORIGINAL[1],
+        ),
+    ];
     #[cfg(feature = "shadow-cull-profile")]
-    if !expected_world2(base) {
-        return Err("world2.dll SHA-256 is not the verified Steam 2026-09-25 build");
+    hooks.push((
+        Kind::Entry,
+        sites.cull_fn,
+        shadow_cull as *mut c_void,
+        &CULL_ORIGINAL,
+    ));
+    #[cfg(not(feature = "render-profile-light"))]
+    hooks.push((
+        Kind::Entry,
+        sites.dirty_fn,
+        dirty_transform as *mut c_void,
+        &DIRTY_ORIGINAL,
+    ));
+    hooks
+}
+
+/// Requests one hook; 0 when the loader accepts it.
+unsafe fn request(
+    api: &Api,
+    kind: Kind,
+    site: *mut u8,
+    detour: *mut c_void,
+    original: *mut *mut c_void,
+) -> i32 {
+    match kind {
+        Kind::Call => (api.hook_call)(site.cast(), detour, original),
+        Kind::Entry => (api.hook_exact)(site.cast(), detour, 5, original),
     }
-    if !range(base, size, DIRTY_FN, 5)
-        || !range(base, size, MAIN_CALL, 5)
-        || !range(base, size, MAIN_FN, 13)
-        || !range(base, size, BATCH_CALLS[0], 5)
-        || !range(base, size, BATCH_CALLS[1], 5)
-        || !range(base, size, BATCH_FN, 7)
-    {
-        return Err("a render-profile hook site lies outside world2.dll");
-    }
-    let calls_ok = exact(base, size, MAIN_CALL, &[0xe8, 0x62, 0x1f, 0x00, 0x00])
-        && exact(base, size, BATCH_CALLS[0], &[0xe8, 0x9c, 0xed, 0xff, 0xff])
-        && exact(base, size, BATCH_CALLS[1], &[0xe8, 0x2a, 0xed, 0xff, 0xff])
-        && call_target(unsafe { base.add(MAIN_CALL) }) == base as usize + MAIN_FN
-        && call_target(unsafe { base.add(BATCH_CALLS[0]) }) == base as usize + BATCH_FN
-        && call_target(unsafe { base.add(BATCH_CALLS[1]) }) == base as usize + BATCH_FN;
-    if !calls_ok
-        || !exact(
-            base,
-            size,
-            MAIN_FN,
-            &[
-                0x40, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57,
-            ],
-        )
-        || !exact(
-            base,
-            size,
-            BATCH_FN,
-            &[0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x18],
-        )
-        || !exact(base, size, DIRTY_FN, &[0x48, 0x89, 0x5c, 0x24, 0x08])
-    {
-        return Err("world2.dll render-profile bytes or call targets do not match");
-    }
-    #[cfg(feature = "shadow-cull-profile")]
-    if !range(base, size, CULL_FN, 16)
-        || !exact(
-            base,
-            size,
-            CULL_FN,
-            &[
-                0x48, 0x89, 0x5c, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x48, 0x89, 0x7c, 0x24,
-                0x20, 0x55,
-            ],
-        )
-        || !exact(base, size, 0x191c2c, &[0xff, 0xd3, 0x90])
-    {
-        return Err("world2.dll shadow-cull entry does not match the verified Steam build");
-    }
-    Ok((base, size))
 }
 
 fn emit(level: u32, message: &str) {
@@ -464,7 +426,7 @@ fn report(report: Report) -> String {
     #[cfg(feature = "render-profile-light")]
     let dirty = "dirty=unmeasured";
     #[cfg(feature = "shadow-cull-profile")]
-    let cull = if INSTALLED.load(Ordering::Acquire) & INSTALLED_CULL != 0 {
+    let cull = if HOOKED.get().is_some() {
         let (cull50, cull95) = metric(|frame| frame.cull_ms);
         let (calls50, calls95) = percentiles(
             samples
@@ -664,7 +626,7 @@ unsafe extern "C" fn shadow_cull(
     let result = unsafe { original(manager, frustum, cascade, camera, visitor, output) };
     if let Some(started) = started {
         let elapsed = started.elapsed().as_secs_f64() * 1000.0;
-        // The Steam 2026-09-25 caller consumes output as an 8-byte pointer vector.
+        // The resolved caller consumes output as an 8-byte pointer vector.
         let candidates = if output == 0 {
             0
         } else {
@@ -779,191 +741,74 @@ pub(super) fn flush() {
     }
 }
 
-fn install_one(api: &Api, site: *mut u8, detour: *mut c_void, original: &AtomicUsize) -> bool {
-    let mut trampoline = core::ptr::null_mut();
-    if unsafe { (api.hook_call)(site.cast(), detour, &mut trampoline) } != 0 || trampoline.is_null()
-    {
-        return false;
-    }
-    original.store(trampoline as usize, Ordering::Release);
-    true
-}
-
 pub(super) fn install(api: &Api) {
     let _ = LOG.set(api.log);
-    let (base, _) = match target(api) {
+    // Every site resolves and matches before the first hook.
+    let (base, sites) = match target(api) {
         Ok(target) => target,
         Err(error) => {
             crate::say(
                 api,
                 LOG_WARN,
-                &format!("render profile: {error}; probe disabled"),
+                &format!("render profile: not a supported build ({error}); no writes made"),
             );
             return;
         }
     };
-    let mut installed = 0;
-    if install_one(
-        api,
-        unsafe { base.add(MAIN_CALL) },
-        main_view as *mut c_void,
-        &MAIN_ORIGINAL,
-    ) {
-        installed |= INSTALLED_MAIN;
-    }
-    if install_one(
-        api,
-        unsafe { base.add(BATCH_CALLS[0]) },
-        batch_0 as *mut c_void,
-        &BATCH_ORIGINAL[0],
-    ) {
-        installed |= INSTALLED_BATCH_0;
-    }
-    if install_one(
-        api,
-        unsafe { base.add(BATCH_CALLS[1]) },
-        batch_1 as *mut c_void,
-        &BATCH_ORIGINAL[1],
-    ) {
-        installed |= INSTALLED_BATCH_1;
-    }
-    #[cfg(feature = "shadow-cull-profile")]
-    {
+    let hooks = hooks(&sites);
+    for (i, &(kind, rva, detour, original)) in hooks.iter().enumerate() {
+        let site = unsafe { base.add(rva) };
         let mut trampoline = core::ptr::null_mut();
-        if unsafe {
-            (api.hook_exact)(
-                base.add(CULL_FN).cast(),
-                shadow_cull as *mut c_void,
-                5,
-                &mut trampoline,
-            )
-        } == 0
-            && !trampoline.is_null()
-        {
-            CULL_ORIGINAL.store(trampoline as usize, Ordering::Release);
-            installed |= INSTALLED_CULL;
+        let result = unsafe { request(api, kind, site, detour, &mut trampoline) };
+        if result != 0 || trampoline.is_null() {
+            if result == 0 {
+                unsafe { (api.unhook)(site.cast()) };
+            }
+            for &(_, prior, _, _) in hooks[..i].iter().rev() {
+                unsafe { (api.unhook)(base.add(prior).cast()) };
+            }
+            crate::say(
+                api,
+                LOG_ERROR,
+                &format!("render profile: hook refused at world2+{rva:#x}; no hooks installed"),
+            );
+            return;
         }
+        original.store(trampoline as usize, Ordering::Release);
     }
+    let _ = HOOKED.set((base as usize, sites));
     #[cfg(not(feature = "render-profile-light"))]
-    {
-        let mut trampoline = core::ptr::null_mut();
-        if unsafe {
-            (api.hook_exact)(
-                base.add(DIRTY_FN).cast(),
-                dirty_transform as *mut c_void,
-                5,
-                &mut trampoline,
-            )
-        } == 0
-            && !trampoline.is_null()
-        {
-            DIRTY_ORIGINAL.store(trampoline as usize, Ordering::Release);
-            installed |= INSTALLED_DIRTY;
-        }
-    }
-    INSTALLED.store(installed, Ordering::Release);
-    #[cfg(not(feature = "render-profile-light"))]
-    let expected = INSTALLED_MAIN | INSTALLED_BATCH_0 | INSTALLED_BATCH_1 | INSTALLED_DIRTY;
+    crate::say(
+        api,
+        LOG_INFO,
+        "render profile: main, both batch lists, and dirty transforms hooked",
+    );
     #[cfg(feature = "render-profile-light")]
-    let expected = INSTALLED_MAIN | INSTALLED_BATCH_0 | INSTALLED_BATCH_1;
+    crate::say(
+        api,
+        LOG_INFO,
+        "render profile: main and both batch lists hooked; dirty transforms unmeasured",
+    );
+    #[cfg(feature = "render-profile-toggle")]
+    crate::say(
+        api,
+        LOG_INFO,
+        "render profile toggle: OFF at startup; Ctrl+Alt+Shift+K cycles OFF, CPU timings, CPU and GPU timings",
+    );
     #[cfg(feature = "shadow-cull-profile")]
-    let expected = expected | INSTALLED_CULL;
-    if installed == expected {
-        #[cfg(not(feature = "render-profile-light"))]
-        crate::say(
-            api,
-            LOG_INFO,
-            "render profile: main, both batch lists, and dirty transforms hooked",
-        );
-        #[cfg(feature = "render-profile-light")]
-        crate::say(
-            api,
-            LOG_INFO,
-            "render profile: main and both batch lists hooked; dirty transforms unmeasured",
-        );
-        #[cfg(feature = "render-profile-toggle")]
-        crate::say(
-            api,
-            LOG_INFO,
-            "render profile toggle: OFF at startup; Ctrl+Alt+Shift+K cycles OFF, CPU timings, CPU and GPU timings",
-        );
-        #[cfg(feature = "shadow-cull-profile")]
-        crate::say(
-            api,
-            LOG_INFO,
-            "render profile: shadow caster cull timer hooked",
-        );
-    } else {
-        crate::say(
-            api,
-            LOG_WARN,
-            &format!(
-                "render profile: partial hooks installed ({installed:#x}); timings are incomplete"
-            ),
-        );
-    }
+    crate::say(
+        api,
+        LOG_INFO,
+        "render profile: shadow caster cull timer hooked",
+    );
 }
 
 pub(super) fn contract(api: &Api) {
-    let installed = INSTALLED.load(Ordering::Acquire);
-    if installed == 0 {
-        return;
-    }
-    let Ok((base, _)) = target(api) else {
+    let Some(&(base, sites)) = HOOKED.get() else {
         return;
     };
-    if installed & INSTALLED_MAIN != 0 {
+    for (kind, rva, detour, _) in hooks(&sites) {
         let mut original = core::ptr::null_mut();
-        unsafe {
-            (api.hook_call)(
-                base.add(MAIN_CALL).cast(),
-                main_view as *mut c_void,
-                &mut original,
-            )
-        };
-    }
-    if installed & INSTALLED_BATCH_0 != 0 {
-        let mut original = core::ptr::null_mut();
-        unsafe {
-            (api.hook_call)(
-                base.add(BATCH_CALLS[0]).cast(),
-                batch_0 as *mut c_void,
-                &mut original,
-            )
-        };
-    }
-    if installed & INSTALLED_BATCH_1 != 0 {
-        let mut original = core::ptr::null_mut();
-        unsafe {
-            (api.hook_call)(
-                base.add(BATCH_CALLS[1]).cast(),
-                batch_1 as *mut c_void,
-                &mut original,
-            )
-        };
-    }
-    #[cfg(feature = "shadow-cull-profile")]
-    if installed & INSTALLED_CULL != 0 {
-        let mut original = core::ptr::null_mut();
-        unsafe {
-            (api.hook_exact)(
-                base.add(CULL_FN).cast(),
-                shadow_cull as *mut c_void,
-                5,
-                &mut original,
-            )
-        };
-    }
-    #[cfg(not(feature = "render-profile-light"))]
-    if installed & INSTALLED_DIRTY != 0 {
-        let mut original = core::ptr::null_mut();
-        unsafe {
-            (api.hook_exact)(
-                base.add(DIRTY_FN).cast(),
-                dirty_transform as *mut c_void,
-                5,
-                &mut original,
-            )
-        };
+        unsafe { request(api, kind, (base + rva) as *mut u8, detour, &mut original) };
     }
 }

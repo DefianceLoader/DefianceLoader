@@ -1,10 +1,10 @@
 //! Experimental real squad regrouping. See README.md before live testing.
-mod bindings;
 mod hotkeys;
 mod limits;
 mod model;
 #[cfg(windows)]
 mod native;
+mod sites;
 
 defiance_feature_sdk::service_handshake!();
 

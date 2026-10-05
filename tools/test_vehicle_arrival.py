@@ -14,9 +14,60 @@ import struct
 import sys
 import unittest
 
+import capstone
+
 import builds
 from pe import Image
-from vehicle_arrival_bindings import expected_sha, method
+from rtti import Rtti
+
+# Vfunc 48 spans three contiguous .pdata entries. Its fixed instruction
+# sequence is verified with only relative call/data displacements normalized.
+METHOD_BYTES = 0x14a
+METHOD_SHA = "f25608247dcd3554d6c0a064f11b6331d0869b28725313ed05a12fe2c72907fa"
+
+
+def method(img):
+    rtti = Rtti(img)
+    cols = next(cols for name, _, cols in rtti.find("BaseTechChassisFacet")
+                if name == ".?AVBaseTechChassisFacet@Leonardo@@")
+    tables = [vt for col, vts in cols if img.u32(col + 4) == 0 for vt in vts]
+    if len(tables) != 1:
+        raise ValueError(f"expected one primary chassis vtable, found {tables}")
+    rva = img.u64(tables[0] + 0x180) - img.base
+    for cls in ("CarChassisFacet", "TankChassisFacet"):
+        cols = next(cols for name, _, cols in rtti.find(cls)
+                    if name == f".?AV{cls}@Leonardo@@")
+        primary = [vt for col, vts in cols if img.u32(col + 4) == 0 for vt in vts]
+        if len(primary) != 1 or img.u64(primary[0] + 0x180) != img.base + rva:
+            raise ValueError(f"{cls} does not share the vehicle arrival callback")
+    code = img.read(rva, METHOD_BYTES)
+    normalized = bytearray(code)
+    relocations = []
+    for ins in img.disasm(rva, rva + METHOD_BYTES):
+        if (ins.mnemonic == "call"
+                and ins.operands[0].type == capstone.x86.X86_OP_IMM):
+            offset, size = ins.imm_offset, ins.imm_size
+            target = "direction"
+        elif any(op.type == capstone.x86.X86_OP_MEM
+                 and op.mem.base == capstone.x86.X86_REG_RIP for op in ins.operands):
+            offset, size = ins.disp_offset, ins.disp_size
+            target = "one"
+            native_constant = ins.address + ins.size + ins.disp
+            if img.read(native_constant, 4) != struct.pack("<f", 1.0):
+                raise ValueError("the speed-ratio cap is not 1.0")
+        else:
+            continue
+        if size != 4:
+            raise ValueError("unexpected relative operand size")
+        at = ins.address - rva + offset
+        normalized[at:at + size] = bytes(size)
+        relocations.append((at, ins.address - rva + ins.size, target))
+    if hashlib.sha256(normalized).hexdigest() != METHOD_SHA:
+        raise ValueError("vehicle arrival callback differs from the characterized algorithm")
+    if [r[2] for r in relocations] != ["direction", "direction", "one"]:
+        raise ValueError("unexpected vehicle arrival dependencies")
+    return rva, code, relocations
+
 
 PLUGIN_PATH = pathlib.Path(sys.argv.pop(1)).resolve() if len(sys.argv) > 1 else None
 
@@ -30,9 +81,9 @@ class Plugin:
         self.run = self.dll.vehicle_arrival_update
         self.run.argtypes = [C.c_size_t, C.c_size_t]
         self.run.restype = None
-        self.validate = self.dll.vehicle_arrival_test_validate
-        self.validate.argtypes = [C.c_void_p, C.c_size_t, C.c_size_t]
-        self.validate.restype = C.c_int
+        self.resolve = self.dll.vehicle_arrival_test_resolve
+        self.resolve.argtypes = [C.c_char_p, C.c_size_t, C.c_size_t]
+        self.resolve.restype = C.c_int64
 
 
 class Native:
@@ -97,8 +148,6 @@ class VehicleArrivalTests(unittest.TestCase):
             with self.subTest(build=build.name):
                 build.require()
                 img = Image(build.logic)
-                self.assertEqual(hashlib.sha256(img.data).hexdigest(), expected_sha(build),
-                                 f"{build.name}: unsupported logic.dll")
                 native = Native(img)
                 try:
                     # The ramp is linear and saturates at max speed. Halving
@@ -131,20 +180,16 @@ class VehicleArrivalTests(unittest.TestCase):
         self.assertNotEqual(plugin.bind(None, 50), 0)
         for percent in (49, 101):
             self.assertNotEqual(plugin.bind(1, percent), 0)
-        for index, build in enumerate(builds.supported()):
+        for build in builds.supported():
             with self.subTest(build=build.name):
                 img = Image(build.require().logic)
-                self.assertEqual(hashlib.sha256(img.data).hexdigest(), expected_sha(build))
-                # Generation and runtime validation must agree on the entire
-                # callback, including the ramp beyond the short entry signature.
+                # The plugin's resolver and this characterization must agree on
+                # the callback, and a change inside its ramp must be refused.
                 rva, body, _ = method(img)
-                image = C.create_string_buffer(rva + len(body))
-                C.memmove(C.addressof(image) + rva, body, len(body))
-                self.assertEqual(plugin.validate(image, len(image), index), 0)
-                self.assertNotEqual(plugin.validate(image, len(image)-1, index), 0)
-                image[rva+0xe5] = bytes([body[0xe5] ^ 1])
-                self.assertNotEqual(plugin.validate(image, len(image), index), 0)
-                self.assertNotEqual(plugin.validate(image, len(image), 1000), 0)
+                image = bytearray(img.pe.get_memory_mapped_image())
+                self.assertEqual(plugin.resolve(bytes(image), len(image), img.base), rva)
+                image[rva + 0xe5] ^= 1
+                self.assertEqual(plugin.resolve(bytes(image), len(image), img.base), -1)
                 native = Native(img)
                 try:
                     for percent in (50, 75, 100):

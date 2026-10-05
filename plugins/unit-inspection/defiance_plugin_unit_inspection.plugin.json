@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.unit-inspection",
   "dll": "defiance_plugin_unit_inspection.dll",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "abi": 5,
   "patch_contract": true,
   "group": "infantry",

@@ -3,13 +3,12 @@ No installed game files are written. Each build/capacity gets a fresh process.
 """
 import ctypes as C
 import builds
-import hashlib, json, pathlib, struct, subprocess, sys
+import pathlib, struct, subprocess, sys
 from ctypes import wintypes as W
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 from pe import Image
 from sigs import Module
 from rtti import Rtti
-from ammo_menu_sites import offsets_for
 ROOT=pathlib.Path(__file__).resolve().parent.parent
 DLL=ROOT/"plugins/expanded-ammo-menu/target/release/defiance_plugin_expanded_ammo_menu.dll"
 K=C.WinDLL("kernel32",use_last_error=True)
@@ -44,6 +43,14 @@ def resolve(module,source,at):
 BUILDS=("gog-2025-12-23", "steam-2025-12-23", "gog-2026-09-14", "steam-2026-09-22", "gog-2026-09-25", "steam-2026-09-25")
 PATHS={i:builds.build(n).game for i,n in enumerate(BUILDS)}
 LOGIC={i:builds.build(n).logic for i,n in enumerate(BUILDS)}
+# Per build: the class offsets and the last patched instruction's rva, as
+# plugins/expanded-ammo-menu/src/sites.rs resolves them (its TABLE test).
+OFFSETS=tuple(dict(roster=r,gunner_count=c,gunner_get=g,pool_get=p,world_player=w,ai_set=a,tooltip=t)
+    for r,c,g,p,w,a,t in [(0x3b8,0x130,0x120,0x1b8,0x700,0x3e0,0x238),(0x3b8,0x130,0x120,0x1b8,0x700,0x3e0,0x258),
+                          (0x3d0,0x140,0x130,0x1c8,0x708,0x3f8,0x238),(0x3d0,0x140,0x130,0x1c8,0x708,0x3f8,0x258),
+                          (0x3d0,0x140,0x130,0x1c8,0x708,0x3f8,0x238),(0x3d0,0x140,0x130,0x1c8,0x708,0x3f8,0x258)])
+LAST_SITE=(0x4b6af9,0x4bd3d9,0x4b8ee9,0x4bf889,0x4b8ef9,0x4bf899)
+SITE_COUNT=53
 # The GUI-owner store after loading scripts/ui/AmmoTooltip.txt and assigning
 # AmmunitionTooltipWindow's vtable. This is independently audited per build;
 # executing the actual LEA prevents the fixture from inventing the field.
@@ -64,11 +71,13 @@ CONSTRUCTOR_SHIFTED=("488b9620010000488b822801000048898618010000488b8a38010000"
 def case(build_index,columns,combined=False):
     path=ROOT/PATHS[build_index]
     module=Module(path); source=Module(builds.reference().game)
-    LOFF=offsets_for(hashlib.sha256(path.read_bytes()).hexdigest())
+    LOFF=OFFSETS[build_index]
     base=K.LoadLibraryExW(str(path),None,1) # DONT_RESOLVE_DLL_REFERENCES
     assert base,C.get_last_error()
-    catalog=json.loads((ROOT/"out/ammo-menu-sites.json").read_text())[build_index]
-    rows=catalog["sites"]
+    # The plugin reads the roster offset from logic.dll's SquadAiFacet vtable.
+    logic_base=K.LoadLibraryExW(str(ROOT/LOGIC[build_index]),None,1)
+    assert logic_base,C.get_last_error()
+    logic_size=Module(ROOT/LOGIC[build_index]).pe.OPTIONAL_HEADER.SizeOfImage
     mapped_size=module.pe.OPTIONAL_HEADER.SizeOfImage
     original=C.string_at(base,mapped_size)
     owned={}; calls=0; fail_at=0
@@ -77,9 +86,9 @@ def case(build_index,columns,combined=False):
     @cb(None,C.c_uint32,C.c_char_p)
     def log(level,message): messages.append(message.decode())
     @cb(C.c_void_p,C.c_char_p)
-    def module_base(name): return base
+    def module_base(name): return logic_base if name==b"logic.dll" else base
     @cb(C.c_size_t,C.c_void_p)
-    def module_size(_): return mapped_size
+    def module_size(at): return logic_size if at==logic_base else mapped_size
     @cb(C.c_void_p,C.c_char_p,C.c_char_p)
     def config(section,key): return C.addressof(combined_setting if key==b"all_selected_squads" else setting)
     @cb(C.c_int,C.c_void_p,C.c_void_p,C.c_void_p,C.c_size_t)
@@ -148,11 +157,11 @@ def case(build_index,columns,combined=False):
     lib.defiance_plugin_services.argtypes=[C.POINTER(Services)]
     assert lib.defiance_plugin_services(C.byref(services))==0
     # A corrupt last site must refuse before the first write.
-    last=rows[-1]; address=base+last["rva"]; saved=C.string_at(address,1)
+    address=base+LAST_SITE[build_index]; saved=C.string_at(address,1)
     put(address,bytes([saved[0]^1])); assert init(C.byref(api))!=0 and calls==0
     put(address,saved)
     # Failure at several install positions restores every earlier owned span.
-    for fail in [1,2,3 if columns==3 else len(rows)//2, 4 if columns==3 else len(rows)+1]:
+    for fail in [1,2,3 if columns==3 else SITE_COUNT//2, 4 if columns==3 else SITE_COUNT+1]:
         fail_at=fail; calls=0
         assert init(C.byref(api))!=0
         assert not owned and published==0
@@ -296,13 +305,13 @@ def case(build_index,columns,combined=False):
     put(tip_child+0x100,struct.pack("<4i",841,853,1223,877))
     tip_children=alloc(8); pq(tip_children,tip_child)
     pq(tip+0x40,tip_children); pq(tip+0x48,tip_children+8)
-    owner=alloc(catalog["tooltip"]+8); controller=alloc(0x98)
+    owner=alloc(LOFF["tooltip"]+8); controller=alloc(0x98)
     owner_store=C.string_at(base+TOOLTIP_STORE[build_index],7)
-    assert owner_store==bytes.fromhex("488d86")+struct.pack("<i",catalog["tooltip"])
+    assert owner_store==bytes.fromhex("488d86")+struct.pack("<i",LOFF["tooltip"])
     code=bytes.fromhex("564889ce")+owner_store+bytes.fromhex("4889105ec3")
     initialize_owner=alloc(len(code)); put(initialize_owner,code)
     C.CFUNCTYPE(None,C.c_void_p,C.c_void_p)(initialize_owner)(owner,controller)
-    assert q(owner+catalog["tooltip"])==controller
+    assert q(owner+LOFF["tooltip"])==controller
     pq(menu+0x120,owner)
     pq(controller+0x20,tip); pq(controller+0x38,owner)
     # This shared implementation has identical copies in game.dll, so its
@@ -338,7 +347,7 @@ def case(build_index,columns,combined=False):
                 grid_top=1062-min(len(shown),3)*70
                 expected_tip=(grid_right+2,1060-212) if grid_right+2+401<=1920 else (647,grid_top-2-212)
                 actual_tip=struct.unpack("<2i",C.string_at(tip+0x100,8))
-                assert actual_tip==expected_tip,(sorted(shown),repeat,actual_tip,expected_tip,catalog["tooltip"])
+                assert actual_tip==expected_tip,(sorted(shown),repeat,actual_tip,expected_tip,LOFF["tooltip"])
                 assert struct.unpack("<2i",C.string_at(tip_child+0x100,8))==(expected_tip[0]+10,expected_tip[1]+5)
                 # The fixed AmmoTooltip controller has cursor-follow byte
                 # +0x1b clear. Its actual native placement method leaves the
@@ -396,7 +405,7 @@ def case(build_index,columns,combined=False):
         # Execute the real AmmunitionMenu constructor's service-field setup.
         # This is deliberately not pq(menu+128/130, ...): that old fixture
         # mirrored the production bug and masked a mission-load crash.
-        owner=alloc(max(0x160,catalog["tooltip"]+8))
+        owner=alloc(max(0x160,LOFF["tooltip"]+8))
         owner_shift=0x20 if build_index in (1,3,5) else 0
         pq(owner+0x100+owner_shift,world)
         pq(owner+0x118+owner_shift,context)

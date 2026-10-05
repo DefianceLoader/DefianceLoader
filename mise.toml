@@ -75,7 +75,7 @@ run = "python tools/builds.py variants"
 
 # Cargo workspaces: the loader's, the standalone plugins', the service
 # examples' and the crash test plugin's. The generators that write Rust
-# (tools/*_bindings.py, ammo_menu_sites.py, proxy.py) format their output too.
+# (tools/*_bindings.py, proxy.py) format their output too.
 [tasks.fmt]
 description = "Format every Rust workspace with default rustfmt"
 run = [
@@ -142,6 +142,7 @@ description = "Run the Rust tests of the main workspace and the standalone plugi
 depends = ["assemble"]
 run = [
   "cargo test --workspace",
+  "cargo test -p defiance-plugin-core --features inspect-probe inspect_probe",
   "cargo test --manifest-path plugins/regroup/Cargo.toml",
   "cargo test --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
   "cargo test --manifest-path plugins/squad-management-scroll/Cargo.toml",
@@ -172,7 +173,6 @@ run = """python tools/parallel.py \
   "python tools/check_injector.py --metadata-only" \
   "python tools/test_versions.py" \
   "python tools/test_layout.py" \
-  "python tools/vehicle_targeting_bindings.py --check" \
   "python tools/test_variant.py" \
   "python tools/module_writes.py check" \
   "python tools/test_patch_inventory.py" \
@@ -226,13 +226,10 @@ run = [
   "python tools/test_check_injector.py",
   "python tools/test_versions.py",
   "python tools/test_layout.py",
-  "python tools/vehicle_targeting_bindings.py --check",
   "python tools/test_variant.py",
   "python tools/module_writes.py check",
   "python tools/test_patch_inventory.py",
   "python tools/stamp.py test tools/test_chainlayout.py",
-  "python tools/stamp.py test tools/test_bindings.py",
-  "python tools/stamp.py test tools/test_unit_inspection.py",
   "python tools/stamp.py test tools/test_chooser.py",
   "python tools/stamp.py test tools/test_move.py",
   "cargo build --release --manifest-path plugins/vehicle-arrival/Cargo.toml --features parity-test --target-dir out/vehicle-arrival-parity",
@@ -261,7 +258,6 @@ run = [
   "python tools/moving_actions_sync_bindings.py",
   "python tools/moving_actions_render_sync_bindings.py",
   "python tools/moving_grenades_bindings.py",
-  "git diff --exit-code -- plugins/moving-actions/src/sites.rs plugins/moving-actions-sync/src/sites.rs plugins/moving-grenades/src/sites.rs",
   "python tools/test_moving_actions.py",
   "python tools/test_moving_actions_sync.py",
   "python tools/test_moving_actions_render_sync.py",
@@ -296,16 +292,12 @@ run = [
   "python tools/test_vehicle_arrival.py out/vehicle-arrival-parity/release/defiance_plugin_vehicle_arrival.dll",
 ]
 
-[tasks.weapon-drops-bindings]
-description = "Generate guarded experimental primary weapon drop bindings from tools/symbols/"
-run = "python tools/weapon_drop_bindings.py"
-
 [tasks.weapon-drops-build]
 description = "Build the opt-in primary weapon drop prototype; does not install into the game"
 run = "cargo build --release --manifest-path plugins/weapon-drops/Cargo.toml"
 
 [tasks.weapon-drops-test]
-description = "Test the primary death callback and stock-image guards; no game writes"
+description = "Test the primary death callback and site resolution; no game writes"
 run = [
   "cargo test --manifest-path plugins/weapon-drops/Cargo.toml",
   "cargo build --release --manifest-path plugins/weapon-drops/Cargo.toml --features parity-test --target-dir out/weapon-drops-parity",

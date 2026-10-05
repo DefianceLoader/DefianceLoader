@@ -13,9 +13,44 @@ import patch_inventory as inventory
 import stage
 from pe import Image
 from rtti import Rtti
-from vehicle_targeting_bindings import HELPERS, locate, locate_helper
 
 PLUGIN = "defiance.vehicle-special-fire"
+# The plugin ships disabled; these runs turn it on.
+inventory.SETTINGS.setdefault(PLUGIN, {"enabled": "true"})
+# The two Gunner-walking AI helpers the plugin hooks, by their function
+# prologues (the plugin's own signatures are shorter prefixes of these).
+HELPERS = {
+    "candidate_query": bytes.fromhex(
+        "48 89 5c 24 08 48 89 74 24 18 55 57 41 54 41 56 41 57 "
+        "48 8b ec 48 83 ec 30 45 0f b6 e0 4c 8b f9 "
+        "48 8b 02 48 8b ca ff 90 b0 00 00 00 48 8b 70 28 48 85 f6"
+    ),
+    "capable": bytes.fromhex(
+        "48 89 5c 24 08 48 89 6c 24 10 48 89 74 24 18 57 48 83 ec 20 "
+        "48 8b 01 48 8b ea ff 90 b0 00 00 00 48 8b 70 28 48 85 f6"
+    ),
+}
+
+
+def locate(rtti, class_name, slot):
+    """The one method in `slot` of `class_name`'s vtables."""
+    tables = {table for name, _, cols in rtti.find(class_name)
+              if name == class_name for _, entries in cols for table in entries}
+    addresses = {methods[slot] for table in tables
+                 if len(methods := rtti.methods(table, slot + 1)) > slot}
+    if len(addresses) != 1:
+        raise AssertionError(f"{class_name} vf{slot}: expected one method, got {addresses}")
+    return addresses.pop()
+
+
+def locate_helper(image, field):
+    """The one function start that begins with `field`'s prologue."""
+    prefix = HELPERS[field]
+    matches = [start for start, _ in image.functions
+               if image.read(start, len(prefix)) == prefix]
+    if len(matches) != 1:
+        raise AssertionError(f"{field}: expected one function with the prologue, got {matches}")
+    return matches[0]
 
 
 class PassengerTargetStartup(unittest.TestCase):
@@ -68,7 +103,7 @@ class PassengerTargetStartup(unittest.TestCase):
             with self.subTest(build=build.name):
                 tested += 1
                 image = Image(build.require().logic)
-                tick = locate(image, Rtti(image), ".?AVGunner@Leonardo@@", 5)
+                tick = locate(Rtti(image), ".?AVGunner@Leonardo@@", 5)
                 code = list(image.md.disasm(image.read(tick, 0x300), tick))
                 ops = [(ins.mnemonic, ins.op_str) for ins in code]
                 # Five pushes make rbp+0x50 the fifth incoming stack argument.

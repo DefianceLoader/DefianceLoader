@@ -10,7 +10,7 @@ selectable facet; a soldier's facet +0x18 enabled, +0x28 his squad's facet,
 enabled dword at +0x3c. A soldier AI's vt+0x3b8 answers zero, a squad's the
 member roster, which is what tells the two apart.
 """
-import ctypes, pathlib, struct, sys
+import ctypes, json, pathlib, struct, sys
 import builds
 from ctypes import wintypes
 import keystone
@@ -754,23 +754,29 @@ check("uniform whole squad shows three selected users", ui_text(rifle_label) == 
 check("every user enabled and ready fills the reload bar", reload_bar() == 1.0)
 put(trio[1]["facet"] + 0x30, bytes(1))
 put(trio[2]["facet"] + 0x30, bytes(1))
+def native_bar(value):
+    put(rifle_reload + 0x1a8, struct.pack("<f", value))
+native_bar(0.375)
 DRAW(menu)
 check("single selected user is explicitly shown as one", ui_text(rifle_label) == b"1")
+check("a single user keeps the native reload progress", reload_bar() == 0.375)
 check("selection count never mutates shared weapon count", dword(trio_sq["base"] + 0x34) == 0)
 put(trio_sq["base"] + 0x34, struct.pack("<I", 5))
 put(menu + 8, struct.pack("<Q", trio[0]["entity"]))
-# A unit without a squad roster (a vehicle) keeps its native count and is one
-# user for the reload bar: its guns' readiness, or 0 with the ammo disabled.
+# A unit without a squad roster (a vehicle) keeps its native count and the
+# stock draw's reload bar, whatever its guns' readiness or shared flag.
 put(trio_sq["base"] + 0x3c, bytes(4))
+native_bar(0.625)
 DRAW(menu)
 check("non-squad panel retains its native count", ui_text(rifle_label) == b"5")
-check("a unit that is not a squad fills its bar when ready", reload_bar() == 1.0)
+check("a unit that is not a squad keeps the native reload bar", reload_bar() == 0.625)
 put(trio_guns[0] + 0x14c, struct.pack("<f", 0.25))
+native_bar(0.125)
 DRAW(menu)
-check("its reload of this ammunition shows on the bar", reload_bar() == 0.25)
+check("its reload leaves the native bar alone", reload_bar() == 0.125)
 put(trio_sq["base"] + 0x3c, struct.pack("<I", 1))
 DRAW(menu)
-check("ammunition it has disabled empties the bar", reload_bar() == 0.0)
+check("ammunition it has disabled leaves the native bar alone", reload_bar() == 0.125)
 put(trio_sq["base"] + 0x3c, bytes(4))
 put(trio_guns[0] + 0x14c, struct.pack("<f", 1.0))
 
@@ -1208,6 +1214,27 @@ case["select"]([case["crew"][0]["entity"]])
 before, count = off(case), refreshes()
 spin(case, -120)
 check("a unit without a squad roster is not stepped", off(case) == before and refreshes() == count)
+
+
+print("\n== the gun's selected-ammo slot on every build\n")
+# The cases above run the reference payload only. The readiness walk calls the
+# logic.dll Gun's selected-ammo getter from the game payload, so each build's
+# `gun_selected_ammo` must name that getter there, not the game layout's slot.
+from rtti import Rtti
+for build in builds.supported():
+    if not build.present:
+        print(f"skip  {build.name}: DLLs not in bin/")
+        continue
+    profile = json.loads(build.layout.read_text(encoding="utf-8")) if build.layout else {}
+    symbols = {**b.REFERENCE_GAME_SYMBOLS, **profile.get("game_symbols", {})}
+    logic = Image(str(build.logic))
+    rtti = Rtti(logic)
+    descriptor = rtti.descriptors()[".?AVGun@Leonardo@@"]
+    tables = [vt for col in rtti.locators(descriptor) if logic.u32(col + 4) == 0
+              for vt in rtti.vtables(col)]
+    getter = logic.u64(tables[0] + symbols["gun_selected_ammo"]) - logic.base if len(tables) == 1 else 0
+    check(f"{build.name}: gun_selected_ammo is the Gun's `mov rax, [rcx+0x50]; ret`",
+          getter and logic.read(getter, 5) == bytes.fromhex("488b4150c3"), f"tables {tables}")
 
 
 print()

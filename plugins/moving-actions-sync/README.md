@@ -1,7 +1,6 @@
 # Moving actions weapon-sync test
 
-Companion to `defiance.moving-actions` for GOG 2026-09-14, GOG 2026-09-25,
-Steam 2026-09-22, and Steam 2026-09-25. The held weapon can occasionally
+Companion to `defiance.moving-actions`. The held weapon can occasionally
 disagree with the firing weapon.
 
 The stock weapon-change helper updates the held model only while its remaining
@@ -18,10 +17,19 @@ and keeps the original return value. The existing engine code updates both
 the model order and the weapon animation script. The gunner state machine and
 firing tick are not advanced again.
 
-Each build has an exact DLL hash, weapon-step RVA, action-helper RVA, and code
-fingerprints for both functions. ABI mismatch, changed helper bytes, or any
-other game build causes initialization to refuse the hook. December 2025
-builds are excluded because their native contracts are not established.
+The plugin finds the weapon step and the action helper by byte signature
+([`src/sites.rs`](src/sites.rs)) and checks both entries before it hooks. A
+build where either does not resolve to exactly one place, or whose entry bytes
+differ, logs `moving weapon sync: not a supported build (...); no writes made`
+as a warning and installs nothing. An ABI mismatch or a refused hook is an
+error.
+
+## Supported builds
+
+The sites test resolves both sites on every build in `bin/`. The native
+harness covers GOG 2026-09-14 / 2026-09-25 and Steam 2026-09-22 / 2026-09-25.
+The December 2025 builds resolve but are unverified: the harness does not
+cover them and their native contracts are not established.
 
 ## Install and test
 
@@ -36,7 +44,7 @@ plugin. This companion is off by default; set `enabled = true` under
 `[defiance.moving-actions-sync]` in `DefianceLoader/config/infantry.ini`.
 Restart the game;
 avoid relying on hot reload for this comparison. The loader log reports
-`moving weapon sync installed (<build name>)`.
+`moving weapon sync installed: ...`.
 
 Switch repeatedly between visually distinct weapons during a long move order,
 then repeat while stationary. Check that the held weapon agrees with the
@@ -57,6 +65,7 @@ The original movement plugin and all other plugins remain installed.
 ## Build and verification
 
 ```powershell
+mise exec -- cargo test --manifest-path plugins/moving-actions-sync/Cargo.toml
 mise exec -- cargo build --release --manifest-path plugins/moving-actions-sync/Cargo.toml
 mise exec -- cargo clippy --release --manifest-path plugins/moving-actions-sync/Cargo.toml -- -D warnings
 mise exec -- python tools/test_moving_actions_sync.py
@@ -66,5 +75,6 @@ The Windows x64 native test maps the stock DLL without resolving its imports
 and executes the real switching helper, model-record reorder, and animation
 script handoff using fabricated actor data with empty attachment vectors. It
 reproduces the stale-model hitch, checks the built plugin repairs it, verifies
-normal switches and grenade gates, and checks initialization refusal paths.
+normal switches and grenade gates, and checks that an unresolved build
+installs nothing and that a refused hook fails initialization.
 It does not touch the installed game or validate rendered animation in-game.

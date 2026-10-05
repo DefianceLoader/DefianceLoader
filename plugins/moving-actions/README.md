@@ -19,10 +19,13 @@ plugin changes three action-table entries to use the engine's existing
 posture-dependent speed calculation. Throw/release timing, weapon-switch delay,
 ammunition use, and the other action-table entries retain their engine behavior.
 
-The plugin verifies the on-disk `logic.dll` hash and the full movement-speed
-function/table window before writing through the loader's patch API. Bindings
-cover all six supported GOG and Steam snapshots. Generate them with
-`tools/moving_actions_bindings.py`; `src/sites.rs` is generated.
+The plugin finds the movement-speed getter by byte signature
+([`src/sites.rs`](src/sites.rs)) and checks the whole getter, its jump table
+and its action table before writing through the loader's patch API. A build
+where the getter does not resolve to exactly one place, or where any of those
+bytes differ, logs `moving actions: not a supported build (...); no writes
+made` as a warning and patches nothing. The sites test and the native test
+cover all six GOG and Steam snapshots in `bin/`.
 
 ## Install for testing
 
@@ -43,7 +46,7 @@ or failed initialization. The manifest retains the loader's single-player guard.
 The startup log at `DefianceLoader/logs/defiance-loader.log` must include:
 
 ```text
-moving actions installed (<build>): grenade throws and weapon changes retain movement; 3 table bytes patched
+moving actions installed: grenade throws and weapon changes retain movement; 3 table bytes patched
 ```
 
 ## In-game checks
@@ -97,6 +100,7 @@ that layer API. No animation assets or playback methods have been changed.
 ## Build and native checks
 
 ```powershell
+mise exec -- cargo test --manifest-path plugins/moving-actions/Cargo.toml
 mise exec -- python tools/moving_actions_bindings.py
 mise exec -- cargo build --release --manifest-path plugins/moving-actions/Cargo.toml
 mise exec -- python tools/test_moving_actions.py

@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.moving-actions-render-sync",
   "dll": "defiance_plugin_moving_actions_render_sync.dll",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "abi": 5,
   "group": "infantry",
   "settings": [{

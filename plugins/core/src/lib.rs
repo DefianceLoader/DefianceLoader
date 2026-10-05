@@ -42,6 +42,7 @@ mod render_profile;
 mod session;
 mod shadow;
 mod shadow_fit;
+mod sites;
 #[cfg(feature = "test-host")]
 pub mod test_host;
 mod tree_sway;

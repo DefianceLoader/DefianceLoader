@@ -58,6 +58,20 @@ squad's soldiers inside. With part of a squad selected, the unit panel's 3D
 squad preview shows the unselected soldiers darker; this uses darker copies of
 the game's materials, which the squad scrolling companion mod carries.
 
+## Soldier move markers
+
+Plugin: `defiance.cover-markers` (on by default; GOG 2026-09-14 and
+2026-09-25, and Steam 2026-09-22 and 2026-09-25). While you aim a move order,
+each selected soldier gets a small arrow at the position the game's formation
+gives them, in place of the large squad arrow; dragging to set facing rotates
+them. After the order, each arrow marks that soldier's destination and clears
+when the soldier arrives or settles in cover. Vehicles keep the game's arrows.
+Cover selection can move a soldier away from their formation point, so an
+arrow may not match the final cover position exactly. To turn it off, set
+`enabled = false` in `[defiance.cover-markers]` in `infantry.ini` and restart
+the game. On other builds it logs a warning and stays inactive. Details:
+[plugins/cover-markers](../plugins/cover-markers/README.md).
+
 ## Per-soldier weapons
 
 Plugin: `defiance.ammunition`.
@@ -68,7 +82,8 @@ weapons the selected soldiers can use, and the counter shows how many of them
 can use each. When their settings differ it shows enabled/selected (such as
 `2/3`); clicking enables all of them, clicking again disables them. The reload
 bar shows how many of them are ready: full when all are enabled and loaded,
-two thirds full with two of three enabled, and lower while one reloads. The
+two thirds full with two of three enabled, and lower while one reloads. A
+single soldier or a vehicle keeps the game's own reload bar. The
 companion UI mod right-aligns the counter so two-digit fractions fit. Disabling
 a loaded weapon unloads it, so the soldier falls back to an enabled one. A unit
 or soldier with every usable weapon disabled takes no part in an attack order,
@@ -257,12 +272,13 @@ transform refresh on each skipped sway tick. Its completion and release path
 continues to run. At the saved campaign hotspot, one complete ON window gave
 about 83 gameplay-view calls/s versus about 80 before and after, and visible
 trees looked normal. That gain is provisional; deferred provider updates may
-have effects beyond tree motion. This is an opt-in setting, statically mapped
-and byte guarded on the six supported builds but checked in game only on Steam
-2026-09-25.
-`tree_sway = engine` is the default. Unknown game builds keep the engine rate;
-changing this setting requires a restart. The other five supported builds have
-guarded hook sites but have not yet been checked in game.
+have effects beyond tree motion. This is an opt-in setting, checked in game
+only on Steam 2026-09-25.
+`tree_sway = engine` is the default. Core finds the tree functions by signature
+and checks their entry bytes; a game build where any of them is not found keeps
+the engine rate and is not patched. Changing this setting requires a restart.
+The other five supported builds resolve the same functions but have not yet
+been checked in game.
 
 The rendering optimizations leave gameplay unchanged and are fine in
 multiplayer. The optional tree sway setting has been checked in single-player.

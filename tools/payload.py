@@ -30,6 +30,10 @@ REGION_ICON_GATE = (0x418128, bytes.fromhex("498b06498bce"), "region_icon_gate")
 REGION_CALLS = [(site, b"\xe8" + struct.pack("<i", 0x418000 - site - 5),
                  f"region_individual_{i}", 2)
                 for i, site in enumerate((0x418e1f, 0x419097, 0x419130, 0x4193f0))]
+# and the marquee replace pass's select loop body, which marquee_select takes
+# over so a squad hit marks its roster
+REGION_CALLS.append((0x418e90, bytes.fromhex(
+    "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff5050"), "marquee_select", 2))
 # The squad preview's dimmed soldiers (patch/preview-dim.asm): code after the
 # ammo mode, and its cell (Core's material callback, then the mode) before the
 # ammunition scratch.
@@ -41,8 +45,9 @@ PAYLOAD_BLOCK_SIZE = 0x4000
 SPECIAL_DYNAMIC_RESET = bytes.fromhex("c783bc0000000000803f")
 SPECIAL_DYNAMIC_CLIENT = bytes.fromhex(
     "498b5f60488bc348c1e8204863f8488b4618488b0cf8488b01488b5660488b14faff5060")
-# The region predicate ends before +0x100; its cell starts at +0x1f0.
-SPECIAL_FIRE_OFFSET = REGION_OFFSET + 0x100
+# The region predicate and marquee select fill the space before their cell at
+# +0x1f0; the vehicle special-fire gate follows the priority code.
+SPECIAL_FIRE_OFFSET = 0x3f00
 PREVIEW_DIM_HOOKS = [
     # rva, the bytes displaced, the entry
     (0x203499, bytes.fromhex("450fb6742420"), "dim_pose"),
@@ -319,11 +324,10 @@ def main():
         BASE + SPECIAL_DYNAMIC_OFFSET, b.CURSOR_OFFSET, symbols=dynamic_symbols)
     if SPECIAL_DYNAMIC_OFFSET + len(dynamic) > SPECIAL_PRIORITY_OFFSET:
         raise SystemExit("the dynamic passenger mount code reaches the priority code")
-    if REGION_OFFSET + len(region) > SPECIAL_FIRE_OFFSET or \
-            SPECIAL_FIRE_OFFSET + len(special_fire) > REGION_CELL:
-        raise SystemExit("the vehicle special-fire gate does not fit before the region cell")
-    if SPECIAL_PRIORITY_OFFSET + len(priority) > PAYLOAD_BLOCK_SIZE:
-        raise SystemExit("the vehicle priority code exceeds the injector block")
+    if SPECIAL_FIRE_OFFSET + len(special_fire) > PAYLOAD_BLOCK_SIZE:
+        raise SystemExit("the vehicle special-fire gate exceeds the injector block")
+    if SPECIAL_PRIORITY_OFFSET + len(priority) > SPECIAL_FIRE_OFFSET:
+        raise SystemExit("the vehicle priority code reaches the special-fire gate")
     if ORDER_OFFSET + len(orders) > b.CURSOR_OFFSET:
         raise SystemExit("order filters would reach the rotation cursor")
     if len(code) > b.POSTURE_OFFSET or b.POSTURE_OFFSET + len(posture) > b.MOVE_OFFSET:
@@ -376,9 +380,10 @@ def main():
             PREVIEW_DIM_OFFSET + len(dim) > PREVIEW_DIM_CELL or PREVIEW_DIM_CELL + 0x10 > b.AMMO_SCRATCH:
         raise SystemExit("the preview dimming code does not fit between ammo mode and the ammo scratch")
     payload[PREVIEW_DIM_OFFSET:PREVIEW_DIM_OFFSET + len(dim)] = dim
-    payload[SPECIAL_FIRE_OFFSET:SPECIAL_FIRE_OFFSET + len(special_fire)] = special_fire
-    payload.extend(bytes(max(b.BLOCK_SIZE, SPECIAL_PRIORITY_OFFSET + len(priority),
+    payload.extend(bytes(max(b.BLOCK_SIZE, SPECIAL_FIRE_OFFSET + len(special_fire),
+                             SPECIAL_PRIORITY_OFFSET + len(priority),
                              SPECIAL_DYNAMIC_OFFSET + len(dynamic)) - len(payload)))
+    payload[SPECIAL_FIRE_OFFSET:SPECIAL_FIRE_OFFSET + len(special_fire)] = special_fire
     payload[SPECIAL_PRIORITY_OFFSET:SPECIAL_PRIORITY_OFFSET + len(priority)] = priority
     payload[SPECIAL_DYNAMIC_OFFSET:SPECIAL_DYNAMIC_OFFSET + len(dynamic)] = dynamic
     # Branches out of the block, into logic.dll: assembled here against a block

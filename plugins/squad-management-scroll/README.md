@@ -124,9 +124,7 @@ python tools/package_squad_scroll.py --game "C:\Games\GOG Galaxy\Terminator Dark
 
 The package is `out/defiance-squad-scroll.zip`. It adds this feature to an
 existing loader installation; it does not replace the loader or other plugins.
-Binding tables can be reproduced with `python tools/squad_scroll_bindings.py`
-using the local GOG and Steam DLL copies. No installed files are edited by these
-commands.
+No installed files are edited by these commands.
 
 ## Validation
 

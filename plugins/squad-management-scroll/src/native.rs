@@ -1,4 +1,4 @@
-//! Verified MSVC layouts for the hash-gated builds in sites.rs. The 2026-09
+//! Verified MSVC layouts for the builds sites.rs resolves. The 2026-09
 //! update did not move the panel, widget, slider or record fields this reads:
 //! the functions it mirrors (refresh, weapon, script, slider_dispatch, thumb,
 //! ammo) align with no non-stack offset change, and refresh still reads the
@@ -6,8 +6,9 @@
 //! All object access runs synchronously on the panel's UI thread. Only offsets
 //! and object identity survive callbacks; inventory record addresses do not.
 use super::{
+    sites::Sites,
     viewport::{Viewport, PERK_VISIBLE, UPGRADE_VISIBLE, VISIBLE},
-    Build, ACTIVE, ENGINE, LOG_DEBUG, LOG_WARN, ORIGINAL, ORIGINAL_SQUAD_CHOOSER, ORIGINAL_THUMB,
+    ACTIVE, ENGINE, LOG_DEBUG, LOG_WARN, ORIGINAL, ORIGINAL_SQUAD_CHOOSER, ORIGINAL_THUMB,
     ORIGINAL_VEHICLE, ORIGINAL_VEHICLE_CHOOSER,
 };
 mod training;
@@ -39,11 +40,11 @@ const AMMO: usize = 1;
 const UPGRADE: usize = 2;
 const PERK: usize = 3;
 /// Whether the squad may pick a perk now: the stock perk refresh highlights the
-/// first open card only then. tools/squad_scroll_bindings.py checks the offset
-/// in every build's refresh.
+/// first open card only then. `sites::sites` checks the offset in the perk
+/// refresh.
 const PANEL_MAY_PICK: usize = 0x352;
 /// Whether cards past the squad's rank are drawn locked; when clear, every card
-/// past its perks is open. Checked per build like `PANEL_MAY_PICK`.
+/// past its perks is open. Checked like `PANEL_MAY_PICK`.
 const PANEL_LOCKS: usize = 0x210;
 /// A perk card's state, which its redraw draws from and the panel's click reads:
 /// open (a perk may go here) and highlighted (a click picks for it). The perk
@@ -131,7 +132,7 @@ pub(super) struct Engine {
 impl Engine {
     pub unsafe fn new(
         base: usize,
-        b: &Build,
+        b: &Sites,
         log: unsafe extern "C" fn(u32, *const c_char),
         perk_slots: usize,
         upgrade_slots: usize,
@@ -140,31 +141,31 @@ impl Engine {
         vehicles: bool,
     ) -> Self {
         Self {
-            dispatch: std::mem::transmute::<usize, Event>(base + b.dispatch.rva),
-            slider_dispatch: std::mem::transmute::<usize, Event>(base + b.slider_dispatch.rva),
+            dispatch: std::mem::transmute::<usize, Event>(base + b.dispatch),
+            slider_dispatch: std::mem::transmute::<usize, Event>(base + b.slider_dispatch),
             destroy: std::mem::transmute::<usize, unsafe extern "C" fn(usize, u32) -> usize>(
-                base + b.destroy.rva,
+                base + b.destroy,
             ),
             vehicle_destroy: std::mem::transmute::<usize, unsafe extern "C" fn(usize, u32) -> usize>(
-                base + b.vehicle_destroy.rva,
+                base + b.vehicle_destroy,
             ),
-            ammo: std::mem::transmute::<usize, Two>(base + b.ammo.rva),
-            weapon: std::mem::transmute::<usize, One>(base + b.weapon.rva),
-            perk: std::mem::transmute::<usize, Two>(base + b.perk.rva),
-            upgrade: std::mem::transmute::<usize, Two>(base + b.upgrade.rva),
-            script: std::mem::transmute::<usize, Resolve>(base + b.script.rva),
-            listen: std::mem::transmute::<usize, Two>(base + b.listen.rva),
-            thumb: std::mem::transmute::<usize, One>(base + b.thumb.rva),
+            ammo: std::mem::transmute::<usize, Two>(base + b.ammo),
+            weapon: std::mem::transmute::<usize, One>(base + b.weapon),
+            perk: std::mem::transmute::<usize, Two>(base + b.perk),
+            upgrade: std::mem::transmute::<usize, Two>(base + b.upgrade),
+            script: std::mem::transmute::<usize, Resolve>(base + b.script),
+            listen: std::mem::transmute::<usize, Two>(base + b.listen),
+            thumb: std::mem::transmute::<usize, One>(base + b.thumb),
             slider_vtable: base + b.slider_vtable,
-            training_layout: std::mem::transmute(base + b.training_layout.rva),
+            training_layout: std::mem::transmute(base + b.training_layout),
             training_vtable: base + b.training_vtable,
-            training_destroy: std::mem::transmute(base + b.training_destroy.rva),
+            training_destroy: std::mem::transmute(base + b.training_destroy),
             squad_vtable: base + b.panel_vtable,
             vehicle_vtable: base + b.vehicle_vtable,
             context_service: b.context_service,
             perk_limit: b.perk_limit,
             training_key: std::mem::transmute::<usize, unsafe extern "C" fn(usize) -> usize>(
-                base + b.training_key.rva,
+                base + b.training_key,
             ),
             upgrade_key: base + b.upgrade_key,
             squad_fit_name: b.squad_fit_name,
@@ -526,7 +527,7 @@ unsafe fn trainings_available(e: &Engine, panel: usize, squad: usize) -> Option<
 /// 2026-09-14 `fn_95940`) walks these nine. The squad chooser's match
 /// (`fn_961b0`) walks the one list at `SQUAD_FITS`, whose entries name their
 /// squad at the build's `squad_fit_name`, an empty name fitting every squad.
-/// tools/squad_scroll_bindings.py checks both in every supported build.
+/// `sites::sites` checks the vehicle walk and `squad_fit_name`.
 const FITS: [usize; 9] = [
     0x190, 0x1a8, 0x1c0, 0x1d8, 0x1f0, 0x208, 0x220, 0x238, 0x250,
 ];

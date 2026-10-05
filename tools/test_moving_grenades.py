@@ -5,7 +5,6 @@ a fake ABI host. The native movement resume routine is replaced only in that
 throwaway mapped image by a callback shim; game files are never modified.
 """
 import ctypes as C
-import hashlib
 import pathlib
 import struct
 import sys
@@ -16,6 +15,7 @@ from moving_test_memory import K, KEEP, alloc, p64, i32, f32, check
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 import json
 import os
+import tomllib
 import builds
 
 BUILD_NAME = os.environ.get("MOVING_GRENADES_BUILD", "steam-2026-09-25")
@@ -32,6 +32,7 @@ def native_rva(reference):
     return MAPPING[reference]
 
 DLL = ROOT / "plugins/moving-grenades/target/release/defiance_plugin_moving_grenades.dll"
+VERSION = tomllib.loads((ROOT / "plugins/moving-grenades/Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
 LOGIC = builds.build(BUILD_NAME).require().logic
 SITES = (native_rva(0x2CABB0), native_rva(0x2CC9E0), native_rva(0x2CCAF0), native_rva(0x2C28F0), native_rva(0xD9470), native_rva(0x9E960),
          native_rva(0x2D8350), native_rva(0x299330), native_rva(0x2996E0), native_rva(0x2CCBE0), native_rva(0x2D9640), native_rva(0x2CC990),
@@ -247,9 +248,6 @@ def main():
         raise SystemExit("moving-grenades test requires Windows x64")
     check(DLL.is_file(), f"missing release plugin: {DLL}")
     check(LOGIC.is_file(), f"missing supported logic.dll: {LOGIC}")
-    check(hashlib.sha256(LOGIC.read_bytes()).hexdigest() ==
-          PROFILE["sha"],
-          f"{BUILD_NAME} logic.dll hash changed")
     base = K.LoadLibraryExW(str(LOGIC), None, 1)
     check(base, f"LoadLibraryExW failed: {C.get_last_error()}")
     image = LOGIC.read_bytes(); pe = int.from_bytes(image[0x3C:0x40], "little")
@@ -628,37 +626,37 @@ def main():
     lib = C.CDLL(str(DLL)); lib.defiance_plugin.restype = C.c_void_p
     plugin = C.cast(lib.defiance_plugin(), C.POINTER(Plugin)).contents
     check(plugin.abi_version == 5 and plugin.name == b"defiance.moving-grenades", "plugin ABI/name")
-    check(plugin.version == b"0.1.20" and plugin.stop is None, "plugin version/stop export")
+    check(plugin.version == VERSION.encode() and plugin.stop is None, "plugin version/stop export")
     init = C.CFUNCTYPE(C.c_int, C.POINTER(Api))(plugin.init)
     check(init(None) != 0 and not hooks, "null API should be refused")
     wrong = Api.from_buffer_copy(api); wrong.abi_version = 4
     check(init(C.byref(wrong)) != 0 and not hooks, "wrong ABI should be refused")
+    # Changed bytes in the cancellation bounds check leave the build
+    # unsupported: a warning and no hook.
+    bounds = base + SITES[12] - 0x19 + 4
+    saved_bounds = C.string_at(bounds, 1)
+    put_code(bounds, bytes([saved_bounds[0] ^ 1]))
+    check(init(C.byref(api)) == 0 and not hooks, f"changed bounds check was hooked: {hooks}")
+    check(any(level == 1 and text.startswith("grenade movement fix: not a supported build (")
+              for level, text in logs), f"unsupported build was not reported: {logs}")
+    put_code(bounds, saved_bounds)
+    logs.clear()
     init_result = init(C.byref(api))
-    if reject_completion:
-        check(reject_manager_trace, "rollback fixture requires skipped optional manager trace")
-        check(init_result != 0, "mandatory completion hook refusal was accepted")
-        expected = [base + SITES[i] for i in reversed(range(15)) if i != 12]
+    # A refused hook removes every hook installed before it, so the plugin
+    # never runs with part of its hooks.
+    refused = 12 if reject_manager_trace else 15 if reject_completion else None
+    if refused is not None:
+        check(init_result != 0, f"refusal of hook {refused} was accepted")
+        expected = [base + SITES[i] for i in reversed(range(refused))]
         check(unhooks == expected,
-              f"rollback touched a skipped/unowned site or missed an owned hook: {unhooks}")
+              f"rollback touched an unowned site or missed an owned hook: {unhooks}")
+        check(any(level == 2 and text.startswith("grenade movement fix refused: hook refused")
+                  for level, text in logs), f"hook refusal was not reported: {logs}")
         K.FreeLibrary(base)
-        print(f"PASS: {BUILD_NAME}: mandatory failure removed only fourteen owned hooks; skipped diagnostics untouched")
+        print(f"PASS: {BUILD_NAME}: refusing hook {refused} removed the {refused} hooks installed before it")
         return
     check(init_result == 0, f"plugin init failed: {logs}")
     check([h[0] for h in hooks] == [base + r for r in SITES], "expected sixteen hooks at verified sites")
-    if reject_manager_trace:
-        startup = [text for _, text in logs if text.startswith("grenade movement fix installed:")]
-        errors = [text for _, text in logs if "manager" in text.lower() and
-                  ("refus" in text.lower() or "disabled" in text.lower())]
-        check(not unhooks and len(hooks) == 16 and hooks[12][0] == base + SITES[12]
-              and hooks[13][0] == base + SITES[13] and hooks[14][0] == base + SITES[14]
-              and hooks[15][0] == base + SITES[15],
-              f"refusing optional manager tracing disturbed submit/core hooks: hooks={hooks} unhooks={unhooks}")
-        check(any("manager_cancel_trace=false" in text for text in startup),
-              f"startup did not report optional manager tracing disabled: {logs}")
-        check(bool(errors), f"optional manager hook refusal was not reported while keeping the core active: {logs}")
-        K.FreeLibrary(base)
-        print("PASS: optional manager trace hook refusal retained the fifteen core hooks without unhooking")
-        return
     stop_detour, turn_point, turn_direction, queue, order, order_attack_move, selector, eligible, requires_idle = [
         detours[i] for i in range(9)]
     heading_detour = detours[9]
@@ -2138,11 +2136,8 @@ def main():
                   if text.startswith("grenade movement selector diagnostic:")),
               "moving-selector diagnostics are not debug")
         check(logs[0][0] == 0, f"startup report is not info: {logs[0]}")
-        check(logs[0][1].startswith(
-            "grenade movement fix installed:"),
+        check(logs[0][1] == "grenade movement fix installed",
               f"unexpected plugin startup report: {logs[0]}")
-        check("manager_cancel_trace=true" in logs[0][1],
-              f"full harness did not enable the optional cancellation hook: {logs[0]}")
 
         # A zero result from the native movement handoff is an exceptional
         # condition. Verify it is reported, but capped independently of the

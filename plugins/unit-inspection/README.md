@@ -31,6 +31,7 @@ game's teal; with the mod but not the plugin they stay grey.
 
 Vehicles and platforms work the same way: the ammo menu lists their weapons,
 and allies' toggles follow `ally_weapon_toggles`. Supported on
-the 2026 game updates (GOG and Steam); on older builds the plugin logs that it
-does not apply and changes nothing. It blocks online multiplayer while active,
+the 2026 game updates (GOG and Steam). It finds its code by signature; on
+older builds, or an update whose code it does not recognise, it logs a warning
+and changes nothing. It blocks online multiplayer while active,
 like the other gameplay plugins.

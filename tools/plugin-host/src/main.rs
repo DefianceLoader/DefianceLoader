@@ -42,39 +42,14 @@ unsafe extern "C" fn config_get(section: *const c_char, key: *const c_char) -> *
         .map_or(std::ptr::null(), |get| unsafe { get(section, key) })
 }
 
-// Share the generated passenger contract with the byte inventory assertion.
-mod passenger {
-    #[derive(Clone, Copy)]
-    pub(super) struct Site {
-        pub rva: usize,
-        pub before: &'static [u8],
-    }
-    #[allow(dead_code)]
-    pub(super) struct Build {
-        pub name: &'static str,
-        pub tick: Site,
-        pub deployment: Site,
-        pub query: Site,
-        pub choose: Site,
-        pub command: Site,
-        pub shared_refresh: Site,
-        pub setter: Site,
-        pub range: Site,
-        pub move_acquire: Site,
-        pub candidate_query: Site,
-        pub capable: Site,
-        pub ui: Site,
-        pub gunner_count: usize,
-        pub gunner_get: usize,
-    }
-    pub(super) const BUILDS: &[Build] = sites::BUILDS;
-    mod sites {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../plugins/vehicle-special-fire/src/sites.rs"
-        ));
-    }
-}
+#[allow(dead_code)]
+#[path = "../../../plugins/unit-inspection/src/patterns.rs"]
+mod inspection_patterns;
+// Resolves the passenger sites the byte inventory assertion checks, with the
+// plugin's own resolver.
+#[allow(dead_code)]
+#[path = "../../../plugins/vehicle-special-fire/src/sites.rs"]
+mod passenger;
 static PATCH: OnceLock<unsafe extern "C" fn(*mut c_void, *const u8, *const u8, usize) -> i32> =
     OnceLock::new();
 static HOOK_EXACT: OnceLock<
@@ -84,7 +59,6 @@ static FAIL_AT: AtomicUsize = AtomicUsize::new(usize::MAX);
 static CALLS: AtomicUsize = AtomicUsize::new(0);
 const INSPECTION_MODULE_SIZE: usize = 0x1000;
 static INSPECTION_MODULE: AtomicUsize = AtomicUsize::new(0);
-static INSPECTION_PATTERN_CALLS: AtomicUsize = AtomicUsize::new(0);
 unsafe extern "C" fn fail_pickup_hook(_: *mut c_void, _: *mut c_void, _: *mut *mut c_void) -> i32 {
     -1
 }
@@ -94,6 +68,22 @@ unsafe extern "C" fn fail_unit_inspection_hook(
     _: *mut *mut c_void,
 ) -> i32 {
     -1
+}
+static INSPECTION_HOOK: OnceLock<
+    unsafe extern "C" fn(*mut c_void, *mut c_void, *mut *mut c_void) -> i32,
+> = OnceLock::new();
+static INSPECTION_HOOKS: AtomicUsize = AtomicUsize::new(0);
+/// Places the first entry hook (the relation label) and refuses the second
+/// (the ammo card fill).
+unsafe extern "C" fn fail_second_unit_inspection_hook(
+    at: *mut c_void,
+    detour: *mut c_void,
+    original: *mut *mut c_void,
+) -> i32 {
+    if INSPECTION_HOOKS.fetch_add(1, Ordering::SeqCst) > 0 {
+        return -1;
+    }
+    unsafe { INSPECTION_HOOK.get().unwrap()(at, detour, original) }
 }
 unsafe extern "C" fn inspection_module(name: *const c_char) -> *mut c_void {
     if unsafe { CStr::from_ptr(name) }.to_bytes() == b"game.dll" {
@@ -108,23 +98,6 @@ unsafe extern "C" fn inspection_size(base: *mut c_void) -> usize {
     } else {
         0
     }
-}
-unsafe extern "C" fn inspection_find_pattern(
-    base: *mut c_void,
-    size: usize,
-    _: *const c_char,
-) -> *mut c_void {
-    if base.is_null() || size != INSPECTION_MODULE_SIZE {
-        return std::ptr::null_mut();
-    }
-    let index = INSPECTION_PATTERN_CALLS.fetch_add(1, Ordering::SeqCst);
-    if unsafe { *(base as *const u8) } == 0 {
-        return std::ptr::null_mut();
-    }
-    let Some(offset) = [0x100, 0x200, 0x300, 0x400].get(index) else {
-        return std::ptr::null_mut();
-    };
-    unsafe { (base as *mut u8).add(*offset) as *mut c_void }
 }
 unsafe extern "C" fn inspection_config_get(
     section: *const c_char,
@@ -172,8 +145,8 @@ unsafe extern "C" fn size(base: *mut c_void) -> usize {
         .unwrap()
         .1
 }
-// VirtualAlloc copies retain the file's preferred-base vtable pointers. Resolve
-// their stock RTTI at that base, then return the live copy's method address.
+// Resolves the stock RTTI of the unrelocated file image at its preferred base,
+// then returns the live copy's method address.
 unsafe extern "C" fn vtable_slot(class: *const c_char, slot: usize) -> *mut c_void {
     let class = unsafe { CStr::from_ptr(class) }.to_str().unwrap();
     for (i, image) in RTTI.get().unwrap().iter().enumerate() {
@@ -254,19 +227,26 @@ unsafe fn exercise_rust_pickup(target: usize) {
         "production callback must not write the squad"
     );
 }
+/// Lays out one copy of each unit-inspection pattern (wildcards zeroed) and
+/// the relation label's queries, so every site resolves exactly once.
 fn prepare_inspection_module(base: *mut u8) {
-    unsafe {
-        core::ptr::write_bytes(base, 0x90, INSPECTION_MODULE_SIZE);
-        *base.add(0x386) = 0xe8;
-        core::ptr::write_bytes(base.add(0x387), 0, 4);
-        for (offset, bytes) in [
-            (0x400 + 0x18a, &[0x4c, 0x8b, 0x82, 0x28, 0x06, 0, 0][..]),
-            (0x400 + 0x1be, &[0xff, 0x90, 0x40, 0x06, 0, 0][..]),
-            (0x400 + 0x1de, &[0xff, 0x90, 0x30, 0x06, 0, 0][..]),
-            (0x400 + 0x1fe, &[0xff, 0x90, 0x38, 0x06, 0, 0][..]),
-        ] {
-            core::ptr::copy_nonoverlapping(bytes.as_ptr(), base.add(offset), bytes.len());
+    use inspection_patterns::*;
+    let module = unsafe { core::slice::from_raw_parts_mut(base, INSPECTION_MODULE_SIZE) };
+    module.fill(0x90);
+    for (at, pattern) in [
+        (0x100, SQUAD_PATTERN),
+        (0x200, AMMO_PATTERN),
+        (0x300, CLICK_PATTERN),
+        (0x400, LABEL_PATTERN),
+        (0x700, FILL_PATTERN),
+    ] {
+        let bytes = defiance_core::pattern::parse(pattern).expect("unit-inspection pattern");
+        for (i, byte) in bytes.into_iter().enumerate() {
+            module[at + i] = byte.unwrap_or(0);
         }
+    }
+    for (at, bytes) in LABEL_SLOTS {
+        module[0x400 + at..0x400 + at + bytes.len()].copy_from_slice(bytes);
     }
 }
 
@@ -292,29 +272,31 @@ fn unit_inspection_partial_install_test(plugins: &PathBuf) {
         as *mut u8;
     assert!(!module.is_null(), "allocate the synthetic game module");
     INSPECTION_MODULE.store(module as usize, Ordering::SeqCst);
+    let _ = INSPECTION_HOOK.set(defiance_loader::test_host::build_api().hook);
 
     for (case, expected_hooks) in [
         ("second ownership hook", 1),
         ("ammo click redirect", 2),
         ("relation label hook", 3),
+        ("ammo card fill hook", 4),
     ] {
         prepare_inspection_module(module);
         let stock = snapshot(module as usize, INSPECTION_MODULE_SIZE);
-        INSPECTION_PATTERN_CALLS.store(0, Ordering::SeqCst);
         CALLS.store(0, Ordering::SeqCst);
+        INSPECTION_HOOKS.store(0, Ordering::SeqCst);
         FAIL_AT.store(usize::MAX, Ordering::SeqCst);
 
         let mut api = defiance_loader::test_host::build_api();
         api.module_base = inspection_module;
         api.module_size = inspection_size;
-        api.find_pattern = inspection_find_pattern;
         api.config_get = inspection_config_get;
         api.hook_exact = hook_exact;
         api.log = log;
         match case {
             "second ownership hook" => FAIL_AT.store(1, Ordering::SeqCst),
             "ammo click redirect" => api.hook_call = fail_unit_inspection_hook,
-            _ => api.hook = fail_unit_inspection_hook,
+            "relation label hook" => api.hook = fail_unit_inspection_hook,
+            _ => api.hook = fail_second_unit_inspection_hook,
         }
 
         let owner = 0x7000 + expected_hooks;
@@ -322,11 +304,6 @@ fn unit_inspection_partial_install_test(plugins: &PathBuf) {
         let status = unsafe { (plugin.init)(&api) };
         defiance_loader::test_host::end_plugin();
         assert_ne!(status, 0, "{case} must fail plugin initialization");
-        assert_eq!(
-            INSPECTION_PATTERN_CALLS.load(Ordering::SeqCst),
-            4,
-            "{case} reaches the installation hooks on the synthetic build"
-        );
         assert_eq!(
             defiance_loader::test_host::installed().len(),
             expected_hooks,
@@ -347,13 +324,11 @@ fn unit_inspection_partial_install_test(plugins: &PathBuf) {
     }
 
     unsafe { core::ptr::write_bytes(module, 0, INSPECTION_MODULE_SIZE) };
-    INSPECTION_PATTERN_CALLS.store(0, Ordering::SeqCst);
     CALLS.store(0, Ordering::SeqCst);
     let stock = snapshot(module as usize, INSPECTION_MODULE_SIZE);
     let mut api = defiance_loader::test_host::build_api();
     api.module_base = inspection_module;
     api.module_size = inspection_size;
-    api.find_pattern = inspection_find_pattern;
     api.config_get = inspection_config_get;
     api.hook_exact = hook_exact;
     api.log = log;
@@ -362,7 +337,6 @@ fn unit_inspection_partial_install_test(plugins: &PathBuf) {
     let status = unsafe { (plugin.init)(&api) };
     defiance_loader::test_host::end_plugin();
     assert_eq!(status, 0, "an unsupported build remains an optional no-op");
-    assert_eq!(INSPECTION_PATTERN_CALLS.load(Ordering::SeqCst), 4);
     let contract_symbol =
         unsafe { GetProcAddress(library, b"defiance_patch_contract_v1\0".as_ptr()) };
     assert!(
@@ -377,7 +351,6 @@ fn unit_inspection_partial_install_test(plugins: &PathBuf) {
         "unsupported build has an empty contract"
     );
     assert_eq!(unsafe { (*contract).count }, 0);
-    assert_eq!(INSPECTION_PATTERN_CALLS.load(Ordering::SeqCst), 8);
     assert!(
         defiance_loader::test_host::installed().is_empty(),
         "an unsupported build stages no hooks"
@@ -443,6 +416,40 @@ fn omitted(scenario: &str) -> Vec<u32> {
     }
 }
 
+/// Applies a mapped PE32+ image's base relocations for `base`, as the Windows
+/// loader does, so its absolute pointers (vtables, RTTI) hold real addresses.
+fn relocate(image: &mut [u8], base: usize) {
+    let u16_at = |image: &[u8], at: usize| u16::from_le_bytes([image[at], image[at + 1]]);
+    let u32_at =
+        |image: &[u8], at: usize| u32::from_le_bytes(image[at..at + 4].try_into().unwrap());
+    let optional = u32_at(image, 0x3c) as usize + 24;
+    assert_eq!(u16_at(image, optional), 0x20b, "a PE32+ image");
+    let preferred = u64::from_le_bytes(image[optional + 24..optional + 32].try_into().unwrap());
+    let delta = (base as u64).wrapping_sub(preferred);
+    let directory = optional + 112 + 5 * 8;
+    let (mut at, end) = (
+        u32_at(image, directory) as usize,
+        (u32_at(image, directory) + u32_at(image, directory + 4)) as usize,
+    );
+    while at + 8 <= end {
+        let (page, size) = (u32_at(image, at) as usize, u32_at(image, at + 4) as usize);
+        assert!(size >= 8, "a well-formed relocation block");
+        for entry in (at + 8..at + size).step_by(2) {
+            let entry = u16_at(image, entry);
+            match entry >> 12 {
+                0 => {}
+                10 => {
+                    let at = page + usize::from(entry & 0xfff);
+                    let value = u64::from_le_bytes(image[at..at + 8].try_into().unwrap());
+                    image[at..at + 8].copy_from_slice(&value.wrapping_add(delta).to_le_bytes());
+                }
+                kind => panic!("relocation type {kind}"),
+            }
+        }
+        at += size;
+    }
+}
+
 fn main() {
     let args: Vec<_> = std::env::args().collect();
     let repo = PathBuf::from(&args[1]);
@@ -460,11 +467,12 @@ fn main() {
     for name in ["logic.dll", "game.dll"] {
         let path = dir.join(name);
         let mapped = defiance_core::pe::map(&path).unwrap();
-        let image = mapped.image.clone();
+        let mut image = mapped.image.clone();
         rtti.push(mapped);
         let base =
             unsafe { VirtualAlloc(std::ptr::null_mut(), image.len(), 0x3000, 0x40) } as *mut u8;
         assert!(!base.is_null());
+        relocate(&mut image, base as usize);
         unsafe { core::ptr::copy_nonoverlapping(image.as_ptr(), base, image.len()) };
         targets.push(Target {
             process_id: unsafe { GetCurrentProcessId() },
@@ -804,11 +812,14 @@ fn main() {
             .collect();
         let mut expected = originals.clone();
         if installed(11) {
+            let image = |i: usize| defiance_core::sites::Image {
+                image: &originals[i],
+                base: targets[i].base as usize,
+            };
+            let build = passenger::sites(&image(0), &image(1))
+                .expect("passenger sites resolve on the stock build");
             let tick = unsafe { vtable_slot(c".?AVGunner@Leonardo@@".as_ptr(), 5) } as usize;
-            let build = passenger::BUILDS
-                .iter()
-                .find(|build| targets[0].base as usize + build.tick.rva == tick)
-                .expect("passenger native contract matches stock RTTI");
+            assert_eq!(targets[0].base as usize + build.tick.rva, tick);
             let entry_sites = [
                 (0, build.tick),
                 (0, build.deployment),

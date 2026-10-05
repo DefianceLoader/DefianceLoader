@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.legion-vehicle-hacking",
   "dll": "defiance_plugin_legion_vehicle_hacking.dll",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "abi": 5,
   "group": "vehicles",
   "settings": [

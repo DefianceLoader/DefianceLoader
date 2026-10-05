@@ -55,19 +55,19 @@
     {
       "hook_rva": 1933296,
       "hook_displaced": "885130c3cc",
-      "hook_entry": 10438,
+      "hook_entry": 10668,
       "hook_feature": 2
     },
     {
       "hook_rva": 4292904,
       "hook_displaced": "498b06498bce",
-      "hook_entry": 10376,
+      "hook_entry": 10606,
       "hook_feature": 2
     },
     {
       "hook_rva": 2727173,
       "hook_displaced": "85f60f88c2000000",
-      "hook_entry": 10623,
+      "hook_entry": 16255,
       "hook_feature": 11
     },
     {
@@ -306,22 +306,32 @@
       "rel_feature": 6
     },
     {
-      "rel_offset": 10304,
+      "rel_offset": 10337,
       "rel_target": 4292608,
       "rel_feature": 2
     },
     {
-      "rel_offset": 10364,
+      "rel_offset": 10454,
       "rel_target": 4292608,
       "rel_feature": 2
     },
     {
-      "rel_offset": 10429,
+      "rel_offset": 10549,
+      "rel_target": 4295856,
+      "rel_feature": 2
+    },
+    {
+      "rel_offset": 10594,
+      "rel_target": 4292608,
+      "rel_feature": 2
+    },
+    {
+      "rel_offset": 10659,
       "rel_target": 4292910,
       "rel_feature": 2
     },
     {
-      "rel_offset": 10434,
+      "rel_offset": 10664,
       "rel_target": 4293075,
       "rel_feature": 2
     },
@@ -426,17 +436,17 @@
       "rel_feature": 11
     },
     {
-      "rel_offset": 10507,
+      "rel_offset": 16139,
       "rel_target": 2809040,
       "rel_feature": 11
     },
     {
-      "rel_offset": 10696,
+      "rel_offset": 16328,
       "rel_target": 2727375,
       "rel_feature": 11
     },
     {
-      "rel_offset": 10701,
+      "rel_offset": 16333,
       "rel_target": 2727181,
       "rel_feature": 11
     }
@@ -447,7 +457,7 @@
     {
       "pose_site": 4621259,
       "pose_before": "e80059e4ff",
-      "pose_entry": 10496,
+      "pose_entry": 16128,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 11
@@ -455,7 +465,7 @@
     {
       "pose_site": 4623792,
       "pose_before": "e81b4fe4ff",
-      "pose_entry": 10496,
+      "pose_entry": 16128,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 11
@@ -633,6 +643,14 @@
       "pose_before": "e80becffff",
       "pose_entry": 10240,
       "pose_tail": "",
+      "pose_stock": 0,
+      "pose_feature": 2
+    },
+    {
+      "pose_site": 4296336,
+      "pose_before": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff5050",
+      "pose_entry": 10518,
+      "pose_tail": "909090909090909090909090909090909090909090909090",
       "pose_stock": 0,
       "pose_feature": 2
     },
@@ -1323,6 +1341,13 @@
       "site_start": 4297712,
       "site_group": 4297600,
       "site_pattern": "e8????????84c0742f483bfe740e4c89374883c70848897c2428",
+      "site_offset": 0
+    },
+    {
+      "site_name": "marquee_select",
+      "site_start": 4296336,
+      "site_group": 4296112,
+      "site_pattern": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff50504883c308483b5dff",
       "site_offset": 0
     },
     {

@@ -24,7 +24,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-plugin-moving-actions-render-sync"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "defiance-api",
  "defiance-build-support",

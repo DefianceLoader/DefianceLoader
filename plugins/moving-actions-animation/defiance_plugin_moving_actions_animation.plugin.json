@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.moving-actions-animation",
   "dll": "defiance_plugin_moving_actions_animation.dll",
-  "version": "0.1.8",
+  "version": "0.2.0",
   "abi": 5,
   "group": "infantry",
   "settings": [{

@@ -11,6 +11,9 @@ use std::{
 static SELECT: OnceLock<&'static defiance_api::SelectionV1> = OnceLock::new();
 static FUNCTIONS: OnceLock<[usize; 8]> = OnceLock::new();
 pub static CLICK: AtomicUsize = AtomicUsize::new(0);
+/// The hover trampoline, and the hover's callees in [`crate::sites::Sites::hover`] order.
+pub static HOVER: AtomicUsize = AtomicUsize::new(0);
+static HOVER_FUNCTIONS: OnceLock<[usize; 8]> = OnceLock::new();
 /// The selected build's class offsets, set by `install` before any render.
 static OFFSETS: OnceLock<Offsets> = OnceLock::new();
 pub fn set_offsets(offsets: Offsets) {
@@ -346,11 +349,12 @@ struct View {
     types: Vec<u64>,
 }
 thread_local! { static VIEW: RefCell<View> = RefCell::new(View::default()); }
-pub unsafe fn configure(base: usize, rvas: &[(usize, &[u8])]) -> Result<(), String> {
+pub unsafe fn configure(base: usize, rvas: &[usize; 8], hover: &[usize; 8]) -> Result<(), String> {
     let selection =
         defiance_feature_sdk::services::selection().ok_or("selection service unavailable")?;
     SELECT.get_or_init(|| selection);
-    FUNCTIONS.get_or_init(|| std::array::from_fn(|i| base + rvas[i].0));
+    FUNCTIONS.get_or_init(|| rvas.map(|rva| base + rva));
+    HOVER_FUNCTIONS.get_or_init(|| hover.map(|rva| base + rva));
     Ok(())
 }
 unsafe fn visibility(widget: usize, value: u8) {
@@ -617,6 +621,103 @@ pub unsafe extern "C" fn click(menu: usize, widget: usize) {
     }
     // Request the ordinary menu refresh; do not retain record/string pointers.
     refresh(menu);
+}
+
+/// Free a vector the game allocated, as the hover's inlined MSVC deallocate
+/// does: large blocks are over-aligned and keep their real start before them.
+unsafe fn release(header: &[usize; 3], free: usize) {
+    let mut start = header[0];
+    if start == 0 {
+        return;
+    }
+    let mut bytes = (header[2] - start) & !7;
+    if bytes >= 0x1000 {
+        bytes += 0x27;
+        start = read(start - 8);
+    }
+    std::mem::transmute::<usize, Pair>(free)(start, bytes);
+}
+
+/// Draw the hovered combined card's highlight, carrier markers and range
+/// circles, as the native hover does for one squad, from every selected user
+/// of the card's type.
+unsafe fn draw(menu: usize, card: usize, ammo: usize, sources: &[Source], f: &[usize; 8]) {
+    let slot =
+        std::mem::transmute::<usize, unsafe extern "C" fn(usize, usize) -> i32>(f[1])(menu, card);
+    std::mem::transmute::<usize, Get>(f[2])(
+        (menu as isize + 0x180 + slot as isize * 0xb8) as usize,
+    );
+    let mut carriers = Vec::<usize>::new();
+    for source in sources {
+        if !source
+            .records
+            .iter()
+            .any(|r| r[0] as usize == ammo && field(r, 0x34) > 0)
+        {
+            continue;
+        }
+        let mut list = [0usize; 3];
+        std::mem::transmute::<usize, unsafe extern "C" fn(usize, usize, usize, usize) -> usize>(
+            f[3],
+        )(menu, list.as_mut_ptr() as usize, source.entity, ammo);
+        if let Some(found) = vector(list.as_ptr() as usize, 8, 100_000) {
+            carriers.extend(found.into_iter().map(|at| read(at)));
+        }
+        release(&list, f[7]);
+    }
+    // The helpers only read the list's begin and end.
+    let end = carriers.as_ptr() as usize + carriers.len() * 8;
+    let list = [carriers.as_ptr() as usize, end, end];
+    let list = list.as_ptr() as usize;
+    let (inner, outer) = (
+        *((ammo + 0x1b4) as *const f32),
+        *((ammo + 0x1b0) as *const f32),
+    );
+    let context = get(read(menu + 0x128), 0x50);
+    // Like the native `ja`, a NaN on either side still draws.
+    let beyond = |minimum: f32| minimum.partial_cmp(&outer) == Some(std::cmp::Ordering::Greater);
+    if context != 0 && !beyond(*((context + 0x2a8) as *const f32)) {
+        let circle = |at: usize, radius: f32| {
+            std::mem::transmute::<usize, unsafe extern "C" fn(usize, usize, f32)>(at)(
+                menu, list, radius,
+            )
+        };
+        circle(f[4], inner);
+        circle(f[5], outer);
+    }
+    std::mem::transmute::<usize, Fill>(f[6])(menu, list, ammo);
+}
+
+/// The card hover. Natively it reads the hovered card's type from the focused
+/// squad's records at the card index, but combined cards are ordered by type,
+/// so the combined view draws its own card's type and lets the native hover
+/// run with no card hovered, which finishes the circle lists after them.
+pub unsafe extern "C" fn hover(menu: usize, entity: usize) {
+    let native = std::mem::transmute::<usize, Pair>(HOVER.load(Ordering::Relaxed));
+    let cached = VIEW.with(|v| {
+        let v = v.borrow();
+        (v.menu == menu).then(|| (v.entities.clone(), v.types.clone()))
+    });
+    let (Some((entities, types)), Some(functions)) = (cached, HOVER_FUNCTIONS.get()) else {
+        return native(menu, entity);
+    };
+    let hovered = (menu + 0x178) as *mut i32;
+    let card = *hovered;
+    // The native hover's own check that the focused unit can show ranges.
+    let unit = if entity == 0 { 0 } else { get(entity, 0xb0) };
+    if unit != 0 && read(unit + 0x28) != 0 {
+        if let Some(&ammo) = usize::try_from(card).ok().and_then(|i| types.get(i)) {
+            // A selection change since the render draws nothing until the next one.
+            if let Some(current) = sources(menu) {
+                if current.iter().map(|s| s.entity).collect::<Vec<_>>() == entities {
+                    draw(menu, card as usize, ammo as usize, &current, functions);
+                }
+            }
+        }
+    }
+    *hovered = -1;
+    native(menu, entity);
+    *hovered = card;
 }
 #[cfg(test)]
 mod tests {

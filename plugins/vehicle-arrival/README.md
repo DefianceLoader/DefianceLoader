@@ -17,7 +17,7 @@ braking_window_percent = 50
 ```
 
 Restart the game. The startup log should contain
-`vehicle arrival installed (<build>): 50% braking window`. Values from 50 to 100
+`vehicle arrival installed (logic+<rva>): 50% braking window`. Values from 50 to 100
 are accepted. At 50 the requested-speed ramp covers half the stock distance;
 75 is a gentler change, and 100 keeps stock behavior without installing a hook.
 Set `enabled = false` and restart to disable it.
@@ -37,6 +37,9 @@ mise exec -- cargo build --release --manifest-path plugins/vehicle-arrival/Cargo
 Run `mise run vehicle-arrival-test` to
 exercise the compiled detour against fabricated objects and each supported
 stock DLL. Test-only exports are confined to the `parity-test` build; shipping
-builds do not expose them. The installer verifies the DLL identity and complete
-arrival method before placing one loader-owned entry hook, and refuses unknown
-or modified code.
+builds do not expose them. The installer finds the arrival callback through
+RTTI (slot 48 of the `BaseTechChassisFacet` vtable, shared by cars and tanks)
+and checks the complete method against a signature before placing one
+loader-owned entry hook. On any other code it logs a warning and installs
+nothing. `cargo test` checks that the callback resolves on every build in
+`bin/`.

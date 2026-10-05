@@ -6,7 +6,6 @@ No installed game files or running game memory are modified.
 """
 import ctypes as C
 import argparse
-import hashlib
 import json
 import pathlib
 from moving_test_memory import K, KEEP, alloc, p64, i32, f32, check
@@ -82,7 +81,6 @@ def verify_build_bindings(selected_name):
         store, date = row["name"].split("-", 1)
         path = ROOT / "bin" / store / date / "logic.dll"
         data = path.read_bytes()
-        check(hashlib.sha256(data).hexdigest() == row["sha"], f"{row['name']} hash")
         pe = int.from_bytes(data[0x3C:0x40], "little")
         image_base = int.from_bytes(data[pe + 24 + 24:pe + 24 + 32], "little")
         # RVA-to-file mapping is supplied by PE section records below.
@@ -129,7 +127,7 @@ def main():
     size = int.from_bytes(data[pe + 24 + 56:pe + 24 + 60], "little")
     original = STEP_FN(base + STEP)
     logs, hooks = [], []
-    module = {"offset": 0, "size": size, "refuse": False, "null": False}
+    module = {"size": size, "refuse": False, "null": False}
     LOG = C.CFUNCTYPE(None, C.c_uint32, C.c_char_p)
     BASE = C.CFUNCTYPE(C.c_void_p, C.c_char_p)
     SIZE = C.CFUNCTYPE(C.c_size_t, C.c_void_p)
@@ -141,7 +139,7 @@ def main():
 
     @BASE
     def module_base(name):
-        return base + module["offset"] if name == b"logic.dll" else None
+        return base if name == b"logic.dll" else None
 
     @SIZE
     def module_size(_base):
@@ -179,10 +177,10 @@ def main():
         setattr(bad, field, value)
         check(init(C.byref(bad)) != 0, f"bad {field} accepted")
     module["size"] = STEP
-    check(init(C.byref(api)) != 0, "small image accepted")
-    module.update(size=size - 0x1000, offset=0x1000)
-    check(init(C.byref(api)) != 0, "changed live bytes accepted")
-    module.update(size=size, offset=0, refuse=True)
+    check(init(C.byref(api)) == 0 and not hooks, "an unresolved step installed")
+    check(any(s.startswith("moving weapon sync: not a supported build (") for s in logs),
+          f"missing unsupported-build warning: {logs}")
+    module.update(size=size, refuse=True)
     check(init(C.byref(api)) != 0, "refused hook accepted")
     module.update(refuse=False, null=True)
     check(init(C.byref(api)) != 0, "null trampoline accepted")

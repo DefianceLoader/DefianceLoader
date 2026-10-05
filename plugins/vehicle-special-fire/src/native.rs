@@ -1,191 +1,143 @@
 //! Native entry hooks complement the passenger binding and mount exchange units.
+use crate::sites::{self, Site, Sites};
 use defiance_api::{
     Api, PatchContractEntryV1, PatchContractV1, LOG_ERROR, LOG_INFO, PATCH_KIND_ENTRY,
 };
+use defiance_core::sites::{code_ranges, Image};
 use std::{
     ffi::{c_void, CStr, CString},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        OnceLock,
-    },
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
-#[derive(Clone, Copy)]
-pub(super) struct Site {
-    rva: usize,
-    before: &'static [u8],
+/// The module bases and the sites resolved in them.
+pub(super) struct Resolved {
+    logic: usize,
+    game: usize,
+    sites: Sites,
 }
-pub(super) struct Build {
-    name: &'static str,
-    tick: Site,
-    deployment: Site,
-    query: Site,
-    choose: Site,
-    command: Site,
-    shared_refresh: Site,
-    setter: Site,
-    range: Site,
-    move_acquire: Site,
-    candidate_query: Site,
-    capable: Site,
-    ui: Site,
-    gunner_count: usize,
-    gunner_get: usize,
-}
-#[path = "sites.rs"]
-mod sites;
-static ACTIVE: OnceLock<&'static Build> = OnceLock::new();
 
-fn log(api: &Api, level: u32, message: &str) {
+pub(super) fn log(api: &Api, level: u32, message: &str) {
     if let Ok(text) = CString::new(message) {
         unsafe { (api.log)(level, text.as_ptr()) };
     }
 }
 
-/// Whether `site`'s expected prologue lies inside the module and matches it.
-unsafe fn site_matches(base: usize, size: usize, site: Site) -> bool {
-    base != 0
-        && site
-            .rva
-            .checked_add(site.before.len())
-            .is_some_and(|end| end <= size)
-        && unsafe { std::slice::from_raw_parts((base + site.rva) as *const u8, site.before.len()) }
-            == site.before
+/// `module`'s base and a copy of its image with the code ranges read back
+/// from the loader's original bytes, so a hook another plugin already placed
+/// does not hide a site.
+unsafe fn original_image(api: &Api, module: &CStr) -> Result<(usize, Vec<u8>), String> {
+    let base = unsafe { (api.module_base)(module.as_ptr()) }.cast::<u8>();
+    if base.is_null() {
+        return Err(format!("{} is not loaded", module.to_string_lossy()));
+    }
+    let size = unsafe { (api.module_size)(base.cast()) };
+    let mut image = unsafe { std::slice::from_raw_parts(base, size) }.to_vec();
+    if let Some(original) = unsafe { defiance_feature_sdk::services::original() } {
+        for (start, end) in code_ranges(&image) {
+            let end = end.min(size);
+            if start < end {
+                // A failed read keeps the live bytes, which the signatures
+                // then judge.
+                unsafe {
+                    (original.read)(
+                        base as usize + start,
+                        image[start..end].as_mut_ptr(),
+                        end - start,
+                    )
+                };
+            }
+        }
+    }
+    Ok((base as usize, image))
 }
 
-pub(super) unsafe fn install(api: &Api) -> i32 {
-    let name = unsafe { defiance_feature_sdk::services::build() }
-        .map(|service| unsafe { (service.name)() })
-        .filter(|name| !name.is_null());
-    let Some(name) = name else {
-        log(
+/// Every site in the loaded logic.dll and game.dll, or why this build is not
+/// supported. Nothing is written.
+pub(super) unsafe fn resolve(api: &Api) -> Result<Resolved, String> {
+    let (logic, logic_image) = unsafe { original_image(api, c"logic.dll") }?;
+    let (game, game_image) = unsafe { original_image(api, c"game.dll") }?;
+    let sites = sites::sites(
+        &Image {
+            image: &logic_image,
+            base: logic,
+        },
+        &Image {
+            image: &game_image,
+            base: game,
+        },
+    )?;
+    Ok(Resolved { logic, game, sites })
+}
+
+/// Configures targeting and places every entry hook at `resolved`'s sites.
+pub(super) unsafe fn install(api: &Api, resolved: &Resolved) -> i32 {
+    let Resolved { logic, game, sites } = resolved;
+    let (logic, game) = (*logic, *game);
+    crate::targeting::QUERY.store(logic + sites.query, Ordering::Release);
+    let configured = unsafe {
+        crate::targeting::configure(
             api,
-            LOG_ERROR,
-            "passenger targeting: the loader's build service is unavailable",
-        );
-        return 1;
+            logic,
+            logic + sites.setter.rva,
+            logic + sites.range,
+            logic + sites.target_equals,
+            logic + sites.release,
+        )
     };
-    let name = unsafe { CStr::from_ptr(name) }.to_string_lossy();
-    let base = unsafe { (api.module_base)(c"logic.dll".as_ptr()) } as usize;
-    let tick = unsafe { (api.vtable_slot)(c".?AVGunner@Leonardo@@".as_ptr(), 5) } as usize;
-    let Some(build) = sites::BUILDS.iter().find(|build| {
-        (build.name == name || (name == "reference" && build.name == "steam-2025-12-23"))
-            && base + build.tick.rva == tick
-    }) else {
-        log(
-            api,
-            LOG_ERROR,
-            "passenger targeting: unsupported native build",
-        );
-        return 1;
-    };
-    let size = unsafe { (api.module_size)(base as *mut c_void) };
-    for (site, class, slot) in [
-        (build.tick, c".?AVGunner@Leonardo@@", 5),
-        (build.deployment, c".?AVGunner@Leonardo@@", 40),
-        (build.query, c".?AVGunner@Leonardo@@", 12),
-        (build.choose, c".?AVGunner@Leonardo@@", 13),
-        (build.command, c".?AVGunner@Leonardo@@", 7),
-        (build.setter, c".?AVGun@Leonardo@@", 5),
-        (build.range, c".?AVGun@Leonardo@@", 60),
-    ] {
-        let address = unsafe { (api.vtable_slot)(class.as_ptr(), slot) } as usize;
-        if address != base + site.rva || !unsafe { site_matches(base, size, site) } {
-            log(
-                api,
-                LOG_ERROR,
-                &format!(
-                    "passenger targeting: {} vf{slot} does not match {}",
-                    class.to_string_lossy(),
-                    build.name
-                ),
-            );
-            return 1;
-        }
-    }
-    for (label, site) in [
-        ("shared-target refresh", build.shared_refresh),
-        ("move-target helper", build.move_acquire),
-        ("candidate query", build.candidate_query),
-        ("gunner capability", build.capable),
-    ] {
-        if !unsafe { site_matches(base, size, site) } {
-            log(
-                api,
-                LOG_ERROR,
-                &format!(
-                    "passenger targeting: {label} does not match {} logic.dll+{:#x}",
-                    build.name, site.rva
-                ),
-            );
-            return 1;
-        }
-    }
-    let game = unsafe { (api.module_base)(c"game.dll".as_ptr()) } as usize;
-    let game_size = unsafe { (api.module_size)(game as *mut c_void) };
-    if !unsafe { site_matches(game, game_size, build.ui) } {
-        log(
-            api,
-            LOG_ERROR,
-            "passenger targeting: attack-button continuation does not match",
-        );
-        return 1;
-    }
-    crate::targeting::QUERY.store(base + build.query.rva, Ordering::Release);
-    if let Err(message) = unsafe { crate::targeting::configure(api) } {
+    if let Err(message) = configured {
         log(api, LOG_ERROR, &message);
         return 1;
     }
-    crate::orders::GUNNER_COUNT.store(build.gunner_count, Ordering::Release);
-    crate::orders::GUNNER_GET.store(build.gunner_get, Ordering::Release);
+    crate::orders::GUNNER_COUNT.store(sites.gunner_count, Ordering::Release);
+    crate::orders::GUNNER_GET.store(sites.gunner_get, Ordering::Release);
     for (site, detour, original) in [
         (
-            build.tick,
+            sites.tick,
             crate::targeting::tick as *mut c_void,
             &crate::targeting::TICK_ORIGINAL,
         ),
         (
-            build.choose,
+            sites.choose,
             crate::targeting::choose as *mut c_void,
             &crate::targeting::CHOOSE_ORIGINAL,
         ),
         (
-            build.deployment,
+            sites.deployment,
             crate::targeting::deployment as *mut c_void,
             &crate::targeting::DEPLOYMENT_ORIGINAL,
         ),
         (
-            build.command,
+            sites.command,
             crate::targeting::command as *mut c_void,
             &crate::targeting::COMMAND_ORIGINAL,
         ),
         (
-            build.setter,
+            sites.setter,
             crate::targeting::shared_target as *mut c_void,
             &crate::targeting::SET_TARGET,
         ),
         (
-            build.shared_refresh,
+            sites.shared_refresh,
             crate::targeting::shared_refresh as *mut c_void,
             &crate::targeting::SHARED_REFRESH_ORIGINAL,
         ),
         (
-            build.move_acquire,
+            sites.move_acquire,
             crate::targeting::move_acquire as *mut c_void,
             &crate::targeting::MOVE_ACQUIRE_ORIGINAL,
         ),
         (
-            build.candidate_query,
+            sites.candidate_query,
             crate::targeting::candidate_query as *mut c_void,
             &crate::targeting::CANDIDATE_QUERY_ORIGINAL,
         ),
         (
-            build.capable,
+            sites.capable,
             crate::targeting::capable as *mut c_void,
             &crate::targeting::CAPABLE_ORIGINAL,
         ),
     ] {
-        if unsafe { install_one(api, base, site, detour, original) } != 0 {
+        if unsafe { install_one(api, logic, site, detour, original) } != 0 {
             return 1;
         }
     }
@@ -193,15 +145,12 @@ pub(super) unsafe fn install(api: &Api) -> i32 {
         install_one(
             api,
             game,
-            build.ui,
+            sites.ui,
             crate::ui::availability as *mut c_void,
             &crate::ui::ORIGINAL,
         )
     } != 0
     {
-        return 1;
-    }
-    if ACTIVE.set(build).is_err() {
         return 1;
     }
     log(
@@ -240,26 +189,23 @@ unsafe fn install_one(
     0
 }
 
-pub(super) unsafe fn contract(units: *const PatchContractV1) -> *const PatchContractV1 {
-    let (Some(units), Some(build)) = (unsafe { units.as_ref() }, ACTIVE.get()) else {
+/// `units` with the entry hooks at `resolved`'s sites appended.
+pub(super) unsafe fn contract(
+    units: *const PatchContractV1,
+    resolved: &Resolved,
+) -> *const PatchContractV1 {
+    let Some(units) = (unsafe { units.as_ref() }) else {
         return std::ptr::null();
     };
     if units.entries.is_null() || units.version != 1 {
         return std::ptr::null();
     }
     let mut entries = unsafe { std::slice::from_raw_parts(units.entries, units.count) }.to_vec();
-    for (module, site) in [
-        (c"logic.dll", build.tick),
-        (c"logic.dll", build.deployment),
-        (c"logic.dll", build.choose),
-        (c"logic.dll", build.command),
-        (c"logic.dll", build.setter),
-        (c"logic.dll", build.shared_refresh),
-        (c"logic.dll", build.move_acquire),
-        (c"logic.dll", build.candidate_query),
-        (c"logic.dll", build.capable),
-        (c"game.dll", build.ui),
-    ] {
+    let logic = resolved
+        .sites
+        .logic_hooks()
+        .map(|site| (c"logic.dll", site));
+    for (module, site) in logic.into_iter().chain([(c"game.dll", resolved.sites.ui)]) {
         entries.push(PatchContractEntryV1 {
             module: module.as_ptr(),
             rva: site.rva,

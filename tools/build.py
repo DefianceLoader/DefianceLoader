@@ -329,6 +329,9 @@ GAME_LAYOUT = {}
 # `ai_attack_ready` the one the order buttons apply after `ai_can_attack`.
 # The game layout maps `call [rax+0x368]` to another class's slot, so the
 # latter must be a symbol: symbols are substituted after the layout.
+# `gun_selected_ammo` is the logic.dll Gun's selected-ammo getter, which the
+# game payload calls; the game layout maps `call [rax+0x158]` to a game.dll
+# class's slot, while the Gun's slot stays put on every build.
 REFERENCE_SYMBOLS = {"lie_down_frame": 0x70, "stand_up_frame": 0x60,
                      "gunner_count": 0x130, "gunner_get": 0x120,
                      "ammo_pool_get": 0x1b8, "squad_roster": 0x3b8,
@@ -336,7 +339,8 @@ REFERENCE_SYMBOLS = {"lie_down_frame": 0x70, "stand_up_frame": 0x60,
 SYMBOLS = dict(REFERENCE_SYMBOLS)
 REFERENCE_GAME_SYMBOLS = {"gunner_count": 0x130, "gunner_get": 0x120, "squad_roster": 0x3b8,
                           "ai_can_attack": 0x390, "ai_attack_order": 0x368,
-                          "ai_attack_ready": 0x370, "ammo_pool_get": 0x1b8}
+                          "ai_attack_ready": 0x370, "ammo_pool_get": 0x1b8,
+                          "gun_selected_ammo": 0x158}
 GAME_SYMBOLS = dict(REFERENCE_GAME_SYMBOLS)
 # Which layout keys an assembly actually rewrote, and the sources it was run
 # over, keyed by the table's identity, so a per-build run can report entries

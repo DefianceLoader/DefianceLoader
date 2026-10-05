@@ -1,6 +1,5 @@
 """Resolve the render-sync functions and RTTI tables for each 2026 build."""
 from dataclasses import dataclass
-import hashlib
 
 import builds
 from moving_grenades_bindings import Mapper
@@ -27,7 +26,6 @@ TABLES = {
     "gunner_vt": 0x72CD00,
     "gunner_client_vt": 0x72CED0,
 }
-WORLD_SHA = "c39827bec79c0c4e1358259b5a2b3a6762e9270c6f5e1f25ce32d3f95b6a15c2"
 WORLD_ATTACH = 0x154D40
 WORLD_DETACH = 0x1551A0
 
@@ -37,7 +35,6 @@ class Profile:
     name: str
     logic: str
     world: str
-    sha: str
     bindings: dict[str, int]
 
 
@@ -50,21 +47,16 @@ def profiles():
         mapper = Mapper(reference, image)
         resolved = {key: mapper.code(rva) for key, rva in FUNCTIONS.items()}
         resolved.update({key: mapper.table(rva) for key, rva in TABLES.items()})
-        sha = hashlib.sha256(build.logic.read_bytes()).hexdigest()
         rows.append(Profile(
             name=name,
             logic=str(build.logic),
             world=str(build.logic.parent / "world2.dll") if (build.logic.parent / "world2.dll").exists()
             else str(builds.build("gog-2026-09-25").logic.parent / "world2.dll"),
-            sha=sha,
             bindings=resolved,
         ))
-    world = builds.build("gog-2026-09-25").logic.parent / "world2.dll"
-    if hashlib.sha256(world.read_bytes()).hexdigest() != WORLD_SHA:
-        raise ValueError(f"{world}: unexpected World2 hash")
     return rows
 
 
 if __name__ == "__main__":
     for profile in profiles():
-        print(profile.name, profile.sha, profile.bindings)
+        print(profile.name, profile.bindings)

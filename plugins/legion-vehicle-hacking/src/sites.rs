@@ -1,40 +1,63 @@
-//! Game build hashes and the final deny branch in `SmartCursorHacking`.
+//! Where the final deny branch in `SmartCursorHacking` lives in a game.dll,
+//! found by signature instead of looked up by build hash.
+//!
+//! [`DENY`] is the branch and the two stores around it (`tools/sigs.py`'s
+//! encoding; this window has no relative operands, so every byte is fixed).
+//! It must match exactly once and start with the bytes the patch replaces, so
+//! a build where the branch moved or changed shape resolves to an error and
+//! the plugin writes nothing.
+use crate::BEFORE;
+use defiance_core::sites::{sig, Image, Signature};
 
-pub(super) struct Build {
-    pub(super) name: &'static str,
-    pub(super) sha: &'static str,
-    pub(super) deny_branch: usize,
+/// `jnz +0x11; mov dword [rbx+0x38], 0x30; mov [rbx+0x28], rdi;
+/// mov byte [rbx+0x18], 1; jmp +0xc; mov qword [rbx+0x28], 0`.
+const DENY: Signature = sig(
+    "the hacking deny branch",
+    &[("7511c743383000000048897b28c6431801eb0c48c7432800000000", 0)],
+);
+
+/// The rva of the deny branch, or why this build is not supported.
+pub(crate) fn deny_branch(image: &Image) -> Result<usize, String> {
+    let rva = image.find(&DENY)?;
+    image.expect(DENY.name, rva, &BEFORE)?;
+    Ok(rva)
 }
 
-pub(super) const BUILDS: &[Build] = &[
-    Build {
-        name: "GOG 2025-12-23",
-        sha: "f0184b9fe358172c83261419c8ba3d822a0aa6b06ed3cddb2f7aa3ebb9653db4",
-        deny_branch: 0x3373c5,
-    },
-    Build {
-        name: "GOG 2026-09-14",
-        sha: "bc2af42369f9f6fe70e206ae4846f8f0e46ac01cca9a325c8159ee04a9b5e405",
-        deny_branch: 0x3395a5,
-    },
-    Build {
-        name: "GOG 2026-09-25",
-        sha: "8ec30a0b59aebf2240f00229d54a0f58e2e338f9ab3511046c9ff36970dd1489",
-        deny_branch: 0x3395a5,
-    },
-    Build {
-        name: "Steam 2025-12-23",
-        sha: "dc10419f417aed4ecff348b7c96b3c7c574a9a2541f76c5fbc35eb92dbc716d6",
-        deny_branch: 0x33d875,
-    },
-    Build {
-        name: "Steam 2026-09-22",
-        sha: "d926a213731d73bac8ccc56b50e2b4292fe8613c7a9bb7c8b9fc9132c122ed25",
-        deny_branch: 0x33fa85,
-    },
-    Build {
-        name: "Steam 2026-09-25",
-        sha: "c336b5ed4a367628a9c370457d82b1d4e75cab9007cffe5354e27688e836f98e",
-        deny_branch: 0x33fa85,
-    },
-];
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use defiance_core::sites::{reference, BUILDS};
+
+    /// The rvas the per-build hash table held before the plugin resolved its
+    /// site, in [`BUILDS`] order.
+    const TABLE: [usize; 6] = [0x3373c5, 0x33d875, 0x3395a5, 0x33fa85, 0x3395a5, 0x33fa85];
+
+    #[test]
+    fn the_branch_resolves_where_the_build_table_had_it() {
+        for (build, expected) in BUILDS.iter().zip(TABLE) {
+            let Some(mapped) = reference(build, "game.dll") else {
+                eprintln!("skipping {build}: no bin/{build}/game.dll");
+                continue;
+            };
+            assert_eq!(
+                deny_branch(&Image::mapped(&mapped)),
+                Ok(expected),
+                "{build}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_changed_branch_is_refused() {
+        let Some(mapped) = reference(BUILDS[0], "game.dll") else {
+            return;
+        };
+        let mut changed = mapped.image.clone();
+        changed[TABLE[0] + 1] ^= 1;
+        let image = Image {
+            image: &changed,
+            base: mapped.base,
+        };
+        assert!(deny_branch(&image).is_err());
+    }
+}

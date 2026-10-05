@@ -1,11 +1,11 @@
 //! Startup-only, opt-in expansion of the stock three-row ammunition menu.
 //! All layout-dependent operands are validated before any write. The optional
 //! combined-step callback is cleared on stop; native layout patches are not hot-unloaded.
-use core::ffi::c_void;
 use defiance_api::{
     AmmoStepV1, Api, PatchContractV1, Plugin, ABI_VERSION, LOG_ERROR, LOG_INFO, LOG_WARN,
     PATCH_KIND_ENTRY,
 };
+use defiance_core::sites::{code_ranges, Image};
 mod combined;
 mod sites;
 mod tooltip;
@@ -68,23 +68,9 @@ unsafe extern "C" fn redraw(menu: usize, entity: usize) {
     );
 }
 
-#[derive(Clone, Copy)]
-enum Kind {
-    Count,
-    Extent,
-    Shift,
-    Zero,
-}
-struct Site {
-    rva: usize,
-    before: &'static [u8],
-    field: usize,
-    width: usize,
-    kind: Kind,
-}
 /// The class offsets the menu helpers read, which move between builds while the
 /// patch source stays one. The reference build's values are the defaults.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Offsets {
     pub roster: usize,
     pub gunner_count: usize,
@@ -97,33 +83,22 @@ pub struct Offsets {
     pub tooltip: usize,
 }
 
-struct Build {
-    sha: &'static str,
-    sites: &'static [Site],
-    redraw: usize,
-    redraw_before: &'static [u8],
-    layout: usize,
-    layout_before: &'static [u8],
-    combined: &'static [(usize, &'static [u8])],
-    offsets: Offsets,
-}
-
 fn slots(columns: i64) -> Result<usize, &'static str> {
     if !(3..=42).contains(&columns) {
         return Err("columns must be between 3 and 42 (9 to 126 slots)");
     }
     Ok(columns as usize * 3)
 }
-fn replacement(site: &Site, count: usize) -> Vec<u8> {
+fn replacement(site: &sites::Site, count: usize) -> Vec<u8> {
     let old = site.before[site.field..site.field + site.width]
         .iter()
         .enumerate()
         .fold(0usize, |sum, (i, b)| sum | ((*b as usize) << (8 * i)));
     let value = match site.kind {
-        Kind::Count => count,
-        Kind::Extent => count * 0xb8,
-        Kind::Shift => old + (count - 9) * 0xb8,
-        Kind::Zero => 0,
+        sites::Kind::Count => count,
+        sites::Kind::Extent => count * 0xb8,
+        sites::Kind::Shift => old + (count - 9) * 0xb8,
+        sites::Kind::Zero => 0,
     };
     let mut result = site.before.to_vec();
     result[site.field..site.field + site.width].copy_from_slice(&value.to_le_bytes()[..site.width]);
@@ -135,32 +110,53 @@ unsafe fn log(api: &Api, level: u32, text: &str) {
         (api.log)(level, text.as_ptr());
     }
 }
-#[link(name = "kernel32")]
-extern "system" {
-    fn GetModuleFileNameW(module: *mut c_void, path: *mut u16, capacity: u32) -> u32;
-}
-unsafe fn selected_build(api: &Api) -> Result<(*mut u8, usize, &'static Build), String> {
+/// game.dll's base, its size and its resolved sites. The sites are found in
+/// game.dll as it was before any plugin hooked it, since another plugin may
+/// hook a function the combined view only calls (unit inspection hooks
+/// `fillSlot`); the bytes this plugin writes are checked live before writing.
+unsafe fn resolve(api: &Api) -> Result<(*mut u8, usize, sites::Sites), String> {
     let base = (api.module_base)(c"game.dll".as_ptr()).cast::<u8>();
     if base.is_null() {
         return Err("game.dll is not loaded".into());
     }
     let size = (api.module_size)(base.cast());
-    let mut path = [0u16; 32768];
-    let length = GetModuleFileNameW(base.cast(), path.as_mut_ptr(), path.len() as u32) as usize;
-    if length == 0 || length >= path.len() {
-        return Err("cannot resolve game.dll path".into());
+    let logic = (api.module_base)(c"logic.dll".as_ptr());
+    if logic.is_null() {
+        return Err("logic.dll is not loaded".into());
     }
-    use std::os::windows::ffi::OsStringExt;
-    let path = std::path::PathBuf::from(std::ffi::OsString::from_wide(&path[..length]));
-    let sha = defiance_core::sha256::file(&path).map_err(|e| e.to_string())?;
-    let build = sites::BUILDS
-        .iter()
-        .find(|b| b.sha == sha)
-        .ok_or("unsupported game.dll build; no menu writes made")?;
-    Ok((base, size, build))
+    let logic = Image::loaded(logic as *const u8, (api.module_size)(logic));
+    let mut image = core::slice::from_raw_parts(base, size).to_vec();
+    if let Some(original) = defiance_feature_sdk::services::original() {
+        for (start, end) in code_ranges(&image) {
+            let end = end.min(size);
+            if start < end {
+                // A failed read keeps the live bytes, which the signatures
+                // then judge.
+                (original.read)(
+                    base as usize + start,
+                    image[start..end].as_mut_ptr(),
+                    end - start,
+                );
+            }
+        }
+    }
+    let game = Image {
+        image: &image,
+        base: base as usize,
+    };
+    Ok((base, size, sites::sites(&game, &logic)?))
 }
 
-unsafe fn install(api: &Api) -> Result<(), String> {
+/// Whether the live bytes at `rva` are `before`.
+unsafe fn live(base: *mut u8, size: usize, rva: usize, before: &[u8]) -> bool {
+    rva.checked_add(before.len()).is_some_and(|end| end <= size)
+        && core::slice::from_raw_parts(base.add(rva), before.len()) == before
+}
+
+unsafe fn install(
+    api: &Api,
+    (base, size, sites): (*mut u8, usize, sites::Sites),
+) -> Result<(), String> {
     let columns = defiance_feature_sdk::integer(api, "defiance.expanded-ammo-menu", "columns")
         .map_err(|e| e.to_string())?;
     let count = slots(columns)?;
@@ -191,71 +187,37 @@ unsafe fn install(api: &Api) -> Result<(), String> {
     }
     let menu = defiance_feature_sdk::services::ammo_menu()
         .ok_or("Core ammo-menu service v1 unavailable; update Core with this plugin")?;
-    let (base, size, build) = unsafe { selected_build(api) }?;
-    combined::set_offsets(build.offsets);
+    combined::set_offsets(sites.offsets);
     // In particular do not edit the nine-slot loop before storage, destruction,
     // click handling, and exception cleanup have all been validated together.
-    for site in build.sites {
-        if site
-            .rva
-            .checked_add(site.before.len())
-            .is_none_or(|end| end > size)
-        {
-            return Err("menu patch falls outside game.dll".into());
-        }
-        if core::slice::from_raw_parts(base.cast::<u8>().add(site.rva), site.before.len())
-            != site.before
-        {
+    for (site, &rva) in sites::SITES.iter().zip(&sites.patches) {
+        if !live(base, size, rva, site.before) {
             return Err(format!(
-                "menu bytes differ at game.dll+{:#x}; no menu writes made",
-                site.rva
+                "menu bytes differ at game.dll+{rva:#x}; no menu writes made"
             ));
         }
     }
-    for (rva, before) in [
-        (build.redraw, build.redraw_before),
-        (build.layout, build.layout_before),
-    ] {
-        if rva.checked_add(before.len()).is_none_or(|end| end > size)
-            || core::slice::from_raw_parts(base.cast::<u8>().add(rva), before.len()) != before
-        {
-            return Err("menu layout hook bytes differ; no writes made".into());
-        }
+    if !live(base, size, sites.redraw, sites::REDRAW_BEFORE) {
+        return Err("menu redraw hook bytes differ; no writes made".into());
     }
     if all_selected {
-        // The combined view calls these functions, and hooks only the first, so
-        // they are checked as they were before any plugin hooked them: unit
-        // inspection hooks `fillSlot`, whichever starts first. The hooked one
-        // is checked live as well.
-        let original = defiance_feature_sdk::services::original();
-        for (index, &(rva, before)) in build.combined.iter().enumerate() {
-            if rva.checked_add(before.len()).is_none_or(|end| end > size) {
-                return Err("combined menu bytes differ; no writes made".into());
-            }
-            let address = base.cast::<u8>().add(rva);
-            let live = core::slice::from_raw_parts(address, before.len());
-            let mut bytes = live.to_vec();
-            let differs = match original {
-                Some(original) => {
-                    (original.read)(address as usize, bytes.as_mut_ptr(), bytes.len()) != 0
-                        || bytes != before
-                        || (index == 0 && live != before)
-                }
-                None => live != before,
-            };
-            if differs {
-                return Err("combined menu bytes differ; no writes made".into());
-            }
+        // The combined view calls these functions, which [`sites::sites`]
+        // checked as they were before any plugin hooked them; the one it
+        // hooks is checked live as well.
+        if !live(base, size, sites.combined[0], sites::COMBINED[0].1)
+            || !live(base, size, sites.hover[0], sites::HOVER_BEFORE)
+        {
+            return Err("combined menu bytes differ; no writes made".into());
         }
-        combined::configure(base as usize, build.combined)?;
+        combined::configure(base as usize, &sites.combined, &sites.hover)?;
     }
     let mut applied = Vec::new();
-    for site in build.sites {
+    for (site, &rva) in sites::SITES.iter().zip(&sites.patches) {
         let after = replacement(site, count);
         if after == site.before {
             continue;
         }
-        let address = base.cast::<u8>().add(site.rva).cast();
+        let address = base.add(rva).cast();
         if (api.patch_bytes)(address, site.before.as_ptr(), after.as_ptr(), after.len()) != 0 {
             // Reverse order here, then let host rollback retry anything that
             // could not be restored. Never mark a partial expansion active.
@@ -267,14 +229,14 @@ unsafe fn install(api: &Api) -> Result<(), String> {
         applied.push(address);
     }
     COUNT.store(count, Ordering::Relaxed);
-    LAYOUT.store(base as usize + build.layout, Ordering::Relaxed);
-    TOOLTIP.store(build.offsets.tooltip, Ordering::Relaxed);
-    let address = base.cast::<u8>().add(build.redraw).cast();
+    LAYOUT.store(base as usize + sites.layout, Ordering::Relaxed);
+    TOOLTIP.store(sites.offsets.tooltip, Ordering::Relaxed);
+    let address = base.add(sites.redraw).cast();
     let mut trampoline = std::ptr::null_mut();
     if (api.hook_exact)(
         address,
         redraw as *mut _,
-        build.redraw_before.len(),
+        sites::REDRAW_SPAN,
         &mut trampoline,
     ) != 0
     {
@@ -286,13 +248,12 @@ unsafe fn install(api: &Api) -> Result<(), String> {
     REDRAW.store(trampoline as usize, Ordering::Relaxed);
     applied.push(address);
     if all_selected {
-        let (rva, before) = build.combined[0];
-        let address = base.cast::<u8>().add(rva).cast();
+        let address = base.add(sites.combined[0]).cast();
         let mut trampoline = std::ptr::null_mut();
         if (api.hook_exact)(
             address,
             combined::click as *mut _,
-            before.len(),
+            sites::CLICK_SPAN,
             &mut trampoline,
         ) != 0
         {
@@ -303,9 +264,25 @@ unsafe fn install(api: &Api) -> Result<(), String> {
         }
         combined::CLICK.store(trampoline as usize, Ordering::Relaxed);
         applied.push(address);
+        let address = base.add(sites.hover[0]).cast();
+        let mut trampoline = std::ptr::null_mut();
+        if (api.hook_exact)(
+            address,
+            combined::hover as *mut _,
+            sites::HOVER_SPAN,
+            &mut trampoline,
+        ) != 0
+        {
+            for address in applied.into_iter().rev() {
+                (api.unhook)(address);
+            }
+            return Err("combined menu hover hook failed; patches rolled back".into());
+        }
+        combined::HOVER.store(trampoline as usize, Ordering::Relaxed);
+        applied.push(address);
     }
     ALL_SELECTED.store(all_selected, Ordering::Relaxed);
-    log(api,LOG_INFO,&format!("expanded ammo menu: 3 rows x {columns} columns ({count} slots); compact visible slots v2 (relative root movement); tooltip beside visible grid v1; all_selected_squads={all_selected}; menu context fix v3; combined counts/reload share v2, vehicles; startup-only, no hot unload"));
+    log(api,LOG_INFO,&format!("expanded ammo menu: 3 rows x {columns} columns ({count} slots); compact visible slots v2 (relative root movement); tooltip beside visible grid v1; all_selected_squads={all_selected}; menu context fix v3; combined counts/reload share v2, vehicles, hover range v1; startup-only, no hot unload"));
     // Nothing fallible may follow successful publication. On refusal the host
     // rolls back this plugin's owned patches; capacity remains unchanged.
     if (menu.publish)(count as u32) != 0 {
@@ -346,18 +323,18 @@ unsafe extern "C" fn patch_contract(api: *const Api) -> *const PatchContractV1 {
         Err(defiance_feature_sdk::ConfigError::Unavailable) => false,
         Err(_) => return core::ptr::null(),
     };
-    let (_, _, build) = match unsafe { selected_build(api_ref) } {
+    let (_, _, sites) = match unsafe { resolve(api_ref) } {
         Ok(selected) => selected,
         Err(_) => return core::ptr::null(),
     };
-    let mut patches = build
-        .sites
+    let mut patches = sites::SITES
         .iter()
-        .filter_map(|site| {
+        .zip(sites.patches)
+        .filter_map(|(site, rva)| {
             let after = replacement(site, count);
             (after != site.before).then(|| defiance_feature_sdk::contract::Patch {
                 module: c"game.dll",
-                rva: site.rva,
+                rva,
                 kind: defiance_api::PATCH_KIND_BYTES,
                 before: site.before.to_vec(),
                 after: Some(after),
@@ -366,21 +343,26 @@ unsafe extern "C" fn patch_contract(api: *const Api) -> *const PatchContractV1 {
         .collect::<Vec<_>>();
     patches.push(defiance_feature_sdk::contract::Patch {
         module: c"game.dll",
-        rva: build.redraw,
+        rva: sites.redraw,
         kind: PATCH_KIND_ENTRY,
-        before: build.redraw_before.to_vec(),
+        before: sites::REDRAW_BEFORE.to_vec(),
         after: None,
     });
     if all_selected {
-        if let Some(&(rva, before)) = build.combined.first() {
-            patches.push(defiance_feature_sdk::contract::Patch {
-                module: c"game.dll",
-                rva,
-                kind: PATCH_KIND_ENTRY,
-                before: before.to_vec(),
-                after: None,
-            });
-        }
+        patches.push(defiance_feature_sdk::contract::Patch {
+            module: c"game.dll",
+            rva: sites.combined[0],
+            kind: PATCH_KIND_ENTRY,
+            before: sites::COMBINED[0].1.to_vec(),
+            after: None,
+        });
+        patches.push(defiance_feature_sdk::contract::Patch {
+            module: c"game.dll",
+            rva: sites.hover[0],
+            kind: PATCH_KIND_ENTRY,
+            before: sites::HOVER_BEFORE.to_vec(),
+            after: None,
+        });
     }
     unsafe { defiance_feature_sdk::contract::build(api, patches) }
 }
@@ -398,7 +380,18 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
     if api.abi_version != ABI_VERSION || api.reserved != 0 {
         return 1;
     }
-    match install(api) {
+    let resolved = match resolve(api) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            log(
+                api,
+                LOG_WARN,
+                &format!("expanded ammo menu: not a supported build ({error}); no writes made"),
+            );
+            return 1;
+        }
+    };
+    match install(api, resolved) {
         Ok(()) => 0,
         Err(error) => {
             log(
@@ -432,12 +425,10 @@ defiance_feature_sdk::service_handshake!();
 mod tests {
     use super::*;
     #[test]
-    fn redraw_hook_spans_are_copyable() {
-        for build in sites::BUILDS {
-            defiance_core::decode::validate_copy(build.combined[0].1).unwrap();
-            assert!(build.redraw_before.len() >= 14);
-            defiance_core::decode::validate_copy(build.redraw_before).unwrap();
-        }
+    fn hook_spans_are_copyable() {
+        defiance_core::decode::validate_copy(&sites::COMBINED[0].1[..sites::CLICK_SPAN]).unwrap();
+        defiance_core::decode::validate_copy(&sites::REDRAW_BEFORE[..sites::REDRAW_SPAN]).unwrap();
+        defiance_core::decode::validate_copy(&sites::HOVER_BEFORE[..sites::HOVER_SPAN]).unwrap();
     }
     #[test]
     fn bounds_preserve_signed_byte_loop_operands() {
@@ -449,8 +440,8 @@ mod tests {
     }
     #[test]
     fn every_generated_patch_preserves_instruction_size_and_surrounding_bytes() {
-        for build in sites::BUILDS {
-            for site in build.sites {
+        {
+            for site in &sites::SITES {
                 for count in [9, 12, 36, 126] {
                     let after = replacement(site, count);
                     assert_eq!(after.len(), site.before.len());
@@ -459,7 +450,7 @@ mod tests {
                         &after[site.field + site.width..],
                         &site.before[site.field + site.width..]
                     );
-                    if count == 9 && !matches!(site.kind, Kind::Zero) {
+                    if count == 9 && !matches!(site.kind, sites::Kind::Zero) {
                         assert_eq!(after, site.before);
                     }
                 }

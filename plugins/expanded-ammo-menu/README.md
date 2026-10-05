@@ -37,8 +37,10 @@ running battle, hot reload it, or unload its patches while menus exist: it
 changes the game's in-memory menu object layout. To disable, exit the game,
 set `enabled = false`, and restart.
 
-The known GOG and Steam December 2025 `game.dll` builds are supported. Unknown or
-modified on-disk DLLs and mismatching live patch bytes are refused. The normal
+The GOG and Steam December 2025 and September 2026 builds are supported. The
+plugin finds its code by signature at startup; a build where any site is
+missing, ambiguous or changed, or where the live patch bytes differ, is
+refused before any write. The normal
 loader log records the chosen capacity or refusal.
 
 ## Behavior and limits
@@ -74,14 +76,17 @@ mise exec -- python tools/package_expanded_ammo_menu.py
 The menu remains a standalone workspace; mise run loader builds matching Core,
 regroup and manifests for the package. Output: `out/expanded-ammo-regroup.zip` and a separate symbols ZIP.
 
-To re-audit the sites and run the native game-code tests, provide the repository's
-local `bin/gog/2025-12-23/game.dll` and `bin/steam/2025-12-23/game.dll` and the Python dependencies
-from `mise run setup`, then run:
+To check the sites and run the native game-code tests, provide the
+repository's local `bin/<store>/<date>/` `game.dll` and `logic.dll` for each
+supported build and the Python dependencies from `mise run setup`, then run:
 
 ```powershell
-mise exec -- python tools/ammo_menu_sites.py
-mise exec -- python tools/test_expanded_ammo_menu.py
+mise run ammo-menu-test
 ```
+
+`cargo test` resolves every site on every build in `bin/` and checks the result
+against a table of each build's expected values; it skips the builds that are not
+there.
 
 No test starts the game or changes an installed game file. The tests load game
 code into disposable processes and use fabricated UI objects.
@@ -144,12 +149,14 @@ Selected vehicles join the view: each is one user of its ammunition types,
 enabled or disabled as a whole (vehicles have no per-soldier pins), and a
 click toggles it with the squads. A selected building without guns of its
 own does not contribute.
+Hovering a card shows that card's ammunition range circles and marks its
+carriers in every selected unit.
 
 This view is experimental and intended for single-player use. It does not emit
 the native per-unit replay/recording commands; replay/network synchronization is
 not supported. The ammo-level bar shows summed rounds divided by summed
 capacity. The reload bar shows the ready share of the selected users of that
-type, as the single-squad panel does: each enabled user counts 1 when ready or
+type, as the single-squad panel does for a type several soldiers use: each enabled user counts 1 when ready or
 his native reload progress while reloading, a disabled user 0, divided by the
 users. It is full when all are enabled and ready, and is a group indicator, not
 a prediction of when every soldier will finish reloading.

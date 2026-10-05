@@ -8,7 +8,7 @@ struct Handle(usize);
 impl Drop for Handle {
     fn drop(&mut self) {
         unsafe {
-            pair(b::WEAK_BIND, &mut self.0 as *mut usize as usize, 0);
+            pair(sites::WEAK_BIND, &mut self.0 as *mut usize as usize, 0);
         }
     }
 }
@@ -17,7 +17,7 @@ struct Weak(Arc<Handle>);
 impl Weak {
     unsafe fn new(e: usize) -> Self {
         let mut handle = 0;
-        pair(b::WEAK_BIND, &mut handle as *mut usize as usize, e);
+        pair(sites::WEAK_BIND, &mut handle as *mut usize as usize, e);
         Self(Arc::new(Handle(handle)))
     }
     unsafe fn get(&self) -> usize {
@@ -209,7 +209,7 @@ unsafe fn destination_members(
         return Err("original squad is not in this world");
     }
     let ai = q(facets(e), 0x28);
-    if ai == 0 || q(ai, 0) != address(b::SQUAD_AI) || byte(ai, 0x130) != 0 {
+    if ai == 0 || q(ai, 0) != address(sites::SQUAD_AI) || byte(ai, 0x130) != 0 {
         return Err("original squad is being removed or has unsupported AI");
     }
     let holder = get(ai, offsets().roster);
@@ -297,7 +297,7 @@ pub(super) unsafe fn restore(manager: usize) -> Result<(), &'static str> {
             transfer_into(holder, &p, &existing)?;
             std::mem::transmute::<usize, Unary>(method(manager, 0x98))(manager);
             for source in &p.sources {
-                call(b::CLEANUP, source.ai);
+                call(sites::CLEANUP, source.ai);
             }
             destinations.push(destination);
         } else {

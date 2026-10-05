@@ -7,7 +7,16 @@
 ; both written by Core when selection installs (`marquee` in infantry.ini):
 ;
 ;   0 soldiers  the individual soldiers inside; squad containers never count
-;   1 squads    the native box selection; with Ctrl held, as soldiers
+;   1 squads    the base game's box: a squad counts when it or any of its
+;               soldiers passes the stock predicate, and soldiers never count
+;               on their own; with Ctrl held, as soldiers
+;
+; The base game reaches the same squads through the soldier's setter, which
+; forwards to his squad. Selection replaces that setter with one that marks
+; only the soldier, so squads mode hands the box squads instead, and
+; marquee_select selects them through the manager, which marks the whole
+; roster (patch/select-squad.asm). Members are tested by the stock predicate,
+; icon shortcut included, as the base game tests its soldiers.
 region_individual:
     push rbx
     push rsi
@@ -22,17 +31,63 @@ region_individual:
     jne marquee_soldiers
     mov rax, qword ptr [r12]
     test rax, rax
-    jz marquee_vanilla
+    jz marquee_squads
     mov ecx, 0x11                      ; VK_CONTROL
     call rax
     test ax, ax
     js marquee_soldiers                ; Ctrl held: individuals
 
-marquee_vanilla:
+marquee_squads:
+    mov rcx, rbx
+    mov rax, qword ptr [rcx]
+    mov edx, 0x20
+    call qword ptr [rax + 0x98]
+    test al, al
+    jnz marquee_reject                 ; a soldier: his squad counts instead
     mov rcx, rbx
     mov rdx, rsi
     mov r8, rdi
-    call 0x418000                     ; retain the native icon and position rules
+    call 0x418000                     ; the stock test, for squads and the rest
+    test al, al
+    jnz marquee_done
+    mov rcx, rbx
+    mov rax, qword ptr [rcx]
+    mov edx, 0x10
+    call qword ptr [rax + 0x98]
+    test al, al
+    jz marquee_reject                  ; not a squad, and the stock test refused
+    ; any soldier the stock test takes: squad entity vt+0xb0 -> facets +0x28
+    ; -> its roster -> vt+0x68, the members' vector, as patch/select-squad.asm
+    mov rcx, rbx
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + 0xb0]
+    test rax, rax
+    jz marquee_reject
+    mov rcx, qword ptr [rax + 0x28]
+    test rcx, rcx
+    jz marquee_reject
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + {squad_roster}]
+    test rax, rax
+    jz marquee_reject
+    mov rcx, rax
+    mov rdx, qword ptr [rax]
+    call qword ptr [rdx + 0x68]
+    mov rbx, qword ptr [rax]
+    mov r12, qword ptr [rax + 8]
+marquee_member:
+    cmp rbx, r12
+    jae marquee_reject
+    mov rcx, qword ptr [rbx]
+    add rbx, 8
+    test rcx, rcx
+    jz marquee_member
+    mov rdx, rsi
+    mov r8, rdi
+    call 0x418000
+    test al, al
+    jz marquee_member
+    mov eax, 1
     jmp marquee_done
 
 marquee_soldiers:
@@ -55,6 +110,40 @@ marquee_done:
     pop rdi
     pop rsi
     pop rbx
+    ret
+
+; The box's replace pass (fn_418db0, 0x418e90) calls each hit's own
+; setSelected(1). For a squad that selects the squad but marks none of its
+; soldiers, so their selection halos stay off; the manager's select, fn_418cb0,
+; marks the whole roster (patch/select-squad.asm). Shift's add already goes
+; through fn_418cb0 (tools/build.py, select_toggle). Called over the replace
+; pass's loop body with RBX the hit's slot:
+; a squad goes through fn_418cb0 (which does not use RCX), anything else keeps
+; the stock setSelected(1). RBX is kept.
+marquee_select:
+    sub rsp, 0x28
+    mov rcx, qword ptr [rbx]
+    mov rax, qword ptr [rcx]
+    mov edx, 0x10
+    call qword ptr [rax + 0x98]
+    test al, al
+    jz marquee_select_stock
+    mov rdx, qword ptr [rbx]
+    xor ecx, ecx
+    call 0x418cb0
+    jmp marquee_select_done
+marquee_select_stock:
+    mov rcx, qword ptr [rbx]
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + 0xb0]
+    mov rcx, qword ptr [rax + 0x50]
+    test rcx, rcx
+    jz marquee_select_done
+    mov rax, qword ptr [rcx]
+    mov dl, 1
+    call qword ptr [rax + 0x50]
+marquee_select_done:
+    add rsp, 0x28
     ret
 
 ; The native predicate, fn_418000(entity, region, context). The individual path

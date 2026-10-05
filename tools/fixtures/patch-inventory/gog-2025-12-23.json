@@ -46,7 +46,7 @@
     ["game", 3438544, 5, "function"],
     ["game", 3439520, 5, "function"]
   ]},
-   "defiance.cover-markers": {"state": "Disabled", "spans": []},
+   "defiance.cover-markers": {"state": "Failed", "spans": []},
    "defiance.diagnostics": {"state": "Active", "spans": []},
    "defiance.expanded-ammo-menu": {"state": "Active", "spans": [
     ["game", 253628, 5, "byte patch"],
@@ -92,6 +92,7 @@
     ["game", 261509, 7, "byte patch"],
     ["game", 261547, 7, "byte patch"],
     ["game", 261554, 7, "byte patch"],
+    ["game", 261920, 14, "function"],
     ["game", 262285, 7, "byte patch"],
     ["game", 262292, 7, "byte patch"],
     ["game", 262425, 7, "byte patch"],
@@ -144,8 +145,10 @@
   ]},
    "defiance.moving-actions-animation": {"state": "Failed", "spans": []},
    "defiance.moving-actions-render-sync": {"state": "Failed", "spans": []},
-   "defiance.moving-actions-sync": {"state": "Failed", "spans": []},
-   "defiance.moving-grenades": {"state": "Failed", "spans": []},
+   "defiance.moving-actions-sync": {"state": "Active", "spans": [
+    ["logic", 2924112, 6, "function"]
+  ]},
+   "defiance.moving-grenades": {"state": "Active", "spans": []},
    "defiance.pickup": {"state": "Active", "spans": [
     ["logic", 4437976, 5, "call site"]
   ]},
@@ -199,6 +202,7 @@
     ["logic", 4292904, 6, "byte patch"],
     ["logic", 4295898, 124, "byte patch"],
     ["logic", 4296223, 5, "byte patch"],
+    ["logic", 4296336, 29, "byte patch"],
     ["logic", 4296855, 5, "byte patch"],
     ["logic", 4297008, 5, "byte patch"],
     ["logic", 4297481, 11, "byte patch"],

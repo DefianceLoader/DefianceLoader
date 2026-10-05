@@ -20,6 +20,7 @@ pub mod report;
 pub mod rtti;
 pub mod scan;
 pub mod sha256;
+pub mod sites;
 pub mod unit;
 pub mod unit_apply;
 #[cfg(test)]

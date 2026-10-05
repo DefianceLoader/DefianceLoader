@@ -5,7 +5,7 @@ speed getter with a small fabricated facet, then runs the production plugin
 through a fake ABI 5 host. No installed game files are modified.
 """
 import ctypes as C
-import hashlib
+import tomllib
 import json
 import pathlib
 import struct
@@ -19,6 +19,7 @@ from pe import Image
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DLL = ROOT / "plugins/moving-actions/target/release/defiance_plugin_moving_actions.dll"
 SITES = ROOT / "out/moving-actions-sites.json"
+VERSION = tomllib.loads((ROOT / "plugins/moving-actions/Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
 K = C.WinDLL("kernel32", use_last_error=True)
 K.LoadLibraryExW.argtypes = [W.LPCWSTR, C.c_void_p, W.DWORD]
 K.LoadLibraryExW.restype = C.c_void_p
@@ -104,7 +105,6 @@ def assert_selective(before, after):
 def one_build(row):
     path = builds.build(row["name"]).logic.resolve()
     image = Image(path)
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == row["sha"]
     original = bytes.fromhex(row["before"])
     assert image.read(row["rva"], len(original)) == original
     base = K.LoadLibraryExW(str(path), None, 1)  # DONT_RESOLVE_DLL_REFERENCES
@@ -170,7 +170,7 @@ def one_build(row):
 
     plugin = C.cast(lib.defiance_plugin(), C.POINTER(Plugin)).contents
     assert plugin.abi == 5 and plugin.name == b"defiance.moving-actions"
-    assert plugin.version == b"0.1.0"
+    assert plugin.version == VERSION.encode()
     assert plugin.stop is None
     init = C.CFUNCTYPE(C.c_int, C.POINTER(Api))(plugin.init)
     assert init(None) != 0
@@ -179,11 +179,14 @@ def one_build(row):
     assert init(C.byref(wrong_abi)) != 0
     assert not calls
 
-    # A live-byte mismatch must be refused before the first patch request.
+    # Changed live bytes leave the build unsupported: a warning and no
+    # patch request.
     tamper_at = base + row["rva"] + row["offsets"][0]
     saved = C.string_at(tamper_at, 1)
     put(tamper_at, b"\x00")
-    assert init(C.byref(api)) != 0 and not calls
+    assert init(C.byref(api)) == 0 and not calls
+    assert any(level == 1 and text.startswith("moving actions: not a supported build (")
+               for level, text in messages), messages
     put(tamper_at, saved)
 
     # Fail each write in turn; the host owns rollback after init returns.

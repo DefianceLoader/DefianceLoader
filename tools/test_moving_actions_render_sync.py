@@ -134,11 +134,12 @@ def main(profile):
     check(init(None)!=0,'null API')
     bad=Api.from_buffer_copy(api); bad.abi=4
     check(init(C.byref(bad))!=0,'wrong ABI')
-    behavior['size']=False; check(init(C.byref(api))!=0 and not hooks,'size refusal')
+    behavior['size']=False; check(init(C.byref(api))==0 and not hooks,'unresolved build installs nothing')
+    check(any(s.startswith('[1] moving weapon render: not a supported build (') for s in logs),f'missing unsupported-build warning {logs}')
     behavior.update(size=True,refuse=True); check(init(C.byref(api))!=0 and not hooks,'hook refusal')
     behavior['refuse']=False
     check(init(C.byref(api))==0,f'initialization {logs}')
-    check(any(s.startswith('[0] moving weapon render installed: logic.dll sha256=') for s in logs),f'missing info install line {logs}')
+    check(any(s.startswith('[0] moving weapon render installed') for s in logs),f'missing info install line {logs}')
     check([p[0] for p in hooks]==[logic+SHOT,logic+PRIMARY_SHOT,logic+GUNNER_TICK,logic+CLIENT_TICK],f'hook target/count for {profile.name}')
     detour=SHOT_FN(hooks[0][1])
 
@@ -200,7 +201,7 @@ def main(profile):
         check(shots[start:]==[gun] and len(attachments)==count,'rejected snapshot changed shot/binding')
         check(any(s.startswith('[3] moving weapon render skipped:') and f'reason={reason}' in s for s in logs[logstart:]),f'missing debug skip diagnosis {reason}')
     check(not any('moving weapon render hook reached:' in s for s in logs),'routine hook-arrival log remains')
-    check(not any('moving weapon render:' in s for s in logs),'routine successful-shot log remains')
+    check(not any('moving weapon render:' in s and 'not a supported build' not in s for s in logs),'routine successful-shot log remains')
     print('PASS rejected-snapshot anomaly diagnostics; normal firing stays quiet and forwards once')
     for client in (False,True):
         gun,g,models,desc,node,hands,holster=fixture(logic,world,attached=False,action=5,client=client)
@@ -250,7 +251,7 @@ def main(profile):
         observer(g,1,2,3,0.25); observer(g,1,2,3,1.0)
         check(len(attachments)==count and q(node,0x368)==holster,'loaded repair ignored transition/timer guard')
     print('PASS loaded repair excludes active grenade/switch/transition actions and unfinished or invalid switch timers')
-    print(f'PASS render-sync fixture for {profile.name} ({profile.sha})',flush=True)
+    print(f'PASS render-sync fixture for {profile.name}',flush=True)
     K.FreeLibrary(world); K.FreeLibrary(logic)
 
 

@@ -6,84 +6,24 @@
 
 use core::cell::RefCell;
 use core::ffi::{c_char, c_void};
-use defiance_api::{Api, Plugin, ABI_VERSION, LOG_DEBUG, LOG_ERROR, LOG_INFO};
+use defiance_api::{Api, Plugin, ABI_VERSION, LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_WARN};
+use defiance_core::sites::Image;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex, OnceLock};
 use std::{fs, path::PathBuf};
 
-#[derive(Clone, Copy)]
-struct BuildBindings {
-    sha256: &'static str,
-    update: usize,
-    position: usize,
-    rotation: usize,
-    slerp: usize,
-    human_animation_vt: usize,
-    human_chassis_vt: usize,
-}
+mod sites;
+use sites::Sites;
 
-// Exact logic.dll identities and locations, derived from unique masked
-// function signatures plus independent MSVC RTTI vtable recovery.
-const BUILDS: &[BuildBindings] = &[
-    BuildBindings {
-        sha256: "eb8674f1d16595a3e9cf6a9ec0062735b1184976495d8d6ade36f7e2574e8aab",
-        update: 0x2c3900,
-        position: 0x436260,
-        rotation: 0x436460,
-        slerp: 0x136880,
-        human_animation_vt: 0x72b0d8,
-        human_chassis_vt: 0x72b370,
-    },
-    BuildBindings {
-        sha256: "30264904e1d5199b954bafbd7828cf7190930c246d35fa7b94eefa915e8f0c38",
-        update: 0x2c3990,
-        position: 0x4362f0,
-        rotation: 0x4364f0,
-        slerp: 0x136910,
-        human_animation_vt: 0x72b118,
-        human_chassis_vt: 0x72b3b0,
-    },
-    BuildBindings {
-        sha256: "1216d627c7288c7db6940168363be582232ed4d3cb860b8b8c8d7489652eca74",
-        update: 0x2c3900,
-        position: 0x4368a0,
-        rotation: 0x436aa0,
-        slerp: 0x136880,
-        human_animation_vt: 0x72c0d8,
-        human_chassis_vt: 0x72c370,
-    },
-    BuildBindings {
-        sha256: "adb3ad95926036809b4e554b466bef33d4ac7aa5303e59a9e4a940890bc334b5",
-        update: 0x2c3990,
-        position: 0x436930,
-        rotation: 0x436b30,
-        slerp: 0x136910,
-        human_animation_vt: 0x72c118,
-        human_chassis_vt: 0x72c3b0,
-    },
-];
 const MAX_TRACKS: usize = 256;
 const MAX_KEYS_PER_CHANNEL: usize = 16_384;
 const MAX_CLIP_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ONCE_LOGS: usize = 64;
 
-const UPDATE_PREFIX: &[u8] = &[
-    0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x10, 0x55, 0x56, 0x57, 0x48, 0x81, 0xec, 0xe0, 0x00, 0x00,
-];
-const POSITION_PREFIX: &[u8] = &[
-    0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x7c, 0x24, 0x10, 0x48, 0x8b, 0x41, 0x08, 0x49, 0x8b,
-];
-const ROTATION_PREFIX: &[u8] = &[
-    0x48, 0x89, 0x5c, 0x24, 0x10, 0x48, 0x89, 0x6c, 0x24, 0x18, 0x48, 0x89, 0x74, 0x24, 0x20, 0x57,
-];
-const SLERP_PREFIX: &[u8] = &[
-    0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x10, 0x57, 0x48, 0x81, 0xec, 0xe0, 0x00, 0x00, 0x00, 0xf3,
-];
-
 static BASE: AtomicUsize = AtomicUsize::new(0);
-static SIZE: AtomicUsize = AtomicUsize::new(0);
-static ACTIVE_BUILD: AtomicUsize = AtomicUsize::new(0);
+static SITES: OnceLock<Sites> = OnceLock::new();
+static ACTIVE: AtomicBool = AtomicBool::new(false);
 static LOGGER: AtomicUsize = AtomicUsize::new(0);
 static ORIGINALS: [AtomicUsize; 3] = [const { AtomicUsize::new(0) }; 3];
 static ASSETS: OnceLock<Result<AssetSet, String>> = OnceLock::new();
@@ -153,8 +93,12 @@ struct MemoryBasicInformation {
 type Update = unsafe extern "C" fn(*mut u8, f32);
 type Slerp = unsafe extern "C" fn(*const f32, *mut f32, *const f32, f32) -> *mut f32;
 
-fn active_build() -> Option<&'static BuildBindings> {
-    BUILDS.get(ACTIVE_BUILD.load(Ordering::Acquire).checked_sub(1)?)
+/// The resolved sites, while the hooks are installed.
+fn active_build() -> Option<&'static Sites> {
+    ACTIVE
+        .load(Ordering::Acquire)
+        .then(|| SITES.get())
+        .flatten()
 }
 
 extern "C" {
@@ -1160,7 +1104,7 @@ unsafe fn overlay(
     let Some(assets) = ASSETS.get().and_then(|result| result.as_ref().ok()) else {
         return false;
     };
-    let Some(bindings) = active_build() else {
+    let Some(sites) = active_build() else {
         return false;
     };
     let pair = match clip.kind {
@@ -1205,7 +1149,7 @@ unsafe fn overlay(
                     sample_rotation(&other.rotations, sample.as_mut_ptr(), time);
                     let left = core::array::from_fn::<_, 4, _>(|i| output.add(i).read());
                     let slerp: Slerp =
-                        core::mem::transmute(BASE.load(Ordering::Acquire) + bindings.slerp);
+                        core::mem::transmute(BASE.load(Ordering::Acquire) + sites.slerp);
                     let _ = slerp(left.as_ptr(), output, sample.as_ptr(), amount);
                 }
             }
@@ -1274,10 +1218,10 @@ fn sample_rotation(keys: &[[f32; 5]], output: *mut f32, time: f32) {
         }
         return;
     }
-    let Some(bindings) = active_build() else {
+    let Some(sites) = active_build() else {
         return;
     };
-    let helper = BASE.load(Ordering::Acquire) + bindings.slerp;
+    let helper = BASE.load(Ordering::Acquire) + sites.slerp;
     let callback: Slerp = unsafe { core::mem::transmute(helper) };
     unsafe {
         let _ = callback(
@@ -1337,58 +1281,65 @@ unsafe extern "C" fn augment_rotation(
     }
 }
 
-struct BuildInfo {
-    base: usize,
-    size: usize,
-    bindings: BuildBindings,
+enum InstallError {
+    /// The build is not one the plugin supports; nothing was written.
+    UnsupportedBuild(String),
+    Failed(String),
 }
 
-unsafe fn validate(api: &Api) -> Result<BuildInfo, String> {
-    let base = (api.module_base)(c"logic.dll".as_ptr()) as usize;
-    if base == 0 {
-        return Err("logic.dll is not loaded".into());
+unsafe fn install(api: &Api) -> Result<(), InstallError> {
+    let base = (api.module_base)(c"logic.dll".as_ptr()).cast::<u8>();
+    if base.is_null() {
+        return Err(InstallError::Failed("logic.dll is not loaded".into()));
     }
-    let size = (api.module_size)(base as *mut c_void);
-    let mut path = [0u16; 32768];
-    let length =
-        GetModuleFileNameW(base as *mut c_void, path.as_mut_ptr(), path.len() as u32) as usize;
-    if length == 0 || length >= path.len() {
-        return Err("cannot resolve logic.dll path".into());
+    let image = Image::loaded(base, (api.module_size)(base.cast()));
+    let sites = sites::sites(&image).map_err(InstallError::UnsupportedBuild)?;
+    ASSETS
+        .get_or_init(assets)
+        .as_ref()
+        .map_err(|error| InstallError::Failed(error.clone()))?;
+    let base = base as usize;
+    if SITES.get_or_init(|| sites) != &sites {
+        return Err(InstallError::Failed(
+            "logic.dll sites differ from the first install".into(),
+        ));
     }
-    use std::os::windows::ffi::OsStringExt;
-    let path = std::path::PathBuf::from(std::ffi::OsString::from_wide(&path[..length]));
-    let hash =
-        defiance_core::sha256::file(&path).map_err(|e| format!("cannot hash logic.dll: {e}"))?;
-    let bindings = BUILDS
-        .iter()
-        .find(|build| build.sha256 == hash)
-        .copied()
-        .ok_or_else(|| format!("unsupported logic.dll SHA-256 {hash}"))?;
-    for (rva, prefix, name) in [
-        (bindings.update, UPDATE_PREFIX, "update"),
-        (bindings.position, POSITION_PREFIX, "position sampler"),
-        (bindings.rotation, ROTATION_PREFIX, "rotation sampler"),
-        (
-            bindings.slerp,
-            SLERP_PREFIX,
-            "quaternion interpolation helper",
-        ),
+    BASE.store(base, Ordering::Release);
+    ACTIVE.store(true, Ordering::Release);
+    let hooks = [sites.update, sites.position, sites.rotation];
+    for (index, rva, detour) in [
+        (0usize, sites.update, update as *mut c_void),
+        (1, sites.position, position as *mut c_void),
+        (2, sites.rotation, rotation as *mut c_void),
     ] {
-        let end = rva
-            .checked_add(prefix.len())
-            .ok_or("binding range overflow")?;
-        if end > size || base.checked_add(end).is_none() {
-            return Err(format!("{name} at {rva:#x} outside logic.dll"));
+        let mut trampoline = core::ptr::null_mut();
+        let hook_result = (api.hook)((base + rva) as *mut c_void, detour, &mut trampoline);
+        if hook_result != 0 || trampoline.is_null() {
+            // A nonzero hook result is atomic and does not transfer
+            // ownership of the requested site; only earlier successful
+            // installs belong to this plugin. Success with a null
+            // trampoline is malformed, but does transfer ownership, so
+            // include that current site in rollback.
+            let rollback_end = if hook_result == 0 {
+                Some(index)
+            } else {
+                index.checked_sub(1)
+            };
+            if let Some(first_owned) = rollback_end {
+                for installed in (0..=first_owned).rev() {
+                    (api.unhook)((base + hooks[installed]) as *mut c_void);
+                    ORIGINALS[installed].store(0, Ordering::Release);
+                }
+            }
+            ACTIVE.store(false, Ordering::Release);
+            BASE.store(0, Ordering::Release);
+            return Err(InstallError::Failed(format!(
+                "hook refused at RVA {rva:#x}"
+            )));
         }
-        if core::slice::from_raw_parts((base + rva) as *const u8, prefix.len()) != prefix {
-            return Err(format!("{name} byte check failed at RVA {rva:#x}"));
-        }
+        ORIGINALS[index].store(trampoline as usize, Ordering::Release);
     }
-    Ok(BuildInfo {
-        base,
-        size,
-        bindings,
-    })
+    Ok(())
 }
 
 unsafe extern "C" fn init(api: *const Api) -> i32 {
@@ -1399,61 +1350,22 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
         return 1;
     }
     LOGGER.store(api.log as usize, Ordering::Release);
-    let result = (|| -> Result<(), String> {
-        let build = validate(api)?;
-        ASSETS.get_or_init(assets).as_ref().map_err(Clone::clone)?;
-        BASE.store(build.base, Ordering::Release);
-        SIZE.store(build.size, Ordering::Release);
-        let bindings = build.bindings;
-        let build_index = BUILDS
-            .iter()
-            .position(|entry| entry.sha256 == bindings.sha256)
-            .ok_or("validated bindings are not in the build catalog")?;
-        ACTIVE_BUILD.store(build_index + 1, Ordering::Release);
-        let sites = [bindings.update, bindings.position, bindings.rotation];
-        for (index, rva, detour) in [
-            (0usize, bindings.update, update as *mut c_void),
-            (1, bindings.position, position as *mut c_void),
-            (2, bindings.rotation, rotation as *mut c_void),
-        ] {
-            let mut trampoline = core::ptr::null_mut();
-            let hook_result =
-                (api.hook)((build.base + rva) as *mut c_void, detour, &mut trampoline);
-            if hook_result != 0 || trampoline.is_null() {
-                // A nonzero hook result is atomic and does not transfer
-                // ownership of the requested site; only earlier successful
-                // installs belong to this plugin. Success with a null
-                // trampoline is malformed, but does transfer ownership, so
-                // include that current site in rollback.
-                let rollback_end = if hook_result == 0 {
-                    Some(index)
-                } else {
-                    index.checked_sub(1)
-                };
-                if let Some(first_owned) = rollback_end {
-                    for installed in (0..=first_owned).rev() {
-                        (api.unhook)((build.base + sites[installed]) as *mut c_void);
-                        ORIGINALS[installed].store(0, Ordering::Release);
-                    }
-                }
-                BASE.store(0, Ordering::Release);
-                SIZE.store(0, Ordering::Release);
-                ACTIVE_BUILD.store(0, Ordering::Release);
-                return Err(format!("hook refused at RVA {rva:#x}"));
-            }
-            ORIGINALS[index].store(trampoline as usize, Ordering::Release);
-        }
-        Ok(())
-    })();
+    let result = install(api);
     match result {
         Ok(()) => {
-            log(
-                LOG_INFO,
-                "moving action animation overlay installed (GOG/Steam 2026-09)",
-            );
+            log(LOG_INFO, "moving action animation overlay installed");
             0
         }
-        Err(error) => {
+        Err(InstallError::UnsupportedBuild(error)) => {
+            log(
+                LOG_WARN,
+                &format!(
+                    "moving action animation overlay: not a supported build ({error}); no hooks installed"
+                ),
+            );
+            1
+        }
+        Err(InstallError::Failed(error)) => {
             log(
                 LOG_ERROR,
                 &format!("moving action animation overlay refused: {error}"),
