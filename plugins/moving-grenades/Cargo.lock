@@ -24,7 +24,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-plugin-moving-grenades"
-version = "0.1.21"
+version = "0.1.22"
 dependencies = [
  "defiance-api",
  "defiance-build-support",

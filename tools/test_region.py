@@ -129,12 +129,16 @@ print('PASS native-frame icon gate: infantry position only, buildings/vehicles a
 cell = payload + desc['marquee_cell']
 ctrl_up = code("xor eax, eax\nret")
 ctrl_down = code("xor eax, eax\ncmp ecx, 0x11\njne done\nmov eax, 0xffff8000\ndone:\nret")
+ABOARD = 'aboard'
 def squad(icon, body, members):
     """A squad entity whose AI facet (+0x28) answers its roster, as
-    patch/select-squad.asm reaches it: vt+squad_roster, then vt+0x68."""
+    patch/select-squad.asm reaches it: vt+squad_roster, then vt+0x68. An ABOARD
+    member is inside the box with his selectable facet disabled, as a crew
+    aboard a vehicle is; the replace pass never tests such an entity."""
     obj, _ = entity(0x10, body)
     C.c_ubyte.from_address(obj+0x21).value = icon
-    soldiers = [entity(0x20, inside)[0] for inside in members]
+    soldiers = [entity(0x20, True, False)[0] if inside == ABOARD else entity(0x20, inside)[0]
+                for inside in members]
     array = n.data(max(8, 8*len(soldiers)), [(i*8, s) for i, s in enumerate(soldiers)])
     vector = n.data(0x10, [(0, array), (8, array+8*len(soldiers))])
     list_vt = n.data(0x70, [(0x68, code(f"mov rax, {vector}\nret"))])
@@ -152,6 +156,8 @@ for key, soldiers_mode in ((ctrl_up, False), (ctrl_down, True), (0, False)):
             ("a squad by its icon", squad(1, 0, [0, 0]), 1, 0),
             ("a squad by one soldier inside", squad(0, 0, [0, 1, 0]), 1, 0),
             ("a squad with nobody inside", squad(0, 0, [0, 0]), 0, 0),
+            ("a squad aboard a boxed vehicle", squad(0, 0, [ABOARD, ABOARD]), 0, 0),
+            ("a squad by one soldier outside the vehicle", squad(0, 0, [ABOARD, 1]), 1, 0),
             ("a squad without members", squad(0, 0, []), 0, 0),
             ("a vehicle inside", entity(0x80, True)[0], 1, 1)):
         got = marquee(obj, 0, context)
@@ -161,7 +167,7 @@ C.c_ubyte.from_address(cell+8).value = 0
 put(cell, ctrl_up)
 assert marquee(squad(1, 1, [1]), 0, context) == 0, 'soldiers mode ignores squads'
 assert marquee(entity(0x20, True)[0], 0, context) == 1, 'soldiers mode takes the soldier'
-print('PASS squads mode: whole squads by icon or any soldier inside, Ctrl for soldiers, soldiers mode unchanged')
+print('PASS squads mode: whole squads by icon or any soldier inside and not aboard, Ctrl for soldiers, soldiers mode unchanged')
 
 # The replace pass's select loop body: a squad hit goes to the manager's select
 # (fn_418cb0, which marks its roster), anything else keeps setSelected(1).

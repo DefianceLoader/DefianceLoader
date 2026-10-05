@@ -9,7 +9,9 @@
 ;   0 soldiers  the individual soldiers inside; squad containers never count
 ;   1 squads    the base game's box: a squad counts when it or any of its
 ;               soldiers passes the stock predicate, and soldiers never count
-;               on their own; with Ctrl held, as soldiers
+;               on their own; a soldier whose selection is disabled (aboard
+;               a vehicle) does not count for his squad; with Ctrl held, as
+;               soldiers
 ;
 ; The base game reaches the same squads through the soldier's setter, which
 ; forwards to his squad. Selection replaces that setter with one that marks
@@ -82,6 +84,20 @@ marquee_member:
     add rbx, 8
     test rcx, rcx
     jz marquee_member
+    ; a member counts only where the replace pass would test him: it skips an
+    ; entity whose selectable facet (facets +0x50) is missing or disabled
+    ; (+0x18 zero; fn_418db0, 0x418e10), as a crew aboard a vehicle is. Boxing
+    ; the vehicle selects the vehicle, and his squad, selected too, would take
+    ; the move order and dismount.
+    mov qword ptr [rsp + 0x20], rcx
+    mov rax, qword ptr [rcx]
+    call qword ptr [rax + 0xb0]
+    mov rax, qword ptr [rax + 0x50]
+    test rax, rax
+    jz marquee_member
+    cmp byte ptr [rax + 0x18], 0
+    je marquee_member
+    mov rcx, qword ptr [rsp + 0x20]
     mov rdx, rsi
     mov r8, rdi
     call 0x418000

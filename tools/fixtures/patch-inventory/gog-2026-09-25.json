@@ -153,7 +153,9 @@
     ["logic", 4521997, 7, "byte patch"]
   ]},
    "defiance.legion-vehicle-hacking": {"state": "Active", "spans": [
-    ["game", 3380645, 2, "byte patch"]
+    ["game", 3380621, 6, "function"],
+    ["game", 3380645, 2, "byte patch"],
+    ["logic", 546583, 6, "function"]
   ]},
    "defiance.movement": {"state": "Active", "spans": [
     ["logic", 4509874, 5, "byte patch"]

@@ -55,13 +55,13 @@
     {
       "hook_rva": 1933296,
       "hook_displaced": "885130c3cc",
-      "hook_entry": 10668,
+      "hook_entry": 10710,
       "hook_feature": 2
     },
     {
       "hook_rva": 4292904,
       "hook_displaced": "498b06498bce",
-      "hook_entry": 10606,
+      "hook_entry": 10648,
       "hook_feature": 2
     },
     {
@@ -311,27 +311,27 @@
       "rel_feature": 2
     },
     {
-      "rel_offset": 10454,
+      "rel_offset": 10496,
       "rel_target": 4292608,
       "rel_feature": 2
     },
     {
-      "rel_offset": 10549,
+      "rel_offset": 10591,
       "rel_target": 4295856,
       "rel_feature": 2
     },
     {
-      "rel_offset": 10594,
+      "rel_offset": 10636,
       "rel_target": 4292608,
       "rel_feature": 2
     },
     {
-      "rel_offset": 10659,
+      "rel_offset": 10701,
       "rel_target": 4292910,
       "rel_feature": 2
     },
     {
-      "rel_offset": 10664,
+      "rel_offset": 10706,
       "rel_target": 4293075,
       "rel_feature": 2
     },
@@ -649,7 +649,7 @@
     {
       "pose_site": 4296336,
       "pose_before": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff5050",
-      "pose_entry": 10518,
+      "pose_entry": 10560,
       "pose_tail": "909090909090909090909090909090909090909090909090",
       "pose_stock": 0,
       "pose_feature": 2

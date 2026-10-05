@@ -614,7 +614,16 @@ unsafe extern "C" fn ai_update(ai: *mut u8, dt: f32) {
     let saved_speed = pending.route.speed;
     let kind = pending.kind;
     let attack_move = pending.attack_move;
+    // Only a finished order is replaced. Attack-move's outer order survives the
+    // gunner-release Stop and its state stays on the AI state stack, resuming
+    // the route natively; submitting a second attack-move over that live state
+    // destroys a state the stack still holds (null state at the AI state
+    // machine update, logic+0x102d9f on GOG 2026-09-25).
     let old_finished = read::<u8>(old, 0x11) != 0;
+    if !old_finished {
+        log(LOG_DEBUG, &format!("moving flare order kept native: chassis={chassis:p} kind={kind:#x} attack_move={attack_move} old_finished=false"));
+        return;
+    }
     let Some(mut resumed) = fresh_movement_order(old, unit, attack_move) else {
         log(
             LOG_ERROR,

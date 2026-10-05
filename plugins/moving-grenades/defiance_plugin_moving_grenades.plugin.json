@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.moving-grenades",
   "dll": "defiance_plugin_moving_grenades.dll",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "abi": 5,
   "group": "infantry",
   "settings": [{

@@ -4,7 +4,7 @@
  "plugin": "selection",
  "module": "logic.dll",
  "source_sha256": "adb3ad95926036809b4e554b466bef33d4ac7aa5303e59a9e4a940890bc334b5",
- "unit_bytes": 1054,
+ "unit_bytes": 1102,
  "code_offset": 32,
  "cells": [
   {
@@ -24,7 +24,7 @@
    "rva": 1990576,
    "before": "885130c3cc",
    "tail": "",
-   "entry": 876,
+   "entry": 918,
    "label": "building_select"
   },
   {
@@ -32,7 +32,7 @@
    "rva": 2167897,
    "before": "450fb6742420",
    "tail": "90",
-   "entry": 880,
+   "entry": 928,
    "label": "dim_pose"
   },
   {
@@ -40,7 +40,7 @@
    "rva": 2168752,
    "before": "488b4588807820000f8499000000",
    "tail": "909090909090909090",
-   "entry": 900,
+   "entry": 948,
    "label": "dim_mode"
   },
   {
@@ -48,7 +48,7 @@
    "rva": 2168816,
    "before": "488b0e488b01498d5720",
    "tail": "9090909090",
-   "entry": 982,
+   "entry": 1030,
    "label": "dim_part"
   },
   {
@@ -56,7 +56,7 @@
    "rva": 4367496,
    "before": "498b06498bce",
    "tail": "90",
-   "entry": 814,
+   "entry": 856,
    "label": "region_icon_gate"
   },
   {
@@ -80,7 +80,7 @@
    "before": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff5050",
    "tail": "909090909090909090909090909090909090909090909090",
    "stock": 0,
-   "entry": 726,
+   "entry": 768,
    "label": "marquee_select"
   },
   {
@@ -153,57 +153,57 @@
   },
   {
    "kind": "rel32",
-   "offset": 662,
+   "offset": 704,
    "target": 4367200
   },
   {
    "kind": "rel32",
-   "offset": 757,
+   "offset": 799,
    "target": 4370448
   },
   {
    "kind": "rel32",
-   "offset": 802,
+   "offset": 844,
    "target": 4367200
   },
   {
    "kind": "rel32",
-   "offset": 867,
+   "offset": 909,
    "target": 4367502
   },
   {
    "kind": "rel32",
-   "offset": 872,
+   "offset": 914,
    "target": 4367667
   },
   {
    "kind": "rel32",
-   "offset": 896,
+   "offset": 944,
    "target": 2167903
   },
   {
    "kind": "rel32",
-   "offset": 973,
+   "offset": 1021,
    "target": 2168766
   },
   {
    "kind": "rel32",
-   "offset": 978,
+   "offset": 1026,
    "target": 2168919
   },
   {
    "kind": "rel32",
-   "offset": 1030,
+   "offset": 1078,
    "target": 2168826
   },
   {
    "kind": "rel32",
-   "offset": 1045,
+   "offset": 1093,
    "target": 2168826
   },
   {
    "kind": "rel32",
-   "offset": 1050,
+   "offset": 1098,
    "target": 2168829
   },
   {
@@ -395,28 +395,28 @@
   "is_end": 436,
   "region_individual": 448,
   "marquee_squads": 510,
-  "marquee_member": 638,
-  "marquee_soldiers": 677,
-  "marquee_reject": 714,
-  "marquee_done": 716,
-  "marquee_select": 726,
-  "marquee_select_stock": 763,
-  "marquee_select_done": 792,
-  "native_eligible": 797,
-  "region_native_return": 806,
-  "region_reject": 811,
-  "region_icon_gate": 814,
-  "region_icon_stock": 860,
-  "region_position_only": 871,
-  "building_select": 876,
-  "dim_pose": 880,
-  "dim_pose_done": 895,
-  "dim_mode": 900,
-  "dim_mode_scan": 950,
-  "dim_mode_parts": 972,
-  "dim_mode_skip": 977,
-  "dim_part": 982,
-  "dim_part_stock": 1034,
-  "dim_part_next": 1049
+  "marquee_member": 646,
+  "marquee_soldiers": 719,
+  "marquee_reject": 756,
+  "marquee_done": 758,
+  "marquee_select": 768,
+  "marquee_select_stock": 805,
+  "marquee_select_done": 834,
+  "native_eligible": 839,
+  "region_native_return": 848,
+  "region_reject": 853,
+  "region_icon_gate": 856,
+  "region_icon_stock": 902,
+  "region_position_only": 913,
+  "building_select": 918,
+  "dim_pose": 928,
+  "dim_pose_done": 943,
+  "dim_mode": 948,
+  "dim_mode_scan": 998,
+  "dim_mode_parts": 1020,
+  "dim_mode_skip": 1025,
+  "dim_part": 1030,
+  "dim_part_stock": 1082,
+  "dim_part_next": 1097
  }
 }
