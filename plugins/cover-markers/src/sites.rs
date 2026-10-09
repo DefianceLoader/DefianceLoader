@@ -40,6 +40,11 @@ const CURSOR_DESTRUCTOR: Signature = sig(
     "move cursor destructor",
     "48895c2408574883ec20488bf98bda4881c1d8000000e8????????",
 );
+/// The smart cursor facet's per-frame update, `(facet, dt)`.
+const FACET_UPDATE: Signature = sig(
+    "smart cursor update",
+    "48895c241048896c2418565741564883ec500f297424400f28f1488bf1488b4130",
+);
 const ISSUE_ORDER: Signature = sig(
     "vehicle move order",
     "48895c24205556574154415541564157488d6c24d94881eca00000000f29b42490000000",
@@ -74,10 +79,6 @@ const BOARDING_HANDOFF_CALL: Signature = sig(
     "e8????????904885ff741148837f1000740a488bcfff15????????904885ff7410834708ff750a\
      488b07488bcfff50109048ffc5",
 );
-const MISSION_FRAME: Signature = sig(
-    "mission frame",
-    "488bc4488958105556574154415541564157488da868fdffff",
-);
 const MAP_SAMPLE_HEIGHT: Signature = sig(
     "map height sample",
     "488bc45556574881ecb0000000f3410f10100f57db0f2fd3",
@@ -88,6 +89,8 @@ const RENDERER_SCALE_SETTER: Signature = sig(
 );
 
 const STOP_ORDER: &str = ".?AVAiStopOrder@Leonardo@@";
+/// The move command, whose cursor update and destructor are hooked.
+const MOVE_COMMAND: &str = ".?AVSmartCursorCmdMove@Leonardo@@";
 const TERRAIN_RENDERER: &str = ".?AVTerrainRenderer@World2@Galileo@@";
 const MAP_IMPL: &str = ".?AVMapImpl@Landscape@Galileo@@";
 /// The tactical map's game state. Its object size differs between builds, so
@@ -107,6 +110,8 @@ pub struct Game {
     pub cursor_destructor: usize,
     pub issue_order: usize,
     pub mission_deleting_destructor: usize,
+    pub facet_update: usize,
+    pub move_command_vtable: usize,
 }
 
 /// logic.dll sites, as rvas.
@@ -124,7 +129,6 @@ pub struct Logic {
 /// world2.dll sites, as rvas.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct World {
-    pub mission_frame: usize,
     pub map_sample_height: usize,
     pub renderer_scale_setter: usize,
     pub terrain_renderer_vtable: usize,
@@ -197,6 +201,8 @@ impl Image<'_> {
             cursor_destructor: self.find(&CURSOR_DESTRUCTOR)?,
             issue_order: self.find(&ISSUE_ORDER)?,
             mission_deleting_destructor: self.tactical_map_destructor()?,
+            facet_update: self.find(&FACET_UPDATE)?,
+            move_command_vtable: self.vtable(MOVE_COMMAND)?,
         })
     }
 
@@ -214,7 +220,6 @@ impl Image<'_> {
 
     pub fn world(&self) -> Result<World, String> {
         Ok(World {
-            mission_frame: self.find(&MISSION_FRAME)?,
             map_sample_height: self.find(&MAP_SAMPLE_HEIGHT)?,
             renderer_scale_setter: self.find(&RENDERER_SCALE_SETTER)?,
             terrain_renderer_vtable: self.vtable(TERRAIN_RENDERER)?,
@@ -268,14 +273,18 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    const BUILDS: [&str; 4] = [
+    const BUILDS: [&str; 6] = [
         "gog/2026-09-14",
         "gog/2026-09-25",
         "steam/2026-09-22",
         "steam/2026-09-25",
+        "gog/2026-10-07",
+        "steam/2026-10-07",
     ];
-    /// The one world2.dll on hand; GOG and Steam 2026-09-25 ship the same file.
+    /// The 2026-09-25 world2.dll; GOG and Steam 2026-09-25 ship the same file.
     const WORLD: &str = "gog/2026-09-25";
+    /// Every build with a world2.dll in `bin/`.
+    const WORLDS: [&str; 2] = [WORLD, "gog/2026-10-07"];
 
     fn mapped(build: &str, dll: &str) -> Option<defiance_core::pe::Mapped> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -310,8 +319,12 @@ mod tests {
             assert_ne!(game.cursor_update, game.cursor_destructor);
             assert_ne!(logic.move_point_call, logic.boarding_handoff_call);
         }
-        if let Some(world) = mapped(WORLD, "world2.dll") {
-            image(&world).world().expect("world2 resolves");
+        for build in WORLDS {
+            if let Some(world) = mapped(build, "world2.dll") {
+                image(&world)
+                    .world()
+                    .unwrap_or_else(|e| panic!("{build} world2: {e}"));
+            }
         }
     }
 
@@ -337,6 +350,7 @@ mod tests {
                 crate::CURSOR_DESTRUCTOR_BEFORE,
             );
             starts(&game_dll, game.issue_order, crate::ISSUE_ORDER_BEFORE);
+            starts(&game_dll, game.facet_update, crate::FACET_UPDATE_BEFORE);
             starts(
                 &game_dll,
                 game.mission_deleting_destructor,
@@ -347,10 +361,6 @@ mod tests {
                 logic.squad_order_dispatch,
                 crate::SQUAD_ORDER_DISPATCH_BEFORE,
             );
-        }
-        if let Some(world_dll) = mapped(WORLD, "world2.dll") {
-            let world = image(&world_dll).world().unwrap();
-            starts(&world_dll, world.mission_frame, crate::MISSION_FRAME_BEFORE);
         }
     }
 
@@ -374,6 +384,8 @@ mod tests {
                 cursor_destructor: 0x3396f0,
                 issue_order: 0x339be0,
                 mission_deleting_destructor: 0x350220,
+                facet_update: 0x33cc80,
+                move_command_vtable: 0x52b4d8,
             }
         );
         assert_eq!(
@@ -391,7 +403,6 @@ mod tests {
         assert_eq!(
             image(&world).world().unwrap(),
             World {
-                mission_frame: 0x18d7a0,
                 map_sample_height: 0x1256a0,
                 renderer_scale_setter: 0x152990,
                 terrain_renderer_vtable: 0x3eca20,
@@ -406,9 +417,8 @@ mod tests {
             eprintln!("skipping: bin/ is absent");
             return;
         };
-        assert_eq!(
-            image(&game).game().unwrap().mission_deleting_destructor,
-            0x349d40
-        );
+        let game = image(&game).game().unwrap();
+        assert_eq!(game.mission_deleting_destructor, 0x349d40);
+        assert_eq!(game.facet_update, 0x3367a0);
     }
 }

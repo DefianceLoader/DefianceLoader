@@ -24,7 +24,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-loader"
-version = "0.7.2"
+version = "0.9.0"
 dependencies = [
  "defiance-api",
  "defiance-build-support",
@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-plugin-core"
-version = "0.4.4"
+version = "0.7.0"
 dependencies = [
  "defiance-api",
  "defiance-build-support",
@@ -124,6 +124,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "defiance-plugin-performance"
+version = "0.1.0"
+dependencies = [
+ "defiance-api",
+ "defiance-build-support",
+ "defiance-core",
+ "defiance-feature-sdk",
+]
+
+[[package]]
 name = "defiance-plugin-pickup"
 version = "0.4.1"
 dependencies = [
@@ -161,7 +171,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-plugin-vehicle-special-fire"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "defiance-api",
  "defiance-build-support",

@@ -10,7 +10,7 @@ selectable facet; a soldier's facet +0x18 enabled, +0x28 his squad's facet,
 enabled dword at +0x3c. A soldier AI's vt+0x3b8 answers zero, a squad's the
 member roster, which is what tells the two apart.
 """
-import ctypes, json, pathlib, struct, sys
+import ctypes, pathlib, struct, sys
 import builds
 from ctypes import wintypes
 import keystone
@@ -1215,26 +1215,6 @@ before, count = off(case), refreshes()
 spin(case, -120)
 check("a unit without a squad roster is not stepped", off(case) == before and refreshes() == count)
 
-
-print("\n== the gun's selected-ammo slot on every build\n")
-# The cases above run the reference payload only. The readiness walk calls the
-# logic.dll Gun's selected-ammo getter from the game payload, so each build's
-# `gun_selected_ammo` must name that getter there, not the game layout's slot.
-from rtti import Rtti
-for build in builds.supported():
-    if not build.present:
-        print(f"skip  {build.name}: DLLs not in bin/")
-        continue
-    profile = json.loads(build.layout.read_text(encoding="utf-8")) if build.layout else {}
-    symbols = {**b.REFERENCE_GAME_SYMBOLS, **profile.get("game_symbols", {})}
-    logic = Image(str(build.logic))
-    rtti = Rtti(logic)
-    descriptor = rtti.descriptors()[".?AVGun@Leonardo@@"]
-    tables = [vt for col in rtti.locators(descriptor) if logic.u32(col + 4) == 0
-              for vt in rtti.vtables(col)]
-    getter = logic.u64(tables[0] + symbols["gun_selected_ammo"]) - logic.base if len(tables) == 1 else 0
-    check(f"{build.name}: gun_selected_ammo is the Gun's `mov rax, [rcx+0x50]; ret`",
-          getter and logic.read(getter, 5) == bytes.fromhex("488b4150c3"), f"tables {tables}")
 
 
 print()

@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "id": "defiance.pickup",
+  "dll": "defiance_plugin_feature_pickup.dll",
+  "version": "0.4.1",
+  "abi": 5,
+  "patch_contract": true,
+  "group": "weapons",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Prefer individually selected soldiers when choosing who picks up a weapon, and rotate replacement choices across eligible soldiers on repeated pickups. Disable to use the game's original pickup choice. Can remain enabled without the individual-selection feature. Restart required."
+    }
+  ],
+  "depends": [
+    {
+      "id": "defiance.core",
+      "min": "0.7.0"
+    }
+  ],
+  "conflicts": []
+}

@@ -154,15 +154,6 @@ fn declarations(extras: &[Declared]) -> Vec<DeclRef> {
             decl,
         });
     }
-    for feature in builtin::features() {
-        for decl in builtin::settings(feature.id) {
-            decls.push(DeclRef {
-                owner: feature.id.to_string(),
-                group: feature.group,
-                decl,
-            });
-        }
-    }
     for extra in extras {
         decls.push(DeclRef {
             owner: extra.owner.to_string(),
@@ -255,9 +246,17 @@ impl Snapshot {
                 continue;
             };
             let declared = known.get(input.group.as_str());
+            let mut moved = Vec::new();
             for entry in &document.entries {
                 let key = (entry.section.clone(), entry.key.clone());
                 if declared.is_some_and(|set| set.contains(&key)) {
+                    continue;
+                }
+                if input.group == "core"
+                    && entry.section == LOADER_SECTION
+                    && builtin::moved_from_loader(builtin::PERFORMANCE_ID, &entry.key).is_some()
+                {
+                    moved.push(format!("`{}` (line {})", entry.key, entry.line));
                     continue;
                 }
                 warnings.push(format!(
@@ -272,6 +271,16 @@ impl Snapshot {
                     }
                 ));
                 unknown.push(entry.clone());
+            }
+            if !moved.is_empty() {
+                warnings.push(format!(
+                    "{}: {} moved from [loader] to [{}]; the [loader] values still apply \
+                     where [{}] does not set the key, and `defiance-config --apply` moves them",
+                    input.path.display(),
+                    moved.join(", "),
+                    builtin::PERFORMANCE_ID,
+                    builtin::PERFORMANCE_ID
+                ));
             }
         }
 
@@ -351,6 +360,22 @@ impl Snapshot {
                     ));
                 }
                 // Precedence warning: say who won when both forms exist.
+                if builtin::moved_from_loader(&decl.owner, decl.decl.key).is_some() {
+                    if let Some((loader_entry, _)) = document.lookup(LOADER_SECTION, decl.decl.key)
+                    {
+                        warnings.push(format!(
+                            "{}:{}: `{}` is set in both [{}] (line {}) and [{}] (line {}); [{}] wins",
+                            input.path.display(),
+                            entry.line,
+                            decl.decl.key,
+                            decl.owner,
+                            entry.line,
+                            LOADER_SECTION,
+                            loader_entry.line,
+                            decl.owner
+                        ));
+                    }
+                }
                 if let Some(legacy_key) = builtin::legacy_bootstrap_key(&decl.owner, decl.decl.key)
                 {
                     if let Some((bootstrap_entry, _)) = bootstrap.top(legacy_key) {
@@ -389,6 +414,40 @@ impl Snapshot {
                     }
                 }
                 continue;
+            }
+
+            // A performance setting still in `[loader]`, where it lived while
+            // Core owned it.
+            if builtin::moved_from_loader(&decl.owner, decl.decl.key).is_some() {
+                if let Some((entry, _)) = document.lookup(LOADER_SECTION, decl.decl.key) {
+                    match validate(decl.decl, &entry.value) {
+                        Ok(value) => {
+                            resolved.insert(
+                                identity.clone(),
+                                Resolved {
+                                    value,
+                                    provenance: Provenance::Group {
+                                        file: input.path.display().to_string(),
+                                        line: entry.line,
+                                    },
+                                },
+                            );
+                        }
+                        Err(reason) => {
+                            problems.push(Problem {
+                                owner: decl.owner.clone(),
+                                file: input.path.display().to_string(),
+                                line: Some(entry.line),
+                                message: format!(
+                                    "invalid value for `{}` in [{}]: {reason}",
+                                    decl.decl.key, LOADER_SECTION
+                                ),
+                            });
+                            blocked.insert(decl.owner.clone());
+                        }
+                    }
+                    continue;
+                }
             }
 
             // The supported legacy equivalent, for loader policy.
@@ -628,7 +687,12 @@ mod tests {
                 }
             })
             .collect();
-        Snapshot::build(paths(), &inputs, &parse(bootstrap))
+        Snapshot::build_with_extras(
+            paths(),
+            &inputs,
+            &parse(bootstrap),
+            &crate::config::feature_declarations(),
+        )
     }
 
     fn all_groups() -> Vec<(&'static str, Option<&'static str>)> {
@@ -804,7 +868,12 @@ mod tests {
                 "[loader]\nwait = 3\n",
             ),
         ];
-        let snapshot = Snapshot::build(paths(), &inputs, &parse(""));
+        let snapshot = Snapshot::build_with_extras(
+            paths(),
+            &inputs,
+            &parse(""),
+            &crate::config::feature_declarations(),
+        );
         assert!(snapshot.is_blocked("defiance.selection"));
         assert!(snapshot
             .problems

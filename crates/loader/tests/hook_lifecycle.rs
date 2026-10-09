@@ -12,10 +12,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// The stock function the workers call.
+/// The stock function the workers call, only through [`call_target`].
 #[inline(never)]
 extern "C" fn target() -> u64 {
     1
+}
+
+/// Calls [`target`] through an opaque pointer. A direct call lets an optimized
+/// build fold in the stock result, so it never runs the patched code.
+fn call_target() -> u64 {
+    std::hint::black_box(target as extern "C" fn() -> u64)()
 }
 
 /// The trampoline the loader stores *before* it publishes the branch, so a
@@ -39,7 +45,7 @@ fn hooks_publish_and_remove_safely_under_thread_load() {
         let stop = stop.clone();
         workers.push(std::thread::spawn(move || {
             while !stop.load(Ordering::Relaxed) {
-                let value = target();
+                let value = call_target();
                 assert!(value == 1 || value == 2, "target returned {value}");
             }
         }));
@@ -60,14 +66,14 @@ fn hooks_publish_and_remove_safely_under_thread_load() {
         !unsafe { ORIGINAL }.is_null(),
         "the original pointer must be stored"
     );
-    assert_eq!(target(), 2, "the detour must be published");
+    assert_eq!(call_target(), 2, "the detour must be published");
 
     // The workers are running the detour now; remove it while they spin.
     test_host::begin_plugin(1, "lifecycle");
     let removed = unsafe { (api.unhook)(target as *const () as *mut c_void) };
     test_host::end_plugin();
     assert_eq!(removed, 0, "removing the hook failed");
-    assert_eq!(target(), 1, "the site must be stock again");
+    assert_eq!(call_target(), 1, "the site must be stock again");
 
     stop.store(true, Ordering::Relaxed);
     for worker in workers {

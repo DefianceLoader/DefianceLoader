@@ -12,11 +12,12 @@ mod sites;
 
 use core::ffi::c_void;
 use defiance_api::{
-    Api, GameAccessV1, MemberStateV1, PatchContractV1, Plugin, ABI_VERSION, LOG_DEBUG, LOG_ERROR,
-    LOG_INFO, LOG_WARN, PATCH_KIND_CALL, PATCH_KIND_ENTRY,
+    Api, GameAccessV1, MissionFrameV1, MovePreviewHandlerV1, MovePreviewV1, PatchContractV1,
+    Plugin, ABI_VERSION, LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_WARN, MISSION_FRAME, PATCH_KIND_CALL,
+    PATCH_KIND_ENTRY,
 };
 use std::mem::MaybeUninit;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -29,16 +30,18 @@ const CURSOR_BEFORE: &[u8] = &[0x48, 0x83, 0xec, 0x58, 0x0f, 0x29, 0x74, 0x24, 0
 const CURSOR_DESTRUCTOR_BEFORE: &[u8] =
     &[0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x20];
 const ISSUE_ORDER_BEFORE: &[u8] = &[0x48, 0x89, 0x5c, 0x24, 0x20];
+const FACET_UPDATE_BEFORE: &[u8] = &[0x48, 0x89, 0x5c, 0x24, 0x10];
 const MISSION_DELETING_DESTRUCTOR_BEFORE: &[u8] =
     &[0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x20];
 const SQUAD_ORDER_DISPATCH_BEFORE: &[u8] = &[
     0x48, 0x8b, 0xc4, 0x4c, 0x89, 0x40, 0x18, 0x48, 0x89, 0x50, 0x10,
 ];
-const MISSION_FRAME_BEFORE: &[u8] = &[0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x10];
 /// A hooked direct call: `e8` and its rel32.
 const CALL_LENGTH: usize = 5;
 const MAX_MEMBERS: usize = 32;
 const MAX_MARKERS: usize = 64;
+/// Move-preview candidates the handler may give beyond the assigned slots.
+const MAX_CANDIDATES: usize = 128;
 const PREVIEW_INTERVAL: Duration = Duration::from_millis(80);
 const ARRIVAL_INTERVAL: Duration = Duration::from_millis(250);
 const ARRIVAL_SETTLE: Duration = Duration::from_millis(1500);
@@ -52,6 +55,12 @@ const ARROW_SCALE: Vec3 = Vec3 {
     x: 0.3,
     y: 0.3,
     z: 0.3,
+};
+// Move-preview candidates: smaller than the destination arrows.
+const CANDIDATE_SCALE: Vec3 = Vec3 {
+    x: 0.15,
+    y: 0.15,
+    z: 0.15,
 };
 const HIDDEN_SCALE: Vec3 = Vec3 {
     x: 0.001,
@@ -109,6 +118,7 @@ struct VectorHeader {
 
 type CursorFn = unsafe extern "C" fn(*mut c_void, *const f32);
 type IssueFn = unsafe extern "C" fn(*mut c_void);
+type FacetUpdateFn = unsafe extern "C" fn(*mut c_void, f32);
 type LocationFn = unsafe extern "C" fn(*mut c_void, *const Vec3) -> *mut c_void;
 type SquadOrderFn = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void;
 type StopFactoryFn = unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void;
@@ -117,7 +127,6 @@ type ConstructorFn = unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_vo
 type FactoryFn = unsafe extern "C" fn(*mut c_void);
 type RenderUpdateFn = unsafe extern "C" fn(*mut c_void);
 type DestructorFn = unsafe extern "C" fn(*mut c_void, u32) -> *mut c_void;
-type MissionFn = unsafe extern "C" fn(*mut c_void, f32);
 type SolverFn = unsafe extern "C" fn(usize, usize, *mut VectorHeader, *const [f32; 4], u32);
 type HeightFn =
     unsafe extern "C" fn(*mut c_void, *mut HeightSample, *const [f32; 2]) -> *mut HeightSample;
@@ -125,6 +134,8 @@ type HeightFn =
 static CURSOR_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
 static CURSOR_DESTRUCTOR_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
 static ISSUE_ORDER_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
+static FACET_UPDATE_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
+static MOVE_COMMAND_VTABLE: AtomicUsize = AtomicUsize::new(0);
 static MISSION_DELETING_DESTRUCTOR_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
 static MOVE_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
 static SQUAD_ORDER_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
@@ -134,7 +145,6 @@ static BOARDING_HANDOFF_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
 static CONSTRUCTOR: AtomicUsize = AtomicUsize::new(0);
 static FACTORY: AtomicUsize = AtomicUsize::new(0);
 static RENDER_UPDATE: AtomicUsize = AtomicUsize::new(0);
-static MISSION_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
 static NEXT_ORDER_ID: AtomicUsize = AtomicUsize::new(1);
 static SOLVER: AtomicUsize = AtomicUsize::new(0);
 static LOG: AtomicUsize = AtomicUsize::new(0);
@@ -145,12 +155,53 @@ static MAP_SAMPLE_HEIGHT: AtomicUsize = AtomicUsize::new(0);
 static RENDERER_SCALE_SETTER: AtomicUsize = AtomicUsize::new(0);
 static STOP_ORDER_VTABLE: AtomicUsize = AtomicUsize::new(0);
 static TERRAIN_SCENE: AtomicUsize = AtomicUsize::new(0);
+/// The last dragged move cursor's state, which hover markers are drawn with.
+static DRAG_SNAPSHOT: Mutex<Option<CursorSnapshot>> = Mutex::new(None);
 static GAME_ACCESS: OnceLock<&'static GameAccessV1> = OnceLock::new();
 static CACHE: OnceLock<Mutex<Markers>> = OnceLock::new();
 static VISUAL: OnceLock<Mutex<Visual>> = OnceLock::new();
 static ORDER_VISUALS: OnceLock<Mutex<Vec<OrderVisual>>> = OnceLock::new();
 static VEHICLE_CACHE: OnceLock<Mutex<Markers>> = OnceLock::new();
 static VEHICLE_VISUAL: OnceLock<Mutex<Visual>> = OnceLock::new();
+static CANDIDATE_VISUAL: OnceLock<Mutex<Visual>> = OnceLock::new();
+static MOVE_HANDLER: OnceLock<MoveHandler> = OnceLock::new();
+/// Set while the handler's markers follow the cursor without a drag.
+static HOVERING: AtomicBool = AtomicBool::new(false);
+// diagnostic: how many hover draws and hover removals were logged.
+#[cfg(feature = "diagnostics")]
+static HOVER_TRACE: AtomicUsize = AtomicUsize::new(0);
+#[cfg(feature = "diagnostics")]
+static DRAG_TRACE: AtomicUsize = AtomicUsize::new(0);
+// diagnostic: set at the first cursor update without a drag.
+#[cfg(feature = "diagnostics")]
+static HOVER_SEEN: AtomicBool = AtomicBool::new(false);
+// diagnostic: the facet's commands as last logged, and how many changes were logged.
+#[cfg(feature = "diagnostics")]
+static FACET_SEEN: Mutex<Option<(usize, usize, i32)>> = Mutex::new(None);
+#[cfg(feature = "diagnostics")]
+static FACET_LOGGED: AtomicUsize = AtomicUsize::new(0);
+// diagnostic: which hover outcomes were logged (bit 0 no targets, 1 no preview,
+// 2 drawn, 3 scene, 4 built).
+#[cfg(feature = "diagnostics")]
+static HOVER_OUTCOMES: AtomicUsize = AtomicUsize::new(0);
+
+/// diagnostic: logs a [`hover`] outcome the first time it occurs.
+#[cfg(feature = "diagnostics")]
+fn hover_outcome(bit: usize, message: impl FnOnce() -> String) {
+    if HOVER_OUTCOMES.fetch_or(1 << bit, Ordering::AcqRel) & (1 << bit) == 0 {
+        log(LOG_DEBUG, &message());
+    }
+}
+static MOVE_PREVIEW: MovePreviewV1 = MovePreviewV1 {
+    set_handler: set_move_handler,
+};
+
+/// The plugin's [`MovePreviewHandlerV1`]. Its owner promises the context is
+/// usable from the game thread for the process lifetime.
+struct MoveHandler(MovePreviewHandlerV1);
+
+unsafe impl Send for MoveHandler {}
+unsafe impl Sync for MoveHandler {}
 static BOARDING_PENDING: OnceLock<Mutex<Vec<PositionTrack>>> = OnceLock::new();
 static VEHICLE_STOP_PENDING: OnceLock<Mutex<Vec<PositionTrack>>> = OnceLock::new();
 
@@ -231,6 +282,23 @@ impl Default for CursorSnapshot {
     }
 }
 
+impl CursorSnapshot {
+    /// An arrow command's state pointing along +x: the base constructor
+    /// (steam 2026-09-25 game.dll 0x32d250) zeroes +0x18..+0x3c except the
+    /// float 1.0 at +0x30 (the direction's x). The state is rotating (+0xa8)
+    /// because the render update (steam 2026-09-25 game.dll 0x32d5b0) gives
+    /// non-rotating list markers the constant (1, 0, 0, 0) as their local
+    /// rotation (world2.dll NodeImpl vfunc 22), and markers drawn that way
+    /// do not show; rotating ones take the world rotation built from
+    /// +0x30/+0x34, as a dragged arrow does.
+    fn arrow() -> Self {
+        let mut snapshot = Self::default();
+        snapshot.movement[0x18..0x1c].copy_from_slice(&1.0f32.to_le_bytes());
+        snapshot.rotating = 1;
+        snapshot
+    }
+}
+
 #[derive(Default)]
 struct Visual {
     cursor: Option<Box<CursorImage>>,
@@ -243,9 +311,34 @@ struct Visual {
     scale: Vec3,
     height: f32,
     terrain: bool,
+    /// The most points [`Visual::update`] draws; more dispose the markers.
+    capacity: usize,
 }
 
 impl Visual {
+    /// diagnostic: the fake cursor's address, render list length and first
+    /// point, for logging.
+    #[cfg(feature = "diagnostics")]
+    fn describe(&self) -> String {
+        let Some(cursor) = self.cursor.as_ref() else {
+            return "no cursor".into();
+        };
+        let bytes = cursor.0.as_ptr();
+        let (begin, end) = unsafe {
+            (
+                *bytes.add(0x60).cast::<usize>(),
+                *bytes.add(0x68).cast::<usize>(),
+            )
+        };
+        format!(
+            "cursor {bytes:p} scene {:#x} renderers {} points {} first {:?}",
+            self.scene,
+            end.wrapping_sub(begin) / 16,
+            self.count,
+            self.points.first().map(|p| (p.x, p.y, p.z))
+        )
+    }
+
     unsafe fn refresh(&mut self, source: *mut c_void) {
         if self.source != source as usize
             || self.cursor.is_none()
@@ -283,7 +376,7 @@ impl Visual {
     }
 
     unsafe fn update(&mut self, source: Option<*mut c_void>, points: &[Vec3]) {
-        if points.is_empty() || points.len() > MAX_MARKERS {
+        if points.is_empty() || points.len() > self.capacity {
             unsafe { self.dispose() };
             return;
         }
@@ -404,6 +497,7 @@ fn infantry_visual() -> Visual {
         scale: ARROW_SCALE,
         height: MARKER_HEIGHT,
         terrain: true,
+        capacity: MAX_MARKERS,
         ..Visual::default()
     }
 }
@@ -420,10 +514,21 @@ fn order_visuals() -> &'static Mutex<Vec<OrderVisual>> {
     ORDER_VISUALS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+fn candidate_visual() -> &'static Mutex<Visual> {
+    CANDIDATE_VISUAL.get_or_init(|| {
+        Mutex::new(Visual {
+            scale: CANDIDATE_SCALE,
+            capacity: MAX_CANDIDATES,
+            ..infantry_visual()
+        })
+    })
+}
+
 fn vehicle_visual() -> &'static Mutex<Visual> {
     VEHICLE_VISUAL.get_or_init(|| {
         Mutex::new(Visual {
             scale: UNIT_SCALE,
+            capacity: MAX_MARKERS,
             ..Visual::default()
         })
     })
@@ -1066,36 +1171,12 @@ fn log(level: u32, message: &str) {
 }
 
 unsafe fn selected_members(squad: *mut c_void, game: &GameAccessV1) -> Option<Vec<*mut c_void>> {
-    let selectable = unsafe { (game.selectable)(squad) };
     let count = unsafe { (game.copy_members)(squad, core::ptr::null_mut(), 0) };
     if count == 0 || count > MAX_MEMBERS {
         return None;
     }
-    let mut members = vec![core::ptr::null_mut(); count];
-    if unsafe { (game.copy_members)(squad, members.as_mut_ptr(), count) } != count {
-        return None;
-    }
-    let mut marks = Vec::with_capacity(count);
-    for &member in &members {
-        let mut state = MemberStateV1::default();
-        marks.push(
-            !selectable.is_null()
-                && unsafe { (game.read_member)(member, selectable, &mut state) } == 0
-                && state.selected != 0,
-        );
-    }
-    // The native move filter uses individual marks only when they name a subset.
-    let marked = marks.iter().filter(|&&selected| selected).count();
-    if marked == 0 || marked == members.len() {
-        return Some(members);
-    }
-    Some(
-        members
-            .into_iter()
-            .zip(marks)
-            .filter_map(|(member, marked)| marked.then_some(member))
-            .collect(),
-    )
+    unsafe { defiance_feature_sdk::services::recipients(game, squad) }
+        .map(|recipients| recipients.members)
 }
 
 unsafe fn position_track(member: *mut c_void) -> Option<PositionTrack> {
@@ -1283,9 +1364,155 @@ unsafe fn vehicle_targets(arrows: &[SquadArrow]) -> Option<Preview> {
     (!points.is_empty()).then_some(Preview { points, tracks })
 }
 
+unsafe extern "C" fn set_move_handler(handler: *const MovePreviewHandlerV1) -> i32 {
+    let Some(handler) = (unsafe { handler.as_ref() }) else {
+        return 1;
+    };
+    let copy = MovePreviewHandlerV1 {
+        context: handler.context,
+        preview: handler.preview,
+        confirm: handler.confirm,
+    };
+    match MOVE_HANDLER.set(MoveHandler(copy)) {
+        Ok(()) => 0,
+        Err(_) => 2,
+    }
+}
+
+/// The cursor's ground point and the infantry members its order would move:
+/// the mean of the infantry arrows' bases, and each squad's selected members.
+unsafe fn move_targets(
+    game: &GameAccessV1,
+    arrows: &[SquadArrow],
+) -> Option<(Vec3, Vec<*mut c_void>)> {
+    let mut sum = Vec3::default();
+    let mut squads = 0;
+    let mut members = Vec::new();
+    for arrow in arrows.iter().filter(|arrow| arrow.infantry) {
+        let point = unsafe { get(arrow.renderer, 0x70) } as *const Vec3;
+        let Some(point) = (unsafe { point.as_ref() }) else {
+            continue;
+        };
+        if !point.finite() {
+            continue;
+        }
+        let Some(selected) = (unsafe { selected_members(arrow.squad, game) }) else {
+            continue;
+        };
+        sum = sum.plus(*point);
+        squads += 1;
+        members.extend(selected);
+    }
+    if squads == 0 || members.is_empty() || members.len() > MAX_MARKERS {
+        return None;
+    }
+    let scale = 1.0 / squads as f32;
+    let point = Vec3 {
+        x: sum.x * scale,
+        y: sum.y * scale,
+        z: sum.z * scale,
+    };
+    Some((point, members))
+}
+
+/// The hovered move command's point and its selection's infantry members:
+/// the facet builds the command at the mouse's terrain (or entity) point,
+/// stored at +0x1c, with its selection at +0xd8.
+unsafe fn hover_targets(
+    game: &GameAccessV1,
+    cursor: *mut c_void,
+) -> Option<(Vec3, Vec<*mut c_void>)> {
+    let point = unsafe { *cursor.cast::<u8>().add(0x1c).cast::<Vec3>() };
+    if !point.finite() {
+        return None;
+    }
+    let begin = unsafe { ptr(cursor, 0xd8) } as usize;
+    let end = unsafe { ptr(cursor, 0xe0) } as usize;
+    if begin == 0 || end < begin || (end - begin) / 8 > MAX_MARKERS {
+        return None;
+    }
+    let mut members = Vec::new();
+    for entry in (begin..end).step_by(8) {
+        let entry = unsafe { *(entry as *const *mut c_void) };
+        let squad = unsafe { get_field(entry, 0x10) };
+        if squad.is_null() {
+            continue;
+        }
+        let kind = unsafe { method(squad, 0x98) };
+        if kind == 0 {
+            continue;
+        }
+        let kind: unsafe extern "C" fn(*mut c_void, u32) -> u8 =
+            unsafe { core::mem::transmute(kind) };
+        if unsafe { kind(squad, 0x10) } == 0 {
+            continue;
+        }
+        if let Some(selected) = unsafe { selected_members(squad, game) } {
+            members.extend(selected);
+        }
+    }
+    (!members.is_empty() && members.len() <= MAX_MARKERS).then_some((point, members))
+}
+
+unsafe fn get_field(object: *mut c_void, offset: usize) -> *mut c_void {
+    if object.is_null() {
+        return core::ptr::null_mut();
+    }
+    unsafe { ptr(object, offset) }
+}
+
+/// Ask the move-preview handler for the markers at `cursor` (a ground point)
+/// for `members`. `None` when no handler is set or it is inactive, so the
+/// stock formation preview draws.
+unsafe fn handled_preview(cursor: Vec3, members: &[*mut c_void]) -> Option<(Vec<Vec3>, Vec<Vec3>)> {
+    let handler = &MOVE_HANDLER.get()?.0;
+    let mut points = vec![Vec3::default(); MAX_MARKERS + MAX_CANDIDATES];
+    let mut assigned = 0;
+    let written = unsafe {
+        (handler.preview)(
+            handler.context,
+            &cursor.x,
+            members.as_ptr(),
+            members.len(),
+            points.as_mut_ptr().cast::<f32>(),
+            points.len(),
+            &mut assigned,
+        )
+    };
+    let written = usize::try_from(written).ok()?.min(points.len());
+    points.truncate(written);
+    points.retain(|point| point.finite());
+    let candidates = points.split_off(assigned.min(points.len()).min(MAX_MARKERS));
+    Some((
+        points,
+        candidates.into_iter().take(MAX_CANDIDATES).collect(),
+    ))
+}
+
+/// Let the move-preview handler give this order. True when it did, so the
+/// stock move is skipped.
+unsafe fn handled_order(cursor: *mut c_void) -> bool {
+    let (Some(handler), Some(game)) = (MOVE_HANDLER.get(), GAME_ACCESS.get()) else {
+        return false;
+    };
+    let Some(arrows) = (unsafe { cursor_arrows(cursor) }) else {
+        return false;
+    };
+    let Some((point, members)) = (unsafe { move_targets(game, &arrows) }) else {
+        return false;
+    };
+    let handler = &handler.0;
+    unsafe { (handler.confirm)(handler.context, &point.x, members.as_ptr(), members.len()) != 0 }
+}
+
 unsafe extern "C" fn issue_order(cursor: *mut c_void) {
     let original = ISSUE_ORDER_ORIGINAL.load(Ordering::Acquire);
     if original == 0 {
+        return;
+    }
+    if unsafe { handled_order(cursor) } {
+        unsafe { visual().lock().unwrap().dispose() };
+        unsafe { candidate_visual().lock().unwrap().dispose() };
         return;
     }
     let vehicles =
@@ -1307,6 +1534,186 @@ unsafe extern "C" fn issue_order(cursor: *mut c_void) {
     }
 }
 
+/// The move command the facet rebuilds each frame while no drag is under
+/// way: while the move-preview handler is active, its markers follow the
+/// command's point. When it turns inactive the markers it drew go. The
+/// command dies next frame, so the visuals keep no source; they live in the
+/// command's scene (+0x10, the object every move command is built with) and
+/// take the last drag's cursor state, since a hovered command's is not an
+/// arrow's.
+unsafe fn hover(cursor: *mut c_void) {
+    if MOVE_HANDLER.get().is_none() {
+        return;
+    }
+    let Some(game) = GAME_ACCESS.get() else {
+        return;
+    };
+    // diagnostic: the facet hovers a move command.
+    #[cfg(feature = "diagnostics")]
+    if !HOVER_SEEN.swap(true, Ordering::AcqRel) {
+        log(
+            LOG_DEBUG,
+            "cover markers: the smart cursor hovers a move command",
+        );
+    }
+    {
+        let mut markers = cache().lock().unwrap();
+        let now = Instant::now();
+        if markers
+            .preview_attempt_at
+            .is_some_and(|previous| now.duration_since(previous) < PREVIEW_INTERVAL)
+        {
+            return;
+        }
+        markers.preview_attempt_at = Some(now);
+    }
+    let targets = unsafe { hover_targets(game, cursor) };
+    // diagnostic: why the hover draws nothing, or what it draws, once each.
+    #[cfg(feature = "diagnostics")]
+    let had_targets = targets.is_some();
+    #[cfg(feature = "diagnostics")]
+    if !had_targets {
+        hover_outcome(0, || {
+            "cover markers: the hovered command has no point or no infantry".into()
+        });
+    }
+    let handled = targets.and_then(|(point, members)| unsafe { handled_preview(point, &members) });
+    #[cfg(feature = "diagnostics")]
+    match &handled {
+        None if had_targets => hover_outcome(1, || {
+            "cover markers: the move-preview handler gave no hover preview".into()
+        }),
+        Some((assigned, candidates)) => hover_outcome(2, || {
+            format!(
+                "cover markers: hover draws {} assigned and {} other points",
+                assigned.len(),
+                candidates.len()
+            )
+        }),
+        None => {}
+    }
+    let scene = unsafe { ptr(cursor, 0x10) } as usize;
+    let mut snapshot = DRAG_SNAPSHOT
+        .lock()
+        .unwrap()
+        .unwrap_or_else(CursorSnapshot::arrow);
+    // A drag too short to rotate leaves a state whose markers do not show;
+    // see [`CursorSnapshot::arrow`].
+    snapshot.rotating = 1;
+    // diagnostic: the hovered command's scene and cursor state, once.
+    #[cfg(feature = "diagnostics")]
+    hover_outcome(3, || {
+        let movement = unsafe { core::slice::from_raw_parts(cursor.cast::<u8>().add(0x18), 0x24) };
+        let rotating = unsafe { *cursor.cast::<u8>().add(0xa8) };
+        format!("cover markers: hover scene {scene:#x}, command +0x18 {movement:02x?}, +0xa8 {rotating}")
+    });
+    match handled {
+        Some((assigned, candidates)) if scene != 0 => {
+            for (visual, points) in [(visual(), &assigned), (candidate_visual(), &candidates)] {
+                let mut visual = visual.lock().unwrap();
+                if visual.source != 0 || visual.scene != scene {
+                    unsafe { visual.dispose() };
+                    visual.scene = scene;
+                }
+                visual.snapshot = snapshot;
+                unsafe { visual.update(None, points) };
+                // diagnostic: each hover draw's markers (first 12).
+                #[cfg(feature = "diagnostics")]
+                if HOVER_TRACE.fetch_add(1, Ordering::AcqRel) < 12 {
+                    log(
+                        LOG_DEBUG,
+                        &format!("cover markers: hover drew {}", visual.describe()),
+                    );
+                }
+                // diagnostic: whether the hover markers exist after drawing, once.
+                #[cfg(feature = "diagnostics")]
+                hover_outcome(4, || {
+                    format!(
+                        "cover markers: hover visual built {} for {} points",
+                        visual.cursor.is_some(),
+                        visual.count
+                    )
+                });
+            }
+            HOVERING.store(true, Ordering::Release);
+        }
+        _ => unsafe { end_hover() },
+    }
+}
+
+/// Removes the markers [`hover`] drew, if it drew any.
+unsafe fn end_hover() {
+    if HOVERING.swap(false, Ordering::AcqRel) {
+        // diagnostic: each removal of hover markers (within the first 12 traces).
+        #[cfg(feature = "diagnostics")]
+        if HOVER_TRACE.fetch_add(1, Ordering::AcqRel) < 12 {
+            log(LOG_DEBUG, "cover markers: hover markers removed");
+        }
+        unsafe { visual().lock().unwrap().dispose() };
+        unsafe { candidate_visual().lock().unwrap().dispose() };
+    }
+}
+
+/// The smart cursor's per-frame update. Its right-button command (+0x48) is
+/// a move command over open ground; outside a drag (command state 1, where
+/// [`cursor_update`] previews) it is hovered.
+unsafe extern "C" fn facet_update(facet: *mut c_void, dt: f32) {
+    let original = FACET_UPDATE_ORIGINAL.load(Ordering::Acquire);
+    if original == 0 {
+        return;
+    }
+    let original: FacetUpdateFn = unsafe { core::mem::transmute(original) };
+    unsafe { original(facet, dt) };
+    let command = unsafe { get_field(facet, 0x48) };
+    let vtable = MOVE_COMMAND_VTABLE.load(Ordering::Acquire);
+    // diagnostic: the facet's left (+0x38) and right (+0x48) command classes
+    // and the right one's state, at each change (first 40), against the move
+    // command's vtable and whether a move-preview handler is registered.
+    #[cfg(feature = "diagnostics")]
+    if FACET_LOGGED.load(Ordering::Acquire) < 40 {
+        let class = |field: usize| {
+            let command = unsafe { get_field(facet, field) };
+            if command.is_null() {
+                0
+            } else {
+                unsafe { *command.cast::<usize>() }
+            }
+        };
+        let (left, right) = (class(0x38), class(0x48));
+        let state = if right == vtable && right != 0 {
+            let state: unsafe extern "C" fn(*mut c_void) -> i32 =
+                unsafe { core::mem::transmute(method(command, 0x38)) };
+            unsafe { state(command) }
+        } else {
+            -1
+        };
+        let mut seen = FACET_SEEN.lock().unwrap();
+        if *seen != Some((left, right, state)) {
+            *seen = Some((left, right, state));
+            FACET_LOGGED.fetch_add(1, Ordering::AcqRel);
+            log(
+                LOG_DEBUG,
+                &format!(
+                    "cover markers: facet {facet:p} left {left:#x} right {right:#x} state {state} (move {vtable:#x}, handler {})",
+                    MOVE_HANDLER.get().is_some()
+                ),
+            );
+        }
+    }
+    if MOVE_HANDLER.get().is_none() {
+        return;
+    }
+    if command.is_null() || vtable == 0 || unsafe { *command.cast::<usize>() } != vtable {
+        unsafe { end_hover() };
+        return;
+    }
+    let state: unsafe extern "C" fn(*mut c_void) -> i32 =
+        unsafe { core::mem::transmute(method(command, 0x38)) };
+    if unsafe { state(command) } != 1 {
+        unsafe { hover(command) };
+    }
+}
+
 unsafe extern "C" fn cursor_update(cursor: *mut c_void, transform: *const f32) {
     let original = CURSOR_ORIGINAL.load(Ordering::Acquire);
     if original == 0 {
@@ -1318,6 +1725,7 @@ unsafe extern "C" fn cursor_update(cursor: *mut c_void, transform: *const f32) {
     let Some(arrows) = arrows else {
         return;
     };
+    HOVERING.store(false, Ordering::Release);
     unsafe { hide_stock_infantry_arrows(&arrows) };
     let preview_due = {
         let mut markers = cache().lock().unwrap();
@@ -1334,9 +1742,39 @@ unsafe extern "C" fn cursor_update(cursor: *mut c_void, transform: *const f32) {
     };
     if !preview_due {
         unsafe { visual().lock().unwrap().refresh(cursor) };
+        unsafe { candidate_visual().lock().unwrap().refresh(cursor) };
         return;
     }
     if let Some(game) = GAME_ACCESS.get() {
+        let handled = unsafe { move_targets(game, &arrows) }
+            .and_then(|(point, members)| unsafe { handled_preview(point, &members) });
+        if let Some((assigned, candidates)) = handled {
+            {
+                let mut visual = visual().lock().unwrap();
+                unsafe { visual.update(Some(cursor), &assigned) };
+                *DRAG_SNAPSHOT.lock().unwrap() = Some(visual.snapshot);
+                // diagnostic: the drag's markers, to compare with the hover's (first 3).
+                #[cfg(feature = "diagnostics")]
+                if DRAG_TRACE.fetch_add(1, Ordering::AcqRel) < 3 {
+                    log(
+                        LOG_DEBUG,
+                        &format!("cover markers: drag drew {}", visual.describe()),
+                    );
+                }
+            }
+            unsafe {
+                candidate_visual()
+                    .lock()
+                    .unwrap()
+                    .update(Some(cursor), &candidates)
+            };
+            let mut markers = cache().lock().unwrap();
+            markers.preview_points.clear();
+            markers.preview_tracks.clear();
+            markers.preview_at = None;
+            return;
+        }
+        unsafe { candidate_visual().lock().unwrap().dispose() };
         if let Some(Preview { points, tracks }) = unsafe { preview(cursor, game, &arrows) } {
             unsafe { visual().lock().unwrap().update(Some(cursor), &points) };
             let mut markers = cache().lock().unwrap();
@@ -1361,6 +1799,12 @@ unsafe extern "C" fn cursor_destructor(cursor: *mut c_void, flags: u32) -> *mut 
             unsafe { visual.dispose() };
         }
     }
+    {
+        let mut candidates = candidate_visual().lock().unwrap();
+        if candidates.source == cursor as usize {
+            unsafe { candidates.dispose() };
+        }
+    }
     let original = CURSOR_DESTRUCTOR_ORIGINAL.load(Ordering::Acquire);
     if original == 0 {
         return core::ptr::null_mut();
@@ -1373,6 +1817,7 @@ unsafe extern "C" fn mission_deleting_destructor(state: *mut c_void, flags: u32)
     // The fake cursor borrows the tactical scene. Release its renderers while
     // that scene is still alive, before the game's state destructor runs.
     unsafe { visual().lock().unwrap().dispose() };
+    unsafe { candidate_visual().lock().unwrap().dispose() };
     let mut visuals = order_visuals().lock().unwrap();
     for order in visuals.iter_mut() {
         unsafe { order.visual.dispose() };
@@ -1587,7 +2032,14 @@ unsafe fn update_order_visuals(displays: Vec<OrderDisplay>) {
     }
 }
 
-unsafe extern "C" fn mission_frame(scene: *mut c_void, dt: f32) {
+/// Each mission frame, from the loader's `mission-events` service: retires
+/// arrived and handed-off orders and refreshes the markers, before the game
+/// draws the frame.
+unsafe extern "C" fn mission_frame(_: *mut c_void, _: u32, frame: *const MissionFrameV1) {
+    let Some(frame) = (unsafe { frame.as_ref() }) else {
+        return;
+    };
+    TERRAIN_SCENE.store(frame.scene as usize, Ordering::Release);
     let pending = std::mem::take(&mut *boarding_pending().lock().unwrap());
     let stopped_vehicles = std::mem::take(&mut *vehicle_stop_pending().lock().unwrap());
     let (displays, boarding_retired) = {
@@ -1638,12 +2090,6 @@ unsafe extern "C" fn mission_frame(scene: *mut c_void, dt: f32) {
         } else {
             unsafe { visual.update(None, &next_vehicle) };
         }
-    }
-    let original = MISSION_ORIGINAL.load(Ordering::Acquire);
-    if original != 0 {
-        let original: MissionFn = unsafe { core::mem::transmute(original) };
-        unsafe { original(scene, dt) };
-        TERRAIN_SCENE.store(scene as usize, Ordering::Release);
     }
 }
 
@@ -1736,10 +2182,10 @@ impl Resolved {
 
     /// cursor update, cursor destructor, vehicle order, mission destructor,
     /// move destination, squad order, Stop factory, garrison handoff, boarding
-    /// handoff, mission frame.
+    /// handoff, smart cursor update.
     fn hooks(&self) -> [Hooked; 10] {
-        let (game, logic, world) = (self.game, self.logic, self.world);
-        let (g, l, w) = (&self.game_sites, &self.logic_sites, &self.world_sites);
+        let (game, logic) = (self.game, self.logic);
+        let (g, l) = (&self.game_sites, &self.logic_sites);
         [
             Self::entry(c"game.dll", game, g.cursor_update, CURSOR_BEFORE),
             Self::entry(
@@ -1765,7 +2211,7 @@ impl Resolved {
             Self::call(c"logic.dll", logic, l.stop_order_factory_call),
             Self::call(c"logic.dll", logic, l.garrison_handoff_call),
             Self::call(c"logic.dll", logic, l.boarding_handoff_call),
-            Self::entry(c"world2.dll", world, w.mission_frame, MISSION_FRAME_BEFORE),
+            Self::entry(c"game.dll", game, g.facet_update, FACET_UPDATE_BEFORE),
         ]
     }
 }
@@ -1781,7 +2227,7 @@ const ENTRY_BEFORE: [Option<&[u8]>; 10] = [
     None,
     None,
     None,
-    Some(MISSION_FRAME_BEFORE),
+    Some(FACET_UPDATE_BEFORE),
 ];
 
 /// Finds every site and checks each entry hook's stolen instructions.
@@ -1851,6 +2297,30 @@ unsafe fn hook(
     Ok(())
 }
 
+/// Subscribe [`mission_frame`] to the loader's mission frames. Without
+/// them the markers still draw but are not refreshed or retired.
+fn subscribe_frames() {
+    let Some(events) = (unsafe { defiance_feature_sdk::services::mission_events() }) else {
+        log(
+            LOG_WARN,
+            "cover markers: the loader has no mission-events service; markers are not refreshed",
+        );
+        return;
+    };
+    let id = unsafe { (events.subscribe)(MISSION_FRAME, mission_frame, core::ptr::null_mut()) };
+    if id == 0 {
+        log(
+            LOG_WARN,
+            "cover markers: mission frames could not be subscribed; markers are not refreshed",
+        );
+    } else if unsafe { (events.frames)() } == 0 {
+        log(
+            LOG_WARN,
+            "cover markers: Core feeds no mission frames; markers are not refreshed",
+        );
+    }
+}
+
 unsafe fn install(api: &Api) -> Result<(), InstallError> {
     let resolved = unsafe { resolve(api) }?;
     let Some(game_access) = (unsafe { defiance_feature_sdk::services::game_access() }) else {
@@ -1876,6 +2346,7 @@ unsafe fn install(api: &Api) -> Result<(), InstallError> {
     FACTORY.store(game + g.cursor_factory, Ordering::Release);
     RENDER_UPDATE.store(game + g.cursor_render_update, Ordering::Release);
     STOP_ORDER_VTABLE.store(logic + l.stop_order_vtable, Ordering::Release);
+    MOVE_COMMAND_VTABLE.store(game + g.move_command_vtable, Ordering::Release);
     TERRAIN_RENDERER_VTABLE.store(world + w.terrain_renderer_vtable, Ordering::Release);
     MAP_IMPL_VTABLE.store(world + w.map_impl_vtable, Ordering::Release);
     MAP_SAMPLE_HEIGHT.store(world + w.map_sample_height, Ordering::Release);
@@ -1929,13 +2400,22 @@ unsafe fn install(api: &Api) -> Result<(), InstallError> {
             "boarding handoff",
         ),
         (
-            mission_frame as *mut c_void,
-            &MISSION_ORIGINAL,
-            "mission frame",
+            facet_update as *mut c_void,
+            &FACET_UPDATE_ORIGINAL,
+            "smart cursor update",
         ),
     ];
     for (site, (detour, original, what)) in hooks.iter().zip(detours) {
         unsafe { hook(api, site, detour, original, what) }.map_err(InstallError::Failed)?;
+    }
+    subscribe_frames();
+    if let Err(code) =
+        unsafe { defiance_feature_sdk::services::register(c"move-preview", 1, &MOVE_PREVIEW) }
+    {
+        log(
+            LOG_WARN,
+            &format!("cover markers: the move-preview service was not registered ({code})"),
+        );
     }
     Ok(())
 }
@@ -2008,6 +2488,7 @@ pub extern "C" fn defiance_plugin() -> *const Plugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use defiance_api::MemberStateV1;
 
     struct TestMember {
         parent: *mut c_void,

@@ -35,7 +35,7 @@ vehicle_special_fire_rebalance:
     test rcx, rcx
     jz vehicle_special_fire_rebalance_done
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     mov r12, qword ptr [rax + 0x28]
     test r12, r12
     jz vehicle_special_fire_rebalance_done
@@ -53,7 +53,7 @@ vehicle_special_fire_passenger:
     test rcx, rcx
     jz vehicle_special_fire_next_passenger
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     mov rax, qword ptr [rax + 0x28]
     test rax, rax
     jz vehicle_special_fire_next_passenger
@@ -82,7 +82,7 @@ vehicle_special_fire_try_free:
     mov rcx, qword ptr [r13]
     mov rax, qword ptr [rcx]
     mov rdx, qword ptr [rsp + 0x20]
-    call qword ptr [rax + 0x148]
+    call qword ptr [rax + 0x148]    ; vt:logic/Gunner@Leonardo
     test al, al
     jne vehicle_special_fire_bound
     add r13, 8
@@ -118,19 +118,19 @@ vehicle_special_fire_scan_bound:
     mov rcx, qword ptr [rsp + 0x30]
     mov rax, qword ptr [rcx]
     mov rdx, qword ptr [rsp + 0x28]
-    call qword ptr [rax + 0x150]
+    call qword ptr [rax + 0x150]    ; vt:logic/Gunner@Leonardo
     test al, al
     je vehicle_special_fire_advance_gunner
     mov rcx, qword ptr [rsp + 0x30]
     mov rax, qword ptr [rcx]
     mov rdx, qword ptr [rsp + 0x20]
-    call qword ptr [rax + 0x148]
+    call qword ptr [rax + 0x148]    ; vt:logic/Gunner@Leonardo
     test al, al
     jne vehicle_special_fire_bound
     mov rcx, qword ptr [rsp + 0x30]
     mov rax, qword ptr [rcx]
     mov rdx, qword ptr [rsp + 0x28]
-    call qword ptr [rax + 0x148]
+    call qword ptr [rax + 0x148]    ; vt:logic/Gunner@Leonardo
     jmp vehicle_special_fire_advance_gunner
 vehicle_special_fire_advance_bound:
     add r8, 8
@@ -250,7 +250,7 @@ vehicle_special_fire_cleanup_release:
     jz vehicle_special_fire_cleanup_clear
     mov rax, qword ptr [rcx]
     xor edx, edx
-    call qword ptr [rax + 0x60]
+    call qword ptr [rax + 0x60]    ; vt:logic/Gun@Leonardo
 vehicle_special_fire_cleanup_clear:
     mov qword ptr [rdi], 0
     mov dword ptr [rsp + 0x20], 1
@@ -293,7 +293,7 @@ vehicle_special_fire_roster_passenger:
     test rcx, rcx
     jz vehicle_special_fire_roster_next
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     mov rax, qword ptr [rax + 0x28]
     test rax, rax
     jz vehicle_special_fire_roster_next

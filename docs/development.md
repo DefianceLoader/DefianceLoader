@@ -40,7 +40,9 @@ mise run setup       # Python packages into .venv (tools/requirements.txt)
 ```
 
 Local settings go in the untracked `mise.local.toml`, for example
-`DEFIANCE_GAME_DIR` (the game's `bin` folder, for staging) and
+`DEFIANCE_GAME_DIR` (the game's `bin` folder, for staging),
+`DEFIANCE_EXTRA_GAME_DIRS` (more installs, separated by `;`, that
+`mise run loader-stage` and `plugins-stage` also stage into) and
 `DEFIANCE_PAK_PASSWORD` (to derive companion UI and animation assets from the
 game's archives).
 
@@ -58,7 +60,7 @@ mise run loader-package   # out/defiance-loader.zip, plus release symbols
 units the built-in plugins embed; commit those files with the patch change, and
 run `mise run variants` for the other builds' units. Staging and packaging
 include companion UI and animation data when the game folder is available. The
-five moving-actions plugins support the four current September 2026 builds.
+five moving-actions plugins support the six current 2026 builds.
 Grenade, weapon-sync and render-sync fixtures accept `--build <profile>`;
 the animation fixture uses `MOVING_ACTIONS_ANIMATION_BUILD` and
 `MOVING_ACTIONS_ANIMATION_ASSET_DIR` (the generated companion's `assets` directory).
@@ -146,7 +148,7 @@ test says so. `DEFIANCE_NO_STAMP=1` runs everything; do that before a release.
 ## Versions and releases
 
 `mise run bump` lists component versions; `mise run bump patch loader` or
-`mise run bump minor builtins` updates a component's `Cargo.toml`, lockfile and
+`mise run bump minor features` updates a component's `Cargo.toml`, lockfile and
 manifest together, refusing a bump that would break a dependant's declared
 range. `mise run bump check` (also run by the tests) fails if any copy
 disagrees. Releases are built by the `release` workflow from a `v*` tag; see
@@ -207,7 +209,7 @@ settings; gameplay enablement and options belong in the shared plugin INIs.
 When switching from a proxy install, remove its system-named loader DLL before
 starting a fresh game; retain `DefianceLoader` and its existing configuration.
 
-In direct-patch mode, supported September 2026 builds select assembled units automatically
+In direct-patch mode, supported 2026 builds select assembled units automatically
 from the pair of `logic.dll` and `game.dll` hashes. Mixed builds are refused,
 including with `--scan`. Both modules' anchors and every patch span are checked
 before hooks are written; repeat runs verify the installed payloads and hooks.
@@ -251,14 +253,21 @@ mise run plugins-stage
 
 Each changed plugin is unloaded and loaded again, with the plugins that depend
 on it, at the main menu or as a mission starts or a save loads; during a mission
-it waits. The log says what reloaded and why anything did not. Core, the
-expanded ammo menu and squad scrolling load only at startup, and a plugin whose
-settings changed needs a restart.
+it waits. The log says what reloaded and why anything did not. A plugin whose
+manifest sets `"hot_reload": false` loads only at startup (Core and the plugins
+that change the game while it starts, such as the expanded ammo menu and squad
+scrolling), and a plugin whose settings schema changed needs a restart.
+
+A managed plugin that fails startup initialization can recover after its
+corrected DLL is copied in. The loader waits for the replacement to settle,
+then retries it at the same menu/mission/save boundary and logs recovery with
+the current plugin counts. Disabled plugins and plugins that allow only
+startup loading still require their normal enablement or restart path.
 
 At the same points, a plugin copied into the plugins directory is loaded (its
 settings are added to its config file with their defaults), and a plugin whose
-files are deleted is unloaded, with any plugin that needs it. A built-in plugin
-added this way still needs a restart.
+files are deleted is unloaded, with any plugin that needs it. The feature
+plugins shipped with the loader load this way too.
 
 ## Tracing callers in game
 

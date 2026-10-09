@@ -80,7 +80,7 @@ p0_loop:
     ; could the weapon go to this member at all?
     mov rax, qword ptr [rdi]
     mov rcx, rdi
-    call qword ptr [rax + 0x180]
+    call qword ptr [rax + 0x180]    ; vt:logic/HumanGunner@Leonardo
     test eax, eax
     jne p0_swap
     ; he is carrying nothing, so he needs a free slot of this type
@@ -98,19 +98,19 @@ p0_swap:
 p0_candidate:
     mov rax, qword ptr [rdi]
     mov rcx, rdi
-    call qword ptr [rax + 0xc8]        ; the man, which is the entity
+    call qword ptr [rax + 0xc8]        ; vt:logic/HumanGunner@Leonardo the man, which is the entity
     test rax, rax
     je p0_unmarked
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]        ; his facets
+    call qword ptr [rax + 0xb0]        ; vt:essence/EntityImpl@Essence@Galileo his facets
     test rax, rax
     je p0_unmarked
     mov rcx, qword ptr [rax + 0x50]    ; the selectable facet
     test rcx, rcx
     je p0_unmarked
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x58]        ; is he marked?
+    call qword ptr [rax + 0x58]        ; vt:logic/SelectableFacet@Leonardo is he marked?
     test al, al
     je p0_unmarked
     test r15, r15
@@ -143,7 +143,7 @@ p1_loop:
     mov rdi, qword ptr [rbp + rsi*8]
     mov rax, qword ptr [rdi]
     mov rcx, rdi
-    call qword ptr [rax + 0x180]
+    call qword ptr [rax + 0x180]    ; vt:logic/HumanGunner@Leonardo
     test eax, eax
     je take
     inc rsi
@@ -170,7 +170,7 @@ p2_index:
     mov rdi, qword ptr [rbp + rax*8]
     mov rax, qword ptr [rdi]
     mov rcx, rdi
-    call qword ptr [rax + 0x180]
+    call qword ptr [rax + 0x180]    ; vt:logic/HumanGunner@Leonardo
     cmp eax, r14d
     je p2_hit
     inc r13
@@ -184,7 +184,7 @@ p2_hit:
 take:
     mov rax, qword ptr [rdi]
     mov rcx, rdi
-    call qword ptr [rax + 0xc8]
+    call qword ptr [rax + 0xc8]    ; vt:logic/HumanGunner@Leonardo
     jmp done
 
 none:

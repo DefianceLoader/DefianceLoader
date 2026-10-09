@@ -33,7 +33,7 @@ test rbx, rbx
 jz next
 mov rcx, rbx
 mov rax, qword ptr [rcx]
-call qword ptr [rax + 0xb0]
+call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
 test rax, rax
 jz next
 mov rax, qword ptr [rax + 0x50]
@@ -44,7 +44,7 @@ jne next
 ; Use the getter so a deselected parent squad also excludes this soldier.
 mov rcx, rax
 mov rax, qword ptr [rax]
-call qword ptr [rax + 0x58]
+call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
 test al, al
 jz next
 mov qword ptr [rdi], rbx

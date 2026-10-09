@@ -2,9 +2,11 @@
 import contextlib
 import io
 import json
+import os
 import pathlib
 import tempfile
 import unittest
+import unittest.mock
 import zipfile
 
 import package_squad_scroll
@@ -181,6 +183,27 @@ class StagingTests(unittest.TestCase):
         self.assertFalse((expected / dll.name).exists())
         self.assertFalse((expected / manifest.name).exists())
 
+    def test_extra_plugin_outside_the_glob_is_staged_and_removed(self):
+        dll = self.root / "private_test_plugin.dll"
+        dll.write_bytes(b"no marker here")
+        manifest = self.root / "private_test_plugin.plugin.json"
+        manifest.write_text('{"id": "testing.private"}')
+        install = stage.Staging(self.game, self.source, False, False,
+                                extra_plugins=[(dll, manifest)], companion=False)
+        expected = self.root / "Game" / "DefianceLoader" / "plugins"
+        install.install_plugins()
+        self.assertEqual((expected / dll.name).read_bytes(), b"no marker here")
+        self.assertTrue((expected / manifest.name).is_file())
+        self.assertFalse(install.target.exists())
+        install.uninstall()
+        self.assertFalse((expected / dll.name).exists())
+        self.assertFalse((expected / manifest.name).exists())
+
+    def test_extra_spec_needs_a_workspace_and_a_stem(self):
+        for spec in ("no_colon", ":stem", "plugins/x:"):
+            with self.assertRaises(SystemExit):
+                stage.extra_pairs([spec])
+
     def test_companion_ui_mod_is_staged_when_the_game_has_paks(self):
         with zipfile.ZipFile(self.root / "Game" / "basis.pak", "w") as archive:
             archive.writestr(package_squad_scroll.RESOURCE, panel_fixture())
@@ -248,6 +271,16 @@ class StagingTests(unittest.TestCase):
         install.uninstall()
         self.assertTrue(install.target.exists())
         self.assertTrue((install.plugin_dir / self.plugin).exists())
+
+
+class GameDirsTests(unittest.TestCase):
+    def test_extra_game_dirs_follow_the_primary(self):
+        env = {"DEFIANCE_GAME_DIR": "gog",
+               "DEFIANCE_EXTRA_GAME_DIRS": os.pathsep.join(["steam", " ", "other"])}
+        with unittest.mock.patch.dict(os.environ, env):
+            self.assertEqual(stage.game_dirs_from_env(), ["gog", "steam", "other"])
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(stage.game_dirs_from_env(), [])
 
 
 if __name__ == "__main__":

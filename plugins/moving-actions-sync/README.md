@@ -27,7 +27,8 @@ error.
 ## Supported builds
 
 The sites test resolves both sites on every build in `bin/`. The native
-harness covers GOG 2026-09-14 / 2026-09-25 and Steam 2026-09-22 / 2026-09-25.
+harness covers GOG 2026-09-14 / 2026-09-25 / 2026-10-07 and Steam 2026-09-22 /
+2026-09-25 / 2026-10-07.
 The December 2025 builds resolve but are unverified: the harness does not
 cover them and their native contracts are not established.
 

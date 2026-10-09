@@ -11,10 +11,7 @@
 //! sites under the calling plugin's ownership (`Api::patch_bytes`).
 
 use core::ffi::{c_char, c_void, CStr};
-use defiance_api::{
-    Api, PatchContractV1, Plugin, ABI_VERSION, LOG_ERROR, LOG_INFO, LOG_WARN, PATCH_KIND_CALL,
-    PATCH_KIND_ENTRY,
-};
+use defiance_api::{Api, PatchContractV1, Plugin, ABI_VERSION, LOG_ERROR, LOG_INFO, LOG_WARN};
 use defiance_core::apply::{module_image, Process};
 use defiance_core::install::{needs_relocation, Scan};
 use defiance_core::unit::Unit;
@@ -22,31 +19,26 @@ use defiance_core::Target;
 use defiance_feature_sdk::units::Embedded;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Mutex,
-};
-mod affinity;
+use std::sync::Mutex;
 mod ammo_menu;
+mod facets;
 mod game;
-mod grass;
 /// Diagnostic, never shipped (feature `inspect-probe`), kept privately.
 #[cfg(feature = "inspect-probe")]
 mod inspect_probe;
-mod inverse;
-mod mesh_sort;
 mod multiplayer;
 mod patch;
-#[cfg(feature = "render-profile")]
-mod render_profile;
+/// Shared with the performance plugin (`plugins/performance/src/lib.rs`),
+/// which uses the kinds Core's own hooks do not.
+#[allow(dead_code)]
+mod plan;
+mod relation;
+mod selection;
 mod session;
-mod shadow;
-mod shadow_fit;
 mod sites;
+mod symbols;
 #[cfg(feature = "test-host")]
 pub mod test_host;
-mod tree_sway;
-mod view_sort;
 defiance_feature_sdk::service_handshake!();
 
 #[cfg(feature = "parity-test")]
@@ -103,6 +95,18 @@ static VARIANTS: &[Variant] = &[
         build: "steam-2026-09-25",
         logic_sha: "adb3ad95926036809b4e554b466bef33d4ac7aa5303e59a9e4a940890bc334b5",
         game_sha: "c336b5ed4a367628a9c370457d82b1d4e75cab9007cffe5354e27688e836f98e",
+        roster_slot: 0x3d0,
+    },
+    Variant {
+        build: "gog-2026-10-07",
+        logic_sha: "da62ed73b43fafa8af0f25fba0501bff641a0cfd1bfb0d3a0b8777a1b0d99271",
+        game_sha: "035670a755180bb5adb421952bd38858dfc77ce823096e24dc4a0fdbf7b94d4c",
+        roster_slot: 0x3d0,
+    },
+    Variant {
+        build: "steam-2026-10-07",
+        logic_sha: "fdb1d3bb7fdd0a47ac1b8a530cf0ee302fa2a96cc7283972504b0aa41ab2336f",
+        game_sha: "28e091a611901ea775355d95bbd131b52e4d3ba7f90f81af839b7c2061ce83e2",
         roster_slot: 0x3d0,
     },
 ];
@@ -196,7 +200,8 @@ fn core_unit(units: &[(Unit, &'static Embedded)], module: &str) -> Result<Unit, 
 
 /// Resolve Core's optional self-hook sites with the same build pair and
 /// relocation rules used during init, without allocating pools or publishing
-/// services.
+/// services. Relocation reads game.dll's original view, so the sites resolve
+/// the same before and after Core hooks them.
 fn native_hook_sites(api: &Api) -> Result<(Option<usize>, Option<(usize, usize)>), String> {
     let logic_target = module_target(api, "logic.dll").ok_or("logic.dll is not loaded")?;
     let game_target = module_target(api, "game.dll").ok_or("game.dll is not loaded")?;
@@ -224,7 +229,10 @@ fn native_hook_sites(api: &Api) -> Result<(Option<usize>, Option<(usize, usize)>
     };
     let own = core_unit(&units, "game.dll")?;
     let pristine = needs_relocation(&game_sha, &own.source_sha256, &own.verified, scan)
-        .then(|| module_image(&game_target))
+        .then(|| {
+            plan::original_image(game_target.base as *const u8, game_target.size)
+                .ok_or("game.dll is unreadable")
+        })
         .transpose()?;
     let own = match pristine {
         Some(image) => own
@@ -375,6 +383,9 @@ struct Runtime {
     trace_ring: usize,
     /// The build whose units apply (`BuildV1::name`).
     build: &'static CStr,
+    /// Whether `build` names the modules, rather than standing in for a pair
+    /// `allow_unknown_build` let through.
+    known_build: bool,
     /// Every unit linked so far, by name ([`patch`]).
     linked: Mutex<BTreeMap<String, patch::Linked>>,
     crash_ranges: Option<&'static defiance_api::CrashRangesV1>,
@@ -393,6 +404,28 @@ const TRACE_RING_BYTES: usize = 0x10 + 32 * 16;
 pub(crate) fn say(api: &Api, level: u32, message: &str) {
     let text = std::ffi::CString::new(message.replace('\0', "")).unwrap_or_default();
     unsafe { (api.log)(level, text.as_ptr()) };
+}
+
+/// The indices of `patterns`, those that match once in the live bytes of the
+/// module at `base` first, the rest after in their own order.
+///
+/// A feature with one signature per build tries them in this order, so the
+/// loader's `find_pattern`, which warns on every miss, reaches the build's
+/// own signature first. The scan is silent and reads the live bytes; a
+/// signature another plugin has hooked over misses here and is still tried,
+/// against the original bytes, among the rest.
+pub(crate) fn matching_first(base: *mut c_void, size: usize, patterns: &[&str]) -> Vec<usize> {
+    let image = if base.is_null() || size == 0 {
+        &[][..]
+    } else {
+        unsafe { core::slice::from_raw_parts(base as *const u8, size) }
+    };
+    let (mut hits, misses): (Vec<usize>, Vec<usize>) = (0..patterns.len()).partition(|&i| {
+        defiance_core::pattern::parse(patterns[i])
+            .is_ok_and(|pattern| defiance_core::scan::scan(image, &pattern).len() == 1)
+    });
+    hits.extend(misses);
+    hits
 }
 
 impl Runtime {
@@ -484,6 +517,7 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
             Choice::Variant(v) => v.roster_slot,
             Choice::Reference | Choice::Unknown => REFERENCE_ROSTER_SLOT,
         });
+        let known_build = !matches!(choice, Choice::Unknown);
         let (build, units) = match choice {
             Choice::Variant(v) => {
                 say(
@@ -613,6 +647,7 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
             build: std::ffi::CString::new(build)
                 .map(|name| &*Box::leak(name.into_boxed_c_str()))
                 .map_err(|_| "a build name holds a NUL")?,
+            known_build,
             linked: Mutex::new(BTreeMap::new()),
             crash_ranges,
             lobby_connect,
@@ -631,6 +666,76 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
                 .is_err()
             {
                 return 1;
+            }
+            // A build whose relation queries differ keeps Core's other
+            // services; consumers of this one find it absent and refuse.
+            if defiance_feature_sdk::services::available() {
+                match relation::verify_loaded(api) {
+                    Ok(()) => {
+                        if unsafe {
+                            defiance_feature_sdk::services::register(c"relation", 1, &relation::API)
+                        }
+                        .is_err()
+                        {
+                            return 1;
+                        }
+                    }
+                    Err(e) => say(api, LOG_WARN, &format!("relation service unavailable: {e}")),
+                }
+            }
+            if defiance_feature_sdk::services::available() {
+                match facets::resolve_loaded(api) {
+                    Ok(()) => {
+                        if unsafe {
+                            defiance_feature_sdk::services::register(c"facets", 1, &facets::API)
+                        }
+                        .is_err()
+                        {
+                            return 1;
+                        }
+                    }
+                    Err(e) => say(api, LOG_WARN, &format!("facets service unavailable: {e}")),
+                }
+            }
+            if defiance_feature_sdk::services::available() {
+                match selection::resolve_loaded(api) {
+                    Ok(()) => {
+                        if unsafe {
+                            defiance_feature_sdk::services::register(
+                                c"selection-snapshot",
+                                1,
+                                &selection::API,
+                            )
+                        }
+                        .is_err()
+                        {
+                            return 1;
+                        }
+                    }
+                    Err(e) => say(
+                        api,
+                        LOG_WARN,
+                        &format!("selection snapshot service unavailable: {e}"),
+                    ),
+                }
+            }
+            if defiance_feature_sdk::services::available() {
+                let runtime = RUNTIME.get().expect("set above");
+                symbols::resolve_loaded(api, runtime.known_build.then_some(runtime.build));
+                for (name, status) in symbols::unresolved() {
+                    say(
+                        api,
+                        LOG_WARN,
+                        &format!("game symbol \"{name}\" unavailable (status {status})"),
+                    );
+                }
+                if unsafe {
+                    defiance_feature_sdk::services::register(c"game-symbols", 1, &symbols::API)
+                }
+                .is_err()
+                {
+                    return 1;
+                }
             }
             if defiance_feature_sdk::services::available()
                 && unsafe {
@@ -657,16 +762,7 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
             if let Some((ctor, dtor)) = RUNTIME.get().and_then(|runtime| runtime.tactical_state) {
                 session::install(api, ctor, dtor);
             }
-            affinity::install(api, &config_text(api, "loader", "main_thread_cpus"));
-            grass::install(api, &config_text(api, "loader", "grass_sort"));
-            inverse::install(api, &config_text(api, "loader", "matrix_inverse"));
-            view_sort::install(api, &config_text(api, "loader", "view_sort"));
-            mesh_sort::install(api, &config_text(api, "loader", "mesh_sort"));
-            shadow::install(api, &config_text(api, "loader", "shadow_cascades"));
-            shadow_fit::install(api, &config_text(api, "loader", "shadow_fit"));
-            tree_sway::install(api, &config_text(api, "loader", "tree_sway"));
-            #[cfg(feature = "render-profile")]
-            render_profile::install(api);
+            session::install_frames(api);
             #[cfg(feature = "inspect-probe")]
             inspect_probe::install(api);
             0
@@ -684,264 +780,28 @@ unsafe extern "C" fn build_name() -> *const c_char {
         .map_or(core::ptr::null(), |runtime| runtime.build.as_ptr())
 }
 
-type ContractRequest = (usize, defiance_feature_sdk::contract::Patch);
-static CONTRACT_API: AtomicUsize = AtomicUsize::new(0);
-static CONTRACT_REQUESTS: Mutex<Vec<ContractRequest>> = Mutex::new(Vec::new());
-static CONTRACT_EXPORT_LOCK: Mutex<()> = Mutex::new(());
-
-fn contract_location(target: usize) -> Option<(&'static CStr, usize, usize)> {
-    let api = CONTRACT_API.load(Ordering::Acquire) as *const Api;
-    let api = unsafe { api.as_ref() }?;
-    for module in [c"logic.dll", c"game.dll", c"world2.dll", c"galileo.dll"] {
-        let base = unsafe { (api.module_base)(module.as_ptr()) } as usize;
-        if base == 0 {
-            continue;
-        }
-        let size = unsafe { (api.module_size)(base as *mut c_void) };
-        let Some(end) = base.checked_add(size) else {
-            continue;
-        };
-        if (base..end).contains(&target) {
-            return Some((module, base, size));
-        }
-    }
-    None
-}
-
-fn contract_patch(
-    target: usize,
-    kind: u32,
-    before: Vec<u8>,
-    after: Option<Vec<u8>>,
-) -> Option<ContractRequest> {
-    let (module, base, size) = contract_location(target)?;
-    let rva = target.checked_sub(base)?;
-    if before.is_empty()
-        || rva.checked_add(before.len())? > size
-        || after
-            .as_ref()
-            .is_some_and(|replacement| replacement.len() != before.len())
-    {
-        return None;
-    }
-    if kind == PATCH_KIND_CALL && (before.len() != 5 || before[0] != 0xe8) {
-        return None;
-    }
-    if kind == PATCH_KIND_ENTRY && defiance_core::decode::validate_copy(&before).is_err() {
-        return None;
-    }
-    Some((
-        target,
-        defiance_feature_sdk::contract::Patch {
-            module,
-            rva,
-            kind,
-            before,
-            after,
-        },
-    ))
-}
-
-unsafe fn record_contract_hook(
-    target: *mut c_void,
-    kind: u32,
-    exact_len: Option<usize>,
-    original: *mut *mut c_void,
-) -> i32 {
-    if target.is_null() {
-        return -1;
-    }
-    let address = target as usize;
-    let Some((_, base, size)) = contract_location(address) else {
-        return -1;
-    };
-    let Some(rva) = address.checked_sub(base) else {
-        return -1;
-    };
-    let Some(available) = size.checked_sub(rva) else {
-        return -1;
-    };
-    let window = available.min(16);
-    if window == 0 {
-        return -1;
-    }
-    let bytes = unsafe { core::slice::from_raw_parts(target.cast::<u8>(), window) };
-    let len = match exact_len {
-        Some(len) => len,
-        None => match defiance_core::decode::displaced(bytes, 5) {
-            Ok(len) => len,
-            Err(_) => return -1,
-        },
-    };
-    let Some(before) = bytes.get(..len).map(<[u8]>::to_vec) else {
-        return -1;
-    };
-    let Some(request) = contract_patch(address, kind, before, None) else {
-        return -1;
-    };
-    // Contract collection runs after plugin init. A fake call hook must return
-    // the call's original callee just like the real API; returning the site
-    // makes a wrapper recurse through its own detour.
-    let original_target = if kind == PATCH_KIND_CALL {
-        if request.1.before.len() != 5 || request.1.before[0] != 0xe8 {
-            return -1;
-        }
-        let rel = i32::from_le_bytes([
-            request.1.before[1],
-            request.1.before[2],
-            request.1.before[3],
-            request.1.before[4],
-        ]) as isize;
-        (address as isize + 5 + rel) as *mut c_void
-    } else {
-        target
-    };
-    CONTRACT_REQUESTS
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .push(request);
-    if !original.is_null() {
-        unsafe { original.write(original_target) };
-    }
-    0
-}
-
-unsafe extern "C" fn contract_hook(
-    target: *mut c_void,
-    _detour: *mut c_void,
-    original: *mut *mut c_void,
-) -> i32 {
-    unsafe { record_contract_hook(target, PATCH_KIND_ENTRY, None, original) }
-}
-
-unsafe extern "C" fn contract_hook_exact(
-    target: *mut c_void,
-    _detour: *mut c_void,
-    displaced: usize,
-    original: *mut *mut c_void,
-) -> i32 {
-    unsafe { record_contract_hook(target, PATCH_KIND_ENTRY, Some(displaced), original) }
-}
-
-unsafe extern "C" fn contract_hook_call(
-    target: *mut c_void,
-    _detour: *mut c_void,
-    original: *mut *mut c_void,
-) -> i32 {
-    unsafe { record_contract_hook(target, PATCH_KIND_CALL, Some(5), original) }
-}
-
-unsafe extern "C" fn contract_patch_bytes(
-    target: *mut c_void,
-    before: *const u8,
-    after: *const u8,
-    length: usize,
-) -> i32 {
-    if target.is_null() || before.is_null() || after.is_null() || length == 0 {
-        return -1;
-    }
-    let before = unsafe { core::slice::from_raw_parts(before, length) }.to_vec();
-    let after = unsafe { core::slice::from_raw_parts(after, length) }.to_vec();
-    if unsafe { core::slice::from_raw_parts(target.cast::<u8>(), length) } != before.as_slice() {
-        return -1;
-    }
-    let Some(request) = contract_patch(
-        target as usize,
-        defiance_api::PATCH_KIND_BYTES,
-        before,
-        Some(after),
-    ) else {
-        return -1;
-    };
-    CONTRACT_REQUESTS
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .push(request);
-    0
-}
-
-unsafe extern "C" fn contract_unhook(target: *mut c_void) -> i32 {
-    CONTRACT_REQUESTS
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .retain(|(address, _)| *address != target as usize);
-    0
-}
-
-unsafe extern "C" fn quiet_contract_log(_: u32, _: *const c_char) {}
-
-fn collect_core_contract(api: &Api) -> Vec<defiance_feature_sdk::contract::Patch> {
-    let mut fake = unsafe { core::ptr::read(api) };
-    fake.log = quiet_contract_log;
-    fake.hook = contract_hook;
-    fake.hook_exact = contract_hook_exact;
-    fake.hook_call = contract_hook_call;
-    fake.unhook = contract_unhook;
-    fake.patch_bytes = contract_patch_bytes;
-    let fake = &fake;
-
-    let affinity = config_text(fake, "loader", "main_thread_cpus");
-    if affinity != "engine" {
-        let _ = affinity::remove_pin(fake);
-    }
-    grass::install(fake, &config_text(fake, "loader", "grass_sort"));
-    inverse::install(fake, &config_text(fake, "loader", "matrix_inverse"));
-    view_sort::install(fake, &config_text(fake, "loader", "view_sort"));
-    mesh_sort::install(fake, &config_text(fake, "loader", "mesh_sort"));
-    shadow::with_preserved_hook_state(|| {
-        shadow::install(fake, &config_text(fake, "loader", "shadow_cascades"));
-    });
-    shadow_fit::install(fake, &config_text(fake, "loader", "shadow_fit"));
-    tree_sway::contract(fake);
-    #[cfg(feature = "render-profile")]
-    render_profile::contract(fake);
-    #[cfg(feature = "inspect-probe")]
-    inspect_probe::install(fake);
-
+/// Every write Core's installers plan for the current configuration, read
+/// from the original view: the same before and after init, and resolving it
+/// writes nothing. An installer whose plan does not resolve logs a warning and
+/// writes nothing, so it contributes nothing; a resolved plan whose contract
+/// cannot be read fails the whole contract.
+fn collect_core_contract(api: &Api) -> Result<Vec<defiance_feature_sdk::contract::Patch>, String> {
+    let mut plans = vec![session::frames_plan(api)];
     if let Ok((lobby, tactical_state)) = native_hook_sites(api) {
-        if let Some(lobby) = lobby.filter(|_| multiplayer::guard_available()) {
-            let mut original = core::ptr::null_mut();
-            let result = unsafe {
-                (fake.hook)(
-                    lobby as *mut c_void,
-                    (fake as *const Api).cast_mut().cast(),
-                    &mut original,
-                )
-            };
-            if result == 0 && !original.is_null() {
-                if let Some(message) = multiplayer::message_target(fake) {
-                    let mut message_original = core::ptr::null_mut();
-                    unsafe {
-                        (fake.hook)(
-                            message as *mut c_void,
-                            (fake as *const Api).cast_mut().cast(),
-                            &mut message_original,
-                        )
-                    };
-                }
-            }
+        if let Some(lobby) = lobby {
+            plans.push(Ok(multiplayer::plan(api, lobby)));
         }
-        if let Some((constructor, destructor)) = tactical_state
-            .filter(|_| unsafe { defiance_feature_sdk::services::session() }.is_some())
-        {
-            for target in [constructor, destructor] {
-                let mut original = core::ptr::null_mut();
-                unsafe {
-                    (fake.hook)(
-                        target as *mut c_void,
-                        (fake as *const Api).cast_mut().cast(),
-                        &mut original,
-                    )
-                };
-            }
+        if let Some((constructor, destructor)) = tactical_state {
+            plans.push(Ok(session::plan(constructor, destructor)));
         }
     }
-    CONTRACT_REQUESTS
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .drain(..)
-        .map(|(_, patch)| patch)
-        .collect()
+    #[cfg(feature = "inspect-probe")]
+    plans.push(inspect_probe::plan(api));
+    let mut patches = Vec::new();
+    for plan in plans.iter().flatten() {
+        patches.extend(plan::contract(api, plan)?);
+    }
+    Ok(patches)
 }
 
 unsafe extern "C" fn patch_contract(api: *const Api) -> *const PatchContractV1 {
@@ -951,17 +811,10 @@ unsafe extern "C" fn patch_contract(api: *const Api) -> *const PatchContractV1 {
     if host.abi_version != ABI_VERSION || host.reserved != 0 {
         return core::ptr::null();
     }
-    let _guard = CONTRACT_EXPORT_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    CONTRACT_API.store(api as usize, Ordering::Release);
-    CONTRACT_REQUESTS
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clear();
-    let patches = collect_core_contract(host);
-    CONTRACT_API.store(0, Ordering::Release);
-    unsafe { defiance_feature_sdk::contract::build(api, patches) }
+    match collect_core_contract(host) {
+        Ok(patches) => unsafe { defiance_feature_sdk::contract::build(api, patches) },
+        Err(_) => core::ptr::null(),
+    }
 }
 
 /// `defiance.core` / `build`, version 1.

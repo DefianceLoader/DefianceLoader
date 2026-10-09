@@ -151,6 +151,7 @@
     ["logic", 2924112, 6, "function"]
   ]},
    "defiance.moving-grenades": {"state": "Active", "spans": []},
+   "defiance.performance": {"state": "Active", "spans": []},
    "defiance.pickup": {"state": "Active", "spans": [
     ["logic", 4437976, 5, "call site"]
   ]},

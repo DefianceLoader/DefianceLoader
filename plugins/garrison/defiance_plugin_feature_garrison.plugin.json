@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "id": "defiance.garrison",
+  "dll": "defiance_plugin_feature_garrison.dll",
+  "version": "0.4.1",
+  "abi": 5,
+  "patch_contract": true,
+  "group": "infantry",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Send selected soldiers into buildings without sending their unselected squadmates; support exit orders for soldiers occupying the building; let a squad fill a vehicle's free seats when it does not fit whole, and unload only a vehicle's passengers. Requires selection. Disable to keep the game's normal building, vehicle-entry and exit behavior. Restart required."
+    }
+  ],
+  "depends": [
+    {
+      "id": "defiance.core",
+      "min": "0.7.0"
+    },
+    {
+      "id": "defiance.selection",
+      "min": "0.6.2"
+    }
+  ],
+  "conflicts": []
+}

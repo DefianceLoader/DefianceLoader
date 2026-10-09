@@ -274,6 +274,35 @@ fn unit_inspection_partial_install_test(plugins: &PathBuf) {
     INSPECTION_MODULE.store(module as usize, Ordering::SeqCst);
     let _ = INSPECTION_HOOK.set(defiance_loader::test_host::build_api().hook);
 
+    // Unit inspection hooks nothing without Core's relation service, so a
+    // stand-in Core provides it.
+    unsafe extern "C" fn owned(_: *mut c_void) -> u8 {
+        0
+    }
+    unsafe extern "C" fn relation(_: *mut c_void) -> u32 {
+        defiance_api::RELATION_NONE
+    }
+    static RELATION: defiance_api::RelationV1 = defiance_api::RelationV1 { owned, relation };
+    let core = 0x6fff;
+    defiance_loader::test_host::begin_services(core, "defiance.core", Vec::new());
+    let registered = unsafe {
+        (defiance_loader::test_host::service_api().register)(
+            c"relation".as_ptr(),
+            1,
+            (&RELATION as *const defiance_api::RelationV1).cast(),
+            core::mem::size_of::<defiance_api::RelationV1>(),
+        )
+    };
+    assert_eq!(registered, 0, "register the stand-in relation service");
+    defiance_loader::test_host::finish_services(core, true);
+    let handshake = unsafe { GetProcAddress(library, defiance_api::SERVICES_ENTRY.as_ptr()) };
+    assert!(
+        !handshake.is_null(),
+        "unit-inspection exports the service handshake"
+    );
+    let handshake: unsafe extern "C" fn(*const defiance_api::ServiceApiV1) -> i32 =
+        unsafe { core::mem::transmute(handshake) };
+
     for (case, expected_hooks) in [
         ("second ownership hook", 1),
         ("ammo click redirect", 2),
@@ -301,7 +330,17 @@ fn unit_inspection_partial_install_test(plugins: &PathBuf) {
 
         let owner = 0x7000 + expected_hooks;
         defiance_loader::test_host::begin_plugin(owner, "defiance.unit-inspection");
+        defiance_loader::test_host::begin_services(
+            owner,
+            "defiance.unit-inspection",
+            vec!["defiance.core".into()],
+        );
+        assert_eq!(
+            unsafe { handshake(defiance_loader::test_host::service_api()) },
+            0
+        );
         let status = unsafe { (plugin.init)(&api) };
+        defiance_loader::test_host::finish_services(owner, false);
         defiance_loader::test_host::end_plugin();
         assert_ne!(status, 0, "{case} must fail plugin initialization");
         assert_eq!(
@@ -334,7 +373,17 @@ fn unit_inspection_partial_install_test(plugins: &PathBuf) {
     api.log = log;
     let owner = 0x7fff;
     defiance_loader::test_host::begin_plugin(owner, "defiance.unit-inspection");
+    defiance_loader::test_host::begin_services(
+        owner,
+        "defiance.unit-inspection",
+        vec!["defiance.core".into()],
+    );
+    assert_eq!(
+        unsafe { handshake(defiance_loader::test_host::service_api()) },
+        0
+    );
     let status = unsafe { (plugin.init)(&api) };
+    defiance_loader::test_host::finish_services(owner, status == 0);
     defiance_loader::test_host::end_plugin();
     assert_eq!(status, 0, "an unsupported build remains an optional no-op");
     let contract_symbol =
@@ -380,9 +429,10 @@ fn skipped(scenario: &str) -> Vec<u32> {
         "without-diagnostics" => vec![7],
         "without-preview-weapon" => vec![10],
         "without-vehicle-special-fire" => vec![11],
+        "without-performance" => vec![12],
         "without-core" => vec![0],
-        "diagnostics-only" => vec![2, 4, 3, 5, 8, 9, 6, 1, 10, 11],
-        "core-only" => vec![2, 4, 3, 5, 8, 9, 6, 1, 7, 10, 11],
+        "diagnostics-only" => vec![2, 4, 3, 5, 8, 9, 6, 1, 10, 11, 12],
+        "core-only" => vec![2, 4, 3, 5, 8, 9, 6, 1, 7, 10, 11, 12],
         "without-posture-and-ammo" => vec![4, 3, 6],
         "without-movement-and-ammo" => vec![3, 6],
         "shared-helper-corrupt" => vec![1, 7],
@@ -398,7 +448,7 @@ fn omitted(scenario: &str) -> Vec<u32> {
         "fail-firing" => vec![5],
         "without-posture" => vec![4, 3], // movement is refused without posture
         "without-selection" => vec![2, 4, 3, 5, 8, 9, 6],
-        "diagnostics-only" => vec![2, 4, 3, 5, 8, 9, 6, 1, 7, 10, 11],
+        "diagnostics-only" => vec![2, 4, 3, 5, 8, 9, 6, 1, 7, 10, 11, 12],
         "without-ammo" | "fail-ammo" | "disabled-ammo-corrupt" | "enabled-ammo-corrupt" => vec![6],
         "without-attack" | "fail-attack" => vec![8],
         "without-garrison" | "fail-garrison" => vec![9],
@@ -408,7 +458,8 @@ fn omitted(scenario: &str) -> Vec<u32> {
         "without-diagnostics" => vec![7],
         "without-preview-weapon" => vec![10],
         "without-vehicle-special-fire" => vec![11],
-        "core-only" => vec![2, 4, 3, 5, 8, 9, 6, 1, 7, 10, 11],
+        "without-performance" => vec![12],
+        "core-only" => vec![2, 4, 3, 5, 8, 9, 6, 1, 7, 10, 11, 12],
         "without-posture-and-ammo" => vec![4, 3, 6],
         "without-movement-and-ammo" => vec![3, 6],
         "shared-helper-corrupt" => vec![1, 7],
@@ -675,6 +726,7 @@ fn main() {
         (7, "diagnostics"),
         (10, "preview_weapon"),
         (11, "vehicle_special_fire"),
+        (12, "performance"),
     ];
     let mut failed = Vec::new();
     if scenario == "unknown-build" {
@@ -696,7 +748,7 @@ fn main() {
             format!("defiance_plugin_feature_{name}.dll")
         };
         let wide: Vec<u16> = plugins
-            .join(dll)
+            .join(&dll)
             .to_string_lossy()
             .encode_utf16()
             .chain(Some(0))
@@ -726,9 +778,7 @@ fn main() {
         }
         defiance_loader::test_host::begin_plugin(id as usize, name);
         let plugin_id = unsafe { CStr::from_ptr(plugin.name) }.to_str().unwrap();
-        let dependencies = defiance_loader::config::builtin::find(plugin_id)
-            .map(|b| b.depends.iter().map(|id| id.to_string()).collect())
-            .unwrap_or_default();
+        let dependencies = defiance_loader::test_host::feature_depends(&dll);
         defiance_loader::test_host::begin_services(id as usize, plugin_id, dependencies);
         let services = unsafe { GetProcAddress(library, defiance_api::SERVICES_ENTRY.as_ptr()) };
         if !services.is_null() {
@@ -805,6 +855,59 @@ fn main() {
             && !skipped(scenario).contains(&feature)
     };
     let compare = !failed.contains(&0) && !skipped(scenario).contains(&0);
+    // Core's game-symbol catalog, asked after every feature has patched: it
+    // must still answer from the original image, and refuse what a name does
+    // not publish.
+    let redraw = compare.then(|| {
+        use defiance_api::*;
+        defiance_loader::test_host::begin_services(
+            101,
+            "test.symbols",
+            vec!["defiance.core".into()],
+        );
+        let table = unsafe {
+            (defiance_loader::test_host::service_api().query)(
+                c"defiance.core".as_ptr(),
+                c"game-symbols".as_ptr(),
+                1,
+                core::mem::size_of::<GameSymbolsV1>(),
+            )
+        };
+        assert!(!table.is_null(), "Core publishes game-symbols");
+        let symbols = unsafe { &*table.cast::<GameSymbolsV1>() };
+        let resolve = |name: &CStr, abi: u32, use_: u32| {
+            let mut out = core::mem::MaybeUninit::<GameSymbolV1>::uninit();
+            let status = unsafe { (symbols.resolve)(name.as_ptr(), abi, use_, out.as_mut_ptr()) };
+            (status == SYMBOL_OK)
+                .then(|| unsafe { out.assume_init() })
+                .ok_or(status)
+        };
+        let redraw = resolve(c"ammo menu redraw", 1, SYMBOL_USE_ENTRY_HOOK).expect("redraw");
+        assert_eq!(redraw.flags, SYMBOL_KNOWN_BUILD);
+        assert_eq!(redraw.address, targets[1].base as usize + redraw.rva);
+        let expected = unsafe { core::slice::from_raw_parts(redraw.expected, redraw.expected_len) };
+        assert_eq!(&originals[1][redraw.rva..][..expected.len()], expected);
+        assert_eq!(redraw.span, 20);
+        let widget = resolve(c"widget move", 1, SYMBOL_USE_CALL).expect("widget move");
+        assert_eq!(widget.span, 0);
+        let refusals = [
+            (
+                c"no such symbol",
+                1,
+                SYMBOL_USE_ADDRESS,
+                SYMBOL_UNKNOWN_NAME,
+            ),
+            (c"widget move", 2, SYMBOL_USE_CALL, SYMBOL_ABI_MISMATCH),
+            (c"widget move", 1, SYMBOL_USE_ENTRY_HOOK, SYMBOL_MISUSE),
+            (c"ammo menu redraw", 1, SYMBOL_USE_CALL_SITE, SYMBOL_MISUSE),
+            (c"ammo menu redraw", 1, 99, SYMBOL_INVALID),
+        ];
+        for (name, abi, use_, status) in refusals {
+            assert_eq!(resolve(name, abi, use_).err(), Some(status), "{name:?}");
+        }
+        defiance_loader::test_host::finish_services(101, false);
+        redraw.rva
+    });
     if compare {
         let actual: Vec<_> = targets
             .iter()
@@ -816,7 +919,7 @@ fn main() {
                 image: &originals[i],
                 base: targets[i].base as usize,
             };
-            let build = passenger::sites(&image(0), &image(1))
+            let build = passenger::sites(&image(0), &image(1), redraw.expect("Core runs"))
                 .expect("passenger sites resolve on the stock build");
             let tick = unsafe { vtable_slot(c".?AVGunner@Leonardo@@".as_ptr(), 5) } as usize;
             assert_eq!(targets[0].base as usize + build.tick.rva, tick);

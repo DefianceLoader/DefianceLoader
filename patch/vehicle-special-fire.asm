@@ -75,7 +75,7 @@ vehicle_special_fire_guard_release:
     mov rax, qword ptr [rcx]
     xor edx, edx
     sub rsp, 0x20
-    call qword ptr [rax + 0x60]
+    call qword ptr [rax + 0x60]    ; vt:logic/Gun@Leonardo
     add rsp, 0x20
     mov rcx, qword ptr [rbx + 0x68]
     mov qword ptr [rcx + r13*8], 0

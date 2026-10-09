@@ -42,6 +42,7 @@ pub unsafe fn initialize_runtime(
         game: module(game_base, game_sha, game_image)?,
         trace_ring: 0,
         build: BUILD,
+        known_build: true,
         linked: Mutex::new(BTreeMap::new()),
         crash_ranges: None,
         lobby_connect: None,

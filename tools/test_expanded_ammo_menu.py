@@ -45,16 +45,19 @@ PATHS={i:builds.build(n).game for i,n in enumerate(BUILDS)}
 LOGIC={i:builds.build(n).logic for i,n in enumerate(BUILDS)}
 # Per build: the class offsets and the last patched instruction's rva, as
 # plugins/expanded-ammo-menu/src/sites.rs resolves them (its TABLE test).
-OFFSETS=tuple(dict(roster=r,gunner_count=c,gunner_get=g,pool_get=p,world_player=w,ai_set=a,tooltip=t)
-    for r,c,g,p,w,a,t in [(0x3b8,0x130,0x120,0x1b8,0x700,0x3e0,0x238),(0x3b8,0x130,0x120,0x1b8,0x700,0x3e0,0x258),
-                          (0x3d0,0x140,0x130,0x1c8,0x708,0x3f8,0x238),(0x3d0,0x140,0x130,0x1c8,0x708,0x3f8,0x258),
-                          (0x3d0,0x140,0x130,0x1c8,0x708,0x3f8,0x238),(0x3d0,0x140,0x130,0x1c8,0x708,0x3f8,0x258)])
+OFFSETS=tuple(dict(roster=r,gunner_count=c,gunner_get=g,pool_get=p,ai_set=a,tooltip=t)
+    for r,c,g,p,a,t in [(0x3b8,0x130,0x120,0x1b8,0x3e0,0x238),(0x3b8,0x130,0x120,0x1b8,0x3e0,0x258),
+                          (0x3d0,0x140,0x130,0x1c8,0x3f8,0x238),(0x3d0,0x140,0x130,0x1c8,0x3f8,0x258),
+                          (0x3d0,0x140,0x130,0x1c8,0x3f8,0x238),(0x3d0,0x140,0x130,0x1c8,0x3f8,0x258)])
 LAST_SITE=(0x4b6af9,0x4bd3d9,0x4b8ee9,0x4bf889,0x4b8ef9,0x4bf899)
 SITE_COUNT=53
 # The GUI-owner store after loading scripts/ui/AmmoTooltip.txt and assigning
 # AmmunitionTooltipWindow's vtable. This is independently audited per build;
 # executing the actual LEA prevents the fixture from inventing the field.
 TOOLTIP_STORE=(0x2462ee,0x24ad1e,0x24762e,0x24c08e,0x24762e,0x24c08e)
+# Core's game-symbol catalog per build: (ammo menu redraw, widget move).
+SYMBOLS=((0x3ed10,0x2d1920),(0x3ed10,0x2d6cb0),(0x3eeb0,0x2d3ab0),
+         (0x3eeb0,0x2d8e70),(0x3eeb0,0x2d3ab0),(0x3eeb0,0x2d8e70))
 # The AmmunitionMenu constructor slice (reference game.dll+0x3df21..0x3df62),
 # no relative operands, so the same bytes locate it in any build.
 CONSTRUCTOR=("488b9620010000488b820801000048898618010000488b8a18010000"
@@ -135,20 +138,69 @@ def case(build_index,columns,combined=False):
         published=value
         return 0
     table=(C.c_void_p*2)(capacity,publish)
-    @cb(C.c_ubyte,C.c_void_p)
-    def is_selected(facet): return C.c_ubyte.from_address(facet+0x18).value
-    selection_table=(C.c_void_p*1)(is_selected)
+    # Core's selection snapshot, over the fixture's selection manager: the
+    # context's +40 answers the player, whose manager holds the entity vector.
+    snapshot_manager={}
+    @cb(C.c_size_t,C.c_void_p,C.c_void_p,C.c_size_t)
+    def copy_selected(context,out,capacity):
+        unavailable=(1<<64)-1
+        if not context: return unavailable
+        player=C.CFUNCTYPE(C.c_void_p,C.c_void_p)(q(q(context)+0x40))(context)
+        manager=snapshot_manager.get(player)
+        if not manager: return unavailable
+        selected=[]
+        for at in range(q(manager+0x40),q(manager+0x48),8):
+            e=q(at)
+            if not e: continue
+            facets=C.CFUNCTYPE(C.c_void_p,C.c_void_p)(q(q(e)+0xb0))(e)
+            facet=q(facets+0x50) if facets else 0
+            if facet and C.c_ubyte.from_address(facet+0x18).value: selected.append(e)
+        if capacity and capacity<len(selected): return len(selected)
+        if capacity and not out: return unavailable
+        if capacity:
+            for i,e in enumerate(selected): pq(out+i*8,e)
+        return len(selected)
+    snapshot_table=(C.c_void_p*2)(copy_selected,0)
+    # Core's game-symbols service: the two names this plugin asks for, read
+    # from the stock image. symbol_status/symbol_span stand in for Core's
+    # refusals and for a catalog whose span the plugin does not assume.
+    class GameSymbol(C.Structure):
+        _fields_=[("module",C.c_char_p),("build",C.c_char_p),("rva",C.c_size_t),("address",C.c_size_t),
+                  ("expected",C.c_void_p),("expected_len",C.c_size_t),("span",C.c_uint32),("flags",C.c_uint32)]
+    symbol_status=0; symbol_span=20
+    symbol_bytes={rva:C.create_string_buffer(C.string_at(base+rva,20),20) for rva in SYMBOLS[build_index]}
+    KEEP.append(symbol_bytes)
+    @cb(C.c_uint32,C.c_char_p,C.c_uint32,C.c_uint32,C.POINTER(GameSymbol))
+    def resolve_symbol(name,abi,use,out):
+        if symbol_status: return symbol_status
+        redraw_rva,layout_rva=SYMBOLS[build_index]
+        if (name,abi,use)==(b"ammo menu redraw",1,2): rva,span=redraw_rva,symbol_span
+        elif (name,abi,use)==(b"widget move",1,1): rva,span=layout_rva,0
+        else: return 5
+        out[0]=GameSymbol(b"game.dll",BUILDS[build_index].replace("-","/",1).encode(),rva,base+rva,
+                          C.addressof(symbol_bytes[rva]),20 if span else 16,span,1)
+        return 0
+    symbols_table=(C.c_void_p*1)(C.cast(resolve_symbol,C.c_void_p))
+    step_handler=0
+    @cb(None,C.c_void_p)
+    def set_step_handler(handler):
+        nonlocal step_handler
+        step_handler=handler or 0
+    step_table=(C.c_void_p*1)(set_step_handler)
+    service_queries=[]
     @cb(C.c_void_p,C.c_char_p,C.c_char_p,C.c_uint32,C.c_size_t)
     def query(provider,name,version,size):
-        if provider==b"defiance.selection":
-            assert (name,version,size)==(b"selection",1,8)
-            return C.addressof(selection_table)
-        if (provider,name)==(b"defiance.core",b"ammo-menu"):
-            assert (version,size)==(1,16)
+        if (provider,name,version,size)==(b"defiance.core",b"game-symbols",1,8):
+            return C.addressof(symbols_table)
+        request=(provider,name,version,size)
+        service_queries.append(request)
+        if request==(b"defiance.core",b"selection-snapshot",1,16):
+            return C.addressof(snapshot_table)
+        if request==(b"defiance.ammunition",b"combined-step",1,8):
+            return C.addressof(step_table)
+        if request==(b"defiance.core",b"ammo-menu",1,16):
             return C.addressof(table)
-        # Optional original-byte and combined-step services are unavailable in
-        # this host. An unknown query returns null, as the loader contract does.
-        return 0
+        return None
     class Services(C.Structure):
         _fields_=[("version",C.c_uint32),("size",C.c_uint32),("register",C.c_void_p),("query",C.c_void_p)]
     services=Services(1,24,0,query)
@@ -156,6 +208,14 @@ def case(build_index,columns,combined=False):
     assert init(C.byref(api))!=0 and calls==0
     lib.defiance_plugin_services.argtypes=[C.POINTER(Services)]
     assert lib.defiance_plugin_services(C.byref(services))==0
+    # Core refusing a name (unsupported build, altered or ambiguous bytes, an
+    # ABI or use it does not publish) refuses before any patch, as does a span
+    # the hook does not assume.
+    for symbol_status in (2,3,4,5):
+        assert init(C.byref(api))!=0 and calls==0 and not owned
+    symbol_status=0; symbol_span=19
+    assert init(C.byref(api))!=0 and calls==0 and not owned
+    symbol_span=20
     # A corrupt last site must refuse before the first write.
     address=base+LAST_SITE[build_index]; saved=C.string_at(address,1)
     put(address,bytes([saved[0]^1])); assert init(C.byref(api))!=0 and calls==0
@@ -173,6 +233,10 @@ def case(build_index,columns,combined=False):
     refuse_publication=False
     assert init(C.byref(api))==0,messages
     assert published==columns*3
+    if combined:
+        assert (b"defiance.core",b"ammo-menu",1,16) in service_queries
+        assert (b"defiance.core",b"selection-snapshot",1,16) in service_queries
+        assert (b"defiance.ammunition",b"combined-step",1,8) in service_queries
     count=columns*3; delta=(count-9)*0xb8; size=0x838+delta
     menu=alloc(size+64); put(menu+size,b"G"*64)
     menu_vt=alloc(0x100); pq(menu,menu_vt)
@@ -399,9 +463,7 @@ def case(build_index,columns,combined=False):
             wrong_calls.append(value)
             return 0
         pq(wvt+0x40,not_a_player_getter)
-        @cb(C.c_void_p,C.c_void_p,C.c_void_p)
-        def manager_of(w,p): assert (w,p)==(world,player); return manager
-        pq(cvt+0x40,player_of); pq(wvt+LOFF['world_player'],manager_of)
+        pq(cvt+0x40,player_of); snapshot_manager[player]=manager
         # Execute the real AmmunitionMenu constructor's service-field setup.
         # This is deliberately not pq(menu+128/130, ...): that old fixture
         # mirrored the production bug and masked a mission-load crash.
@@ -532,6 +594,48 @@ def case(build_index,columns,combined=False):
         assert struct.unpack_from("<I",union[0],0x28)[0]==200
         first=menu+0x180
         assert labels[q(first+0x40)]=="1/2"
+        assert step_handler, "combined-step service did not register its handler"
+        step=C.CFUNCTYPE(C.c_int,C.c_void_p,C.c_void_p,C.c_int)(step_handler)
+        # Both squads begin disabled for ammo 100. The callback must walk the
+        # selected squad order, while each squad stores its own local slot bit:
+        # ammo 100 is slot 0 in the first squad and slot 1 in the second.
+        for _,ai in selected_entities:
+            C.c_uint32.from_address(ai_records[ai]+0x3c).value=1
+        assert step(menu,widgets[0],1)==1
+        first_pin=member_selections[0]
+        second_pin=member_selections[1]
+        assert C.c_ubyte.from_address(first_pin+0x19).value==0xa5
+        assert C.c_ubyte.from_address(first_pin+0x1e).value==1
+        assert C.c_ubyte.from_address(first_pin+0x1f).value==0
+        assert C.c_ubyte.from_address(second_pin+0x19).value!=0xa5
+        assert step(menu,widgets[0],1)==1
+        assert C.c_ubyte.from_address(second_pin+0x19).value==0xa5
+        assert C.c_ubyte.from_address(second_pin+0x1e).value==2
+        assert C.c_ubyte.from_address(second_pin+0x1f).value==0
+        # Step down selects the last enabled user in selection order and keeps
+        # using that squad's local slot (bit 1 here).
+        assert step(menu,widgets[0],-1)==1
+        assert C.c_ubyte.from_address(second_pin+0x1f).value==2
+        # A changed selected-squad roster consumes the stale input without
+        # changing any soldier pin; the callback refreshes the cached view.
+        pin_state=(C.c_ubyte.from_address(first_pin+0x1e).value,
+                   C.c_ubyte.from_address(first_pin+0x1f).value,
+                   C.c_ubyte.from_address(second_pin+0x1e).value,
+                   C.c_ubyte.from_address(second_pin+0x1f).value)
+        pq(manager+0x48,registry+8)
+        assert step(menu,widgets[0],1)==1
+        assert pin_state==(C.c_ubyte.from_address(first_pin+0x1e).value,
+                           C.c_ubyte.from_address(first_pin+0x1f).value,
+                           C.c_ubyte.from_address(second_pin+0x1e).value,
+                           C.c_ubyte.from_address(second_pin+0x1f).value)
+        pq(manager+0x48,registry+16)
+        for pin in [first_pin,second_pin]:
+            C.c_ubyte.from_address(pin+0x19).value=0
+            C.c_ubyte.from_address(pin+0x1e).value=0
+            C.c_ubyte.from_address(pin+0x1f).value=0
+        C.c_uint32.from_address(ai_records[selected_entities[0][1]]+0x3c).value=0
+        C.c_uint32.from_address(ai_records[selected_entities[1][1]]+0x48+0x3c).value=1
+        redraw(menu,entity)
         # A mixed card keeps the native quantity colour (fillSlot's).
         assert C.c_uint32.from_address(q(first+0x30)+0x1a0).value==0
         # The reload bar is the ready share: the enabled user reloading at
@@ -621,9 +725,9 @@ def case(build_index,columns,combined=False):
         redraw(menu,entity)
         assert labels[q(first+0x40)]=="2"
         pq(manager+0x48,registry+16); actions.clear()
-        # Transient loading/teardown: missing context, world or player must
-        # retain the original focused redraw and reject stale union clicks.
-        for at in [menu+0x128,menu+0x130,context+0x218]:
+        # Transient loading/teardown: a missing context or player must retain
+        # the original focused redraw and reject stale union clicks.
+        for at in [menu+0x128,context+0x218]:
             redraw(menu,entity)
             saved=q(at); pq(at,0); actions.clear()
             C.CFUNCTYPE(None,C.c_void_p,C.c_void_p)(click)(menu,widgets[0])

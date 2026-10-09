@@ -76,7 +76,7 @@ def timer(gunner):
 
 def verify_build_bindings(selected_name):
     rows = json.loads((ROOT / "out/moving-actions-sync-sites.json").read_text())
-    check(len(rows) == 4, "expected four supported 2026 bindings")
+    check(len(rows) == 6, "expected six supported 2026 bindings")
     for row in rows:
         store, date = row["name"].split("-", 1)
         path = ROOT / "bin" / store / date / "logic.dll"

@@ -1,6 +1,6 @@
 """Fake-ABI test for the scoped moving-actions animation overlay.
 
-Set MOVING_ACTIONS_ANIMATION_BUILD to any of the four supported 2026 builds.
+Set MOVING_ACTIONS_ANIMATION_BUILD to any of the supported 2026 builds.
 The harness maps the native DLL without resolving imports; callbacks and
 animation objects live in throwaway VirtualAlloc memory.
 """
@@ -38,6 +38,10 @@ PROFILES = {
                        (0x2C3900, 0x4368A0, 0x436AA0), 0x136880, 0x72C0D8, 0x72C370, 0x2C3DF0),
     "steam-2026-09-25": ("adb3ad95926036809b4e554b466bef33d4ac7aa5303e59a9e4a940890bc334b5",
                          (0x2C3990, 0x436930, 0x436B30), 0x136910, 0x72C118, 0x72C3B0, 0x2C3E80),
+    "gog-2026-10-07": ("da62ed73b43fafa8af0f25fba0501bff641a0cfd1bfb0d3a0b8777a1b0d99271",
+                       (0x2C4240, 0x43A2F0, 0x43A4F0), 0x136880, 0x731090, 0x731320, 0x2C4730),
+    "steam-2026-10-07": ("fdb1d3bb7fdd0a47ac1b8a530cf0ee302fa2a96cc7283972504b0aa41ab2336f",
+                         (0x2C42D0, 0x43A380, 0x43A580), 0x136910, 0x731128, 0x7313C8, 0x2C47C0),
 }
 BUILD_NAME = os.environ.get("MOVING_ACTIONS_ANIMATION_BUILD", "steam-2026-09-25")
 check(BUILD_NAME in PROFILES, f"unsupported test build: {BUILD_NAME}")

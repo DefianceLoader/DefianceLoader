@@ -1,42 +1,24 @@
 //! Generated commented defaults and insertion of missing settings.
 //!
 //! Startup inserts only missing declarations; existing text stays byte-for-byte
-//! intact. The runtime supplies both built-in and manifest declarations.
+//! intact. These are the loader's own sections; the runtime adds each
+//! installed plugin's manifest declarations.
 
 use super::builtin::{
-    self, BUILTINS, LOADER_SECTION, LOADER_SETTINGS, LOGGING_SECTION, LOGGING_SETTINGS,
-    TRACE_SECTION, TRACE_SETTINGS,
+    self, LOADER_SECTION, LOADER_SETTINGS, LOGGING_SECTION, LOGGING_SETTINGS, TRACE_SECTION,
+    TRACE_SETTINGS,
 };
 use super::schema::SettingDecl;
 
-/// The declared `(section, settings)` blocks of a group, in file order.
+/// The loader's own `(section, settings)` blocks of a group, in file order.
 pub fn blocks(group: &str) -> Vec<(&'static str, &'static [SettingDecl])> {
     let mut blocks = Vec::new();
-    match group {
-        "core" => {
-            blocks.push((LOADER_SECTION, LOADER_SETTINGS));
-            blocks.push((LOGGING_SECTION, LOGGING_SETTINGS));
-            blocks.push((TRACE_SECTION, TRACE_SETTINGS));
-        }
-        _ => {
-            for builtin in BUILTINS {
-                if builtin.group != group {
-                    continue;
-                }
-                let settings = builtin::settings(builtin.id);
-                if settings.is_empty() {
-                    continue;
-                }
-                blocks.push((builtin.id, settings));
-            }
-        }
+    if group == "core" {
+        blocks.push((LOADER_SECTION, LOADER_SETTINGS));
+        blocks.push((LOGGING_SECTION, LOGGING_SETTINGS));
+        blocks.push((TRACE_SECTION, TRACE_SETTINGS));
     }
     blocks
-}
-
-/// The one-line summary for a section, if it has one.
-fn summary(section: &str) -> Option<&'static str> {
-    builtin::find(section).map(|builtin| builtin.summary)
 }
 
 /// The complete commented file for a group that does not exist yet.
@@ -56,11 +38,6 @@ pub fn render_group(group: &str) -> String {
     for (section, settings) in blocks(group) {
         text.push('\n');
         text.push_str(&format!("[{section}]\n"));
-        if let Some(summary) =
-            summary(section).filter(|s| !settings.iter().any(|d| d.description == *s))
-        {
-            text.push_str(&format!("; {summary}\n"));
-        }
         for decl in settings {
             text.push_str(&setting_help(decl.description, decl.default, "\n"));
             text.push_str(&format!("{} = {}\n", decl.key, decl.default));
@@ -123,11 +100,6 @@ pub fn materialize(existing: &str, group: &str) -> (String, bool) {
                 text.push('\n');
             }
             text.push_str(&format!("[{section}]\n"));
-            if let Some(summary) =
-                summary(section).filter(|s| !settings.iter().any(|d| d.description == *s))
-            {
-                text.push_str(&format!("; {summary}\n"));
-            }
         }
         for decl in missing {
             text.push_str(&setting_help(decl.description, decl.default, "\n"));
@@ -160,6 +132,12 @@ pub fn extend_missing(
         }
         // Leave legacy overrides authoritative until explicitly migrated.
         if section == LOADER_SECTION && bootstrap.top(decl.key).is_some() {
+            continue;
+        }
+        if builtin::moved_from_loader(section, decl.key).is_some()
+            && (document.lookup(LOADER_SECTION, decl.key).is_some()
+                || bootstrap.top(decl.key).is_some())
+        {
             continue;
         }
         if super::schema::validate(decl, decl.default).is_err() {
@@ -209,7 +187,7 @@ pub fn extend_missing(
     text
 }
 
-fn setting_help(description: &str, default: &str, newline: &str) -> String {
+pub(super) fn setting_help(description: &str, default: &str, newline: &str) -> String {
     let mut text = String::new();
     for line in description.lines() {
         text.push_str(&format!("; {line}{newline}"));
@@ -326,17 +304,19 @@ mod tests {
 
     #[test]
     fn materialize_is_idempotent_and_preserves_content() {
-        let original = "; a comment\n[defiance.selection]\n; keep me\nenabled = false\n";
-        let (once, changed) = materialize(original, "infantry");
+        let original = "; a comment\n[logging]\n; keep me\nlevel = warn\n\
+                        include_plugins =\nexclude_plugins =\n";
+        let (once, changed) = materialize(original, "core");
         assert!(changed);
         assert!(once.contains("; a comment"));
         assert!(once.contains("; keep me"));
         // The existing explicit value is untouched.
-        assert!(once.contains("enabled = false"));
-        // The other infantry sections were added.
-        assert!(once.contains("[defiance.movement]"));
-        assert!(once.contains("[defiance.posture]"));
-        let (twice, changed) = materialize(&once, "infantry");
+        assert!(once.contains("level = warn"));
+        // The other core sections were added.
+        assert!(once.contains("[loader]"));
+        assert!(once.contains("[trace]"));
+        assert!(materialize("", "infantry").0.is_empty());
+        let (twice, changed) = materialize(&once, "core");
         assert!(!changed);
         assert_eq!(twice, once);
     }

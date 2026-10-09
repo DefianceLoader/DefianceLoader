@@ -15,7 +15,7 @@ profile whose DLLs are not present, like the other tests that gate on
 
     python tools/test_variant.py
 """
-import hashlib, json, pathlib, struct, subprocess, sys
+import json, pathlib, struct, subprocess, sys
 import builds
 sys.path.insert(0, "tools")
 import capstone
@@ -39,12 +39,18 @@ def expected(image, rva, want, what):
     return None
 
 
+_by_sha = None
+
+
 def by_sha(sha):
-    """The first file under bin/ whose sha256 is `sha`, or None."""
-    for path in sorted(pathlib.Path("bin").rglob("*.dll")):
-        if hashlib.sha256(path.read_bytes()).hexdigest() == sha:
-            return path
-    return None
+    """The first file under bin/ whose sha256 is `sha`, or None. The DLLs are
+    hashed once, through the stamp's (size, mtime) cache."""
+    global _by_sha
+    if _by_sha is None:
+        _by_sha = {}
+        for path in sorted(pathlib.Path("bin").rglob("*.dll")):
+            _by_sha.setdefault(stamp.file_digest(path.resolve()), path)
+    return _by_sha.get(sha)
 
 
 def overlaps(spans):
@@ -174,12 +180,17 @@ for profile_path in sorted(pathlib.Path("tools/layouts").glob("*.json")):
     if not builds.reference().present:
         print(f"skip {name} sync: the reference DLLs are not under bin/")
         continue
-    # Reassembling takes about a minute per profile; skip it when nothing it
-    # reads (the tooling, patch/, the layouts, the tracked variant and every
-    # DLL involved) changed since it last passed.
+    # Reassembling takes about a minute per profile. `assemble` refreshes the
+    # variants it can and stamps them; a current stamp means the tracked units
+    # are what these inputs assemble to, which is what this would check.
+    build = builds.build(name)
+    if build.present and stamp.variant_current(build):
+        print(f"skip {name} sync: assemble's stamp shows its units are current")
+        continue
+    # Otherwise skip it when nothing it reads (the tooling, patch/, the layouts,
+    # the tracked variant and every DLL involved) changed since it last passed.
     sync_key = stamp.digest(stamp.ASSEMBLY_INPUTS + [f"tools/variants/{name}/*"],
-                            extra=[hashlib.sha256(logic_dll.read_bytes()).hexdigest(),
-                                   hashlib.sha256(game_dll.read_bytes()).hexdigest()])
+                            extra=[profile["logic_sha256"], profile["game_sha256"]])
     if stamp.fresh(f"variant-{name}", sync_key):
         print(f"skip {name} sync: unchanged since it last passed (DEFIANCE_NO_STAMP=1 forces it)")
         continue

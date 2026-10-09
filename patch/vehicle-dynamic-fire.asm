@@ -80,7 +80,7 @@ vehicle_special_fire_dynamic_special:
     je vehicle_special_fire_dynamic_next_special
     mov rcx, r14
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x1c0]
+    call qword ptr [rax + 0x1c0]    ; vt:logic/Gun@Leonardo
     test al, al
     jne vehicle_special_fire_dynamic_next_special
     xor edi, edi
@@ -102,7 +102,7 @@ vehicle_special_fire_dynamic_destination:
     jne vehicle_special_fire_dynamic_next_destination
     mov rcx, r15
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x1c0]
+    call qword ptr [rax + 0x1c0]    ; vt:logic/Gun@Leonardo
     test al, al
     jz vehicle_special_fire_dynamic_next_destination
     mov eax, dword ptr [r14 + 0x140]
@@ -112,7 +112,7 @@ vehicle_special_fire_dynamic_destination:
     call vehicle_special_fire_dynamic_exchange
     mov rcx, r15
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x1c0]
+    call qword ptr [rax + 0x1c0]    ; vt:logic/Gun@Leonardo
     test al, al
     jz vehicle_special_fire_dynamic_restore
     mov rax, qword ptr [rbx + 0x68]
@@ -257,7 +257,7 @@ vehicle_special_fire_dynamic_target:
     jne vehicle_special_fire_dynamic_target_aux
     mov rcx, rax
     mov rdx, qword ptr [rax]
-    call qword ptr [rdx + 8]
+    call qword ptr [rdx + 8]    ; vt:storage/PtrJunction@Storage
     mov rax, qword ptr [rsp + 0x20]
 vehicle_special_fire_dynamic_target_aux:
     cmp qword ptr [rax + 0x10], 0
@@ -267,7 +267,7 @@ vehicle_special_fire_dynamic_set_target:
     mov rcx, rbx
     lea rdx, [rsp + 0x20]
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x30]
+    call qword ptr [rax + 0x30]    ; vt:logic/Gun@Leonardo
     add rsp, 0x30
     pop rbx
     ret

@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "id": "defiance.performance",
+  "dll": "defiance_plugin_feature_performance.dll",
+  "version": "0.1.0",
+  "abi": 5,
+  "patch_contract": true,
+  "group": "core",
+  "multiplayer_safe": true,
+  "hot_reload": false,
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Faster rendering and main-thread scheduling: each setting below replaces one engine routine with one that computes the same result for less work, or relaxes one engine choice. Disabling this runs the game's own routines; nothing else depends on it. Restart required."
+    },
+    {
+      "key": "main_thread_cpus",
+      "type": "choice",
+      "default": "all",
+      "choices": [
+        "all",
+        "spread",
+        "engine"
+      ],
+      "description": "Which CPUs the game's main thread may run on. all: every CPU. spread: every CPU except the first core (experimental: it caused long stutters in testing). engine: the game's own choice, the first CPU only. Restart required."
+    },
+    {
+      "key": "grass_sort",
+      "type": "choice",
+      "default": "cached",
+      "choices": [
+        "cached",
+        "engine"
+      ],
+      "description": "How grass is ordered by distance each frame. cached: each distance is worked out once per frame, giving the same order as the game's own sort in about half the time. engine: the game's own sort. Restart required."
+    },
+    {
+      "key": "view_sort",
+      "type": "choice",
+      "default": "cached",
+      "choices": [
+        "cached",
+        "engine"
+      ],
+      "description": "How the objects in view are put in order each frame. cached: what the order depends on is read once per object, giving the same order as the game's own sort. engine: the game's own sort. Restart required."
+    },
+    {
+      "key": "mesh_sort",
+      "type": "choice",
+      "default": "cached",
+      "choices": [
+        "cached",
+        "engine"
+      ],
+      "description": "How the meshes in view are grouped for drawing each frame. cached: what the order depends on is read once per mesh, giving the same order as the game's own sort. engine: the game's own sort. Restart required."
+    },
+    {
+      "key": "matrix_inverse",
+      "type": "choice",
+      "default": "direct",
+      "choices": [
+        "direct",
+        "engine"
+      ],
+      "description": "How the renderer inverts the matrices of objects that moved. direct: the game's own arithmetic in the same order, so the results are identical, without its many small calls. engine: the game's own function. Restart required."
+    },
+    {
+      "key": "shadow_fit",
+      "type": "choice",
+      "default": "trimmed",
+      "choices": [
+        "trimmed",
+        "engine"
+      ],
+      "description": "How each shadow band is fitted to what it covers. trimmed: skips a pass over every shadow caster in view whose result the game throws away; the shadows are the same. engine: the game's own. Restart required."
+    },
+    {
+      "key": "shadow_cascades",
+      "type": "choice",
+      "default": "far_half",
+      "choices": [
+        "all",
+        "rotate",
+        "near",
+        "far_half"
+      ],
+      "description": "Which parts of the shadow map are redrawn each frame. far_half: one of its distance bands a frame, in turn, the farthest (which costs the most) half as often as the others; on busy scenes with high shadows this can take the frame rate from about 31 to 55 fps. rotate: one band a frame, each equally often. near: the nearest band every frame and one of the others in turn. all: every part every frame, as the game does. Restart required."
+    },
+    {
+      "key": "tree_sway",
+      "type": "choice",
+      "default": "engine",
+      "choices": [
+        "engine",
+        "half",
+        "half_facet"
+      ],
+      "description": "How often living trees sample their wind sway. engine: every update, as the game does. half: every other manager update with accumulated elapsed time. half_facet: also skip the active tree facet's provider/transform refresh on omitted ticks; completion still runs, but refresh is delayed. Both reduced modes are approximate and may look less smooth. Guarded on six supported game builds; half_facet has only been checked in game on Steam 2026-09-25. Unknown builds keep the engine rate. Restart required."
+    }
+  ],
+  "depends": [
+    {
+      "id": "defiance.core",
+      "min": "0.7.0"
+    }
+  ],
+  "conflicts": []
+}

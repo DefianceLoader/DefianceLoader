@@ -40,6 +40,13 @@ CORE = "defiance.core"
 # neither run nor compared with the fixture.
 MODULES = ("logic.dll", "game.dll", "world2.dll", "galileo.dll")
 
+
+def module_files(build):
+    """Return the module payloads present and absent for this build."""
+    present = tuple(module for module in MODULES if (build.folder / module).is_file())
+    absent = tuple(module for module in MODULES if module not in present)
+    return present, absent
+
 # Settings for the runs, beyond each plugin's defaults, so that every write a
 # player can turn on is inventoried.
 SETTINGS = {
@@ -91,7 +98,7 @@ def closure(found, plugin):
     return out
 
 
-def run(build, found, ids, reverse=False):
+def run(build, found, ids, reverse=False, reload=False):
     """Start `ids` against `build`'s stock DLLs: {"states", "order", "spans"}."""
     host = pathlib.Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")) / "release/patch-inventory.exe"
     with tempfile.TemporaryDirectory(prefix="defiance-inventory-") as temporary:
@@ -99,9 +106,9 @@ def run(build, found, ids, reverse=False):
         exe = root / "bin" / host.name
         exe.parent.mkdir()
         shutil.copy2(host, exe)
-        for module in MODULES:
-            if (build.folder / module).is_file():
-                shutil.copy2(build.folder / module, root / "bin" / module)
+        present, _ = module_files(build)
+        for module in present:
+            shutil.copy2(build.folder / module, root / "bin" / module)
         folder = root / "DefianceLoader/plugins"
         folder.mkdir(parents=True)
         for id in ids:
@@ -116,7 +123,8 @@ def run(build, found, ids, reverse=False):
                 group = json.loads(found[id][1].read_text(encoding="utf-8"))["group"]
                 with open(config / f"{group}.ini", "a", encoding="utf-8") as file:
                     file.write(f"[{id}]\n" + "".join(f"{k} = {v}\n" for k, v in values.items()))
-        result = subprocess.run([str(exe)] + (["reverse"] if reverse else []),
+        arguments = (["reverse"] if reverse else []) + (["reload-vehicle"] if reload else [])
+        result = subprocess.run([str(exe)] + arguments,
                                 capture_output=True, text=True)
         lines = [line for line in result.stdout.splitlines() if line.startswith("{")]
         if result.returncode != 0 or not lines:
@@ -229,7 +237,7 @@ def main(argv):
         elif not path.is_file():
             problems.append(f"no {builds.relative(path)}; run tools/patch_inventory.py record")
         else:
-            absent = [m for m in MODULES if not (build.folder / m).is_file()]
+            _, absent = module_files(build)
             recorded = json.loads(path.read_text(encoding="utf-8"))
             problems += differences(recorded, record, [m.removesuffix(".dll") for m in absent])
             if any(s[0] + ".dll" in absent for entry in recorded["plugins"].values()

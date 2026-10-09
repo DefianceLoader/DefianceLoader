@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "id": "defiance.posture",
+  "dll": "defiance_plugin_feature_posture.dll",
+  "version": "0.4.2",
+  "abi": 5,
+  "patch_contract": true,
+  "group": "infantry",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Give selected soldiers their own standing, crouching or prone posture instead of changing the entire squad. Requires selection. Disabling this also disables individual movement; it does not remove the game's normal squad posture controls. Restart required."
+    }
+  ],
+  "depends": [
+    {
+      "id": "defiance.core",
+      "min": "0.7.0"
+    },
+    {
+      "id": "defiance.selection",
+      "min": "0.6.2"
+    }
+  ],
+  "conflicts": []
+}

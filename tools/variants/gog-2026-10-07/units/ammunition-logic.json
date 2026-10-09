@@ -1,0 +1,476 @@
+{
+ "unit_schema": 1,
+ "name": "ammunition-logic",
+ "plugin": "ammunition",
+ "module": "logic.dll",
+ "source_sha256": "da62ed73b43fafa8af0f25fba0501bff641a0cfd1bfb0d3a0b8777a1b0d99271",
+ "unit_bytes": 2430,
+ "code_offset": 112,
+ "cells": [
+  {
+   "name": "scratch",
+   "offset": 0,
+   "bytes": 112
+  }
+ ],
+ "writes": [
+  {
+   "kind": "jmp",
+   "rva": 1182954,
+   "before": "488b70284885f6",
+   "tail": "9090",
+   "entry": 1445,
+   "label": "ammo_reader_owner"
+  },
+  {
+   "kind": "jmp",
+   "rva": 1183376,
+   "before": "837910007507",
+   "tail": "90",
+   "entry": 1470,
+   "label": "ammo_reader_check1"
+  },
+  {
+   "kind": "jmp",
+   "rva": 1183433,
+   "before": "837a3c010f847c010000",
+   "tail": "9090909090",
+   "entry": 1511,
+   "label": "ammo_reader_check2"
+  },
+  {
+   "kind": "jmp",
+   "rva": 1217904,
+   "before": "4889542410",
+   "tail": "",
+   "entry": 112,
+   "label": "ammo_set"
+  },
+  {
+   "kind": "jmp",
+   "rva": 1218640,
+   "before": "40534883ec20",
+   "tail": "90",
+   "entry": 728,
+   "label": "ammo_get"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2535393,
+   "before": "48c7472800000000",
+   "tail": "909090",
+   "entry": 2384,
+   "label": "ammo_init_new"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2535723,
+   "before": "48c7472800000000",
+   "tail": "909090",
+   "entry": 2407,
+   "label": "ammo_init_load"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2711296,
+   "before": "80b9e200000000",
+   "tail": "9090",
+   "entry": 2004,
+   "label": "gun_pin_end"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2711344,
+   "before": "80b9e000000000",
+   "tail": "9090",
+   "entry": 2055,
+   "label": "gun_can_fire"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2711376,
+   "before": "83b9dc00000000",
+   "tail": "9090",
+   "entry": 2106,
+   "label": "gun_can_fire_end"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2711392,
+   "before": "8b81dc000000",
+   "tail": "90",
+   "entry": 2151,
+   "label": "gun_empty_end"
+  },
+  {
+   "kind": "call",
+   "rva": 2724010,
+   "before": "ff506085c0",
+   "tail": "",
+   "stock": 0,
+   "entry": 1598,
+   "label": "effective_end"
+  },
+  {
+   "kind": "call",
+   "rva": 2724365,
+   "before": "ff506085c0",
+   "tail": "",
+   "stock": 0,
+   "entry": 1598,
+   "label": "effective_end"
+  },
+  {
+   "kind": "call",
+   "rva": 2725068,
+   "before": "ff506085c0",
+   "tail": "",
+   "stock": 0,
+   "entry": 1618,
+   "label": "gate_from_r13"
+  },
+  {
+   "kind": "call",
+   "rva": 2725383,
+   "before": "ff506085c0",
+   "tail": "",
+   "stock": 0,
+   "entry": 1638,
+   "label": "gate_from_r13_end"
+  },
+  {
+   "kind": "call",
+   "rva": 2725478,
+   "before": "ff506085c0",
+   "tail": "",
+   "stock": 0,
+   "entry": 1638,
+   "label": "gate_from_r13_end"
+  },
+  {
+   "kind": "call",
+   "rva": 2726451,
+   "before": "ff506085c0",
+   "tail": "",
+   "stock": 0,
+   "entry": 1658,
+   "label": "ammo_gate_body"
+  },
+  {
+   "kind": "call",
+   "rva": 2728029,
+   "before": "ff506085c0",
+   "tail": "",
+   "stock": 0,
+   "entry": 1658,
+   "label": "ammo_gate_body"
+  },
+  {
+   "kind": "call",
+   "rva": 2732925,
+   "before": "ff506085c0",
+   "tail": "",
+   "stock": 0,
+   "entry": 1598,
+   "label": "effective_end"
+  },
+  {
+   "kind": "call",
+   "rva": 2740933,
+   "before": "ff506085c0",
+   "tail": "",
+   "stock": 0,
+   "entry": 1598,
+   "label": "effective_end"
+  }
+ ],
+ "fixups": [
+  {
+   "kind": "cell",
+   "offset": 1315,
+   "end": 1319,
+   "cell": "trace_ring"
+  },
+  {
+   "kind": "rel32",
+   "offset": 1466,
+   "target": 1182961
+  },
+  {
+   "kind": "rel32",
+   "offset": 1502,
+   "target": 1183382
+  },
+  {
+   "kind": "rel32",
+   "offset": 1507,
+   "target": 1183389
+  },
+  {
+   "kind": "rel32",
+   "offset": 1546,
+   "target": 1183443
+  },
+  {
+   "kind": "rel32",
+   "offset": 1551,
+   "target": 1183823
+  },
+  {
+   "kind": "rel32",
+   "offset": 2403,
+   "target": 2535401
+  },
+  {
+   "kind": "rel32",
+   "offset": 2426,
+   "target": 2535731
+  }
+ ],
+ "natives": [],
+ "anchors": [],
+ "sites": [
+  {
+   "site_name": "ammo_set",
+   "site_start": 1217904,
+   "site_group": 1217904,
+   "site_pattern": "488954241048894c2408555356574154415541564157488d6c24e14881ec98000000458bf8",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_get",
+   "site_start": 1218640,
+   "site_group": 1218640,
+   "site_pattern": "40534883ec20488b01488bdaff90b8010000488bc84c8b00",
+   "site_offset": 0
+  },
+  {
+   "site_name": "gun_ready",
+   "site_start": 2711296,
+   "site_group": 2711296,
+   "site_pattern": "80b9e200000000740c83b9dc000000007403b001c332c0c3",
+   "site_offset": 0
+  },
+  {
+   "site_name": "gun_can_fire",
+   "site_start": 2711344,
+   "site_group": 2711344,
+   "site_pattern": "80b9e000000000750c83b9dc000000007403b001c332c0c3",
+   "site_offset": 0
+  },
+  {
+   "site_name": "gun_empty",
+   "site_start": 2711376,
+   "site_group": 2711376,
+   "site_pattern": "83b9dc000000000f94c0c3cccccccccc8b81dc000000c3cc",
+   "site_offset": 0
+  },
+  {
+   "site_name": "gun_loaded",
+   "site_start": 2711392,
+   "site_group": 2711392,
+   "site_pattern": "8b81dc000000c3cccccccccccccccccc488d8104010000c3",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_init_new",
+   "site_start": 2535393,
+   "site_group": 2535152,
+   "site_pattern": "48c7472800000000c6473001c74734ffffffffeb0233ff48897c2420",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_init_load",
+   "site_start": 2535723,
+   "site_group": 2535472,
+   "site_pattern": "48c7472800000000c6473000488b06488bceff5008488b08",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_reader_owner",
+   "site_start": 1182954,
+   "site_group": 1182749,
+   "site_pattern": "488b70284885f60f84????????410f28c3f3410f584668f3410f114668",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_reader_check1",
+   "site_start": 1183376,
+   "site_group": 1182749,
+   "site_pattern": "8379100075078b41fc3901750e48ffc24883c148493bd172e7",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_reader_check2",
+   "site_start": 1183433,
+   "site_group": 1182749,
+   "site_pattern": "837a3c010f84????????8b422839422c0f84????????488b06410f28d3488b12488bceff90d800000084c00f84????????498b0741b801000000488bce488b1407488b06f3440f10825c060000ff9098000000450f2fc18bd8764d498b4e104885c97409488b49104885c9750233c9488b01ff90b0000000488b48284885c9741c488b01ff9090020000488bc8488b10ff92d0010000f3410f5ec0eb0f410f28c1f3410f5ec0eb04410f28c24885db0f84????????410f2fc10f86????????498b4e104885c97409488b49104885c9750233c9488b01ff90b0000000488b48284885c9741a488b01ff9090020000488bc8488b10ff92d00100000f28f0eb04410f28f1488b0641b801000000488bce4c8b88a0000000498b07488b140741ffd10f57ff8bc0f3480f2af8f3410f59f8410f2ff976470f2ffe7742498b4e104885c97409488b49104885c9750233c9488b01ff90b0000000488b48284885c9741c488b01ff9090020000f30f5cf7488bc8488b100f28ceff92d801000048b9398ee3388ee3388e",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_gate_0",
+   "site_start": 2726451,
+   "site_group": 2726288,
+   "site_pattern": "ff506085c0750e48395f50750e3987dc00000074064c8beb",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_gate_1",
+   "site_start": 2725068,
+   "site_group": 2724768,
+   "site_pattern": "ff506085c0488b442478740d4c8bfd4c8bf3eb05488b442478",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_gate_2",
+   "site_start": 2724365,
+   "site_group": 2724320,
+   "site_pattern": "ff506085c07441488b434041b80100000080b8a800000000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_gate_3",
+   "site_start": 2724010,
+   "site_group": 2723936,
+   "site_pattern": "ff506085c0750b4883c710483bfe75d6eb07488b0748894350",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_gate_4",
+   "site_start": 2732925,
+   "site_group": 2731584,
+   "site_pattern": "ff506085c07421ff83d8000000488bcbe8????????c683e000000000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_gate_5",
+   "site_start": 2740933,
+   "site_group": 2740880,
+   "site_pattern": "ff506085c07510b8080000000f287424204883c4305bc30f2fb334010000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_gate_6",
+   "site_start": 2728029,
+   "site_group": 2727696,
+   "site_pattern": "ff506085c075204883c310483bdd75d332c0488b5c2438488b6c2440",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_gate_7",
+   "site_start": 2725383,
+   "site_group": 2725303,
+   "site_pattern": "ff506085c07406488bf54c8bf74883c310493bdc75a4eb5d",
+   "site_offset": 0
+  },
+  {
+   "site_name": "ammo_gate_8",
+   "site_start": 2725478,
+   "site_group": 2725303,
+   "site_pattern": "ff506085c07406488bf54c8bf74883c310493bdc75a4488b6c2450",
+   "site_offset": 0
+  }
+ ],
+ "verified_sha": "",
+ "labels": {
+  "ammo_set": 112,
+  "ammo_entry_noted": 243,
+  "set_count": 268,
+  "set_counted": 302,
+  "set_marked": 359,
+  "ammo_set_squad": 439,
+  "set_clear": 460,
+  "set_clear_done": 504,
+  "ammo_set_single": 531,
+  "ammo_release_written": 574,
+  "ammo_release_members": 678,
+  "ammo_release_next": 681,
+  "ammo_set_done": 711,
+  "ammo_get": 728,
+  "get_count": 774,
+  "get_counted": 808,
+  "get_subset": 814,
+  "get_marked": 819,
+  "get_member": 851,
+  "get_value": 884,
+  "get_all_disabled": 890,
+  "ammo_get_single": 897,
+  "ammo_get_done": 912,
+  "list_members": 929,
+  "listed": 1020,
+  "list_end": 1025,
+  "next_soldier": 1025,
+  "next_done": 1089,
+  "next_end": 1094,
+  "write_one": 1094,
+  "write_done": 1210,
+  "get_one": 1217,
+  "write_end": 1217,
+  "get_default": 1301,
+  "amo_note": 1312,
+  "get_end": 1312,
+  "ammo_pin": 1344,
+  "amo_note_end": 1344,
+  "pin_set": 1367,
+  "pin_zero": 1396,
+  "pin_store": 1400,
+  "pin_done": 1403,
+  "ammo_get_pin": 1404,
+  "pin_end": 1404,
+  "pin_get_done": 1444,
+  "ammo_reader_owner": 1445,
+  "pin_get_end": 1445,
+  "ammo_reader_check1": 1470,
+  "reader_owner_end": 1470,
+  "reader_check1_skip": 1506,
+  "ammo_reader_check2": 1511,
+  "reader_check1_end": 1511,
+  "reader_check2_skip": 1550,
+  "ammo_effective": 1555,
+  "reader_check2_end": 1555,
+  "effective_done": 1597,
+  "effective_end": 1598,
+  "gate_from_rbx": 1598,
+  "gate_from_r13": 1618,
+  "gate_from_rbx_end": 1618,
+  "gate_from_r13_end": 1638,
+  "gate_from_r15": 1638,
+  "ammo_gate_body": 1658,
+  "gate_from_r15_end": 1658,
+  "gate_available": 1750,
+  "gate_stock": 1760,
+  "gate_disabled": 1766,
+  "gate_answer": 1768,
+  "gate_end": 1778,
+  "gun_pin": 1778,
+  "gun_pin_next": 1918,
+  "gun_pin_slot": 1941,
+  "gun_pin_none": 1991,
+  "gun_pin_done": 1996,
+  "gun_pin_end": 2004,
+  "gun_ready": 2004,
+  "ready_no": 2047,
+  "ready_done": 2049,
+  "gun_can_fire": 2055,
+  "gun_ready_end": 2055,
+  "can_fire_no": 2098,
+  "can_fire_done": 2100,
+  "gun_can_fire_end": 2106,
+  "gun_empty": 2106,
+  "empty_yes": 2140,
+  "empty_done": 2145,
+  "gun_empty_end": 2151,
+  "gun_loaded": 2151,
+  "loaded_no": 2181,
+  "loaded_done": 2183,
+  "ammo_unload_disabled": 2189,
+  "gun_loaded_end": 2189,
+  "unload_next_gunner": 2225,
+  "unload_next_gun": 2277,
+  "unload_release": 2355,
+  "unload_done": 2369,
+  "ammo_init_new": 2384,
+  "ammo_unload_disabled_end": 2384,
+  "ammo_init_load": 2407
+ }
+}

@@ -58,7 +58,7 @@ set_count:
     inc edi
     mov rax, qword ptr [rbx]
     mov rcx, rbx
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jz set_count
     inc esi
@@ -77,7 +77,7 @@ pin_next:
     jz pin_next
     mov rax, qword ptr [rbx]
     mov rcx, rbx
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jz pin_next
     cmp word ptr [rbx + 0x1c], 0x7a5f
@@ -152,7 +152,7 @@ ui_judged:
     or byte ptr [rsp + 0x21], al
     mov rax, qword ptr [rbx]
     mov rcx, rbx
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jz ui_next
     inc esi
@@ -195,7 +195,7 @@ list_members:
     jz listed
     mov rax, qword ptr [rbx]
     mov rcx, rbx
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz listed
     mov r14, qword ptr [rax + 0x50]    ; the squad's own facet
@@ -204,12 +204,12 @@ list_members:
     test rcx, rcx
     jz listed
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {squad_roster}]
+    call qword ptr [rax + {squad_roster}]    ; vt:logic/SquadAiFacet@Leonardo
     test rax, rax
     jz listed
     mov rdx, qword ptr [rax]
     mov rcx, rax
-    call qword ptr [rdx + 0x68]
+    call qword ptr [rdx + 0x68]    ; vt:logic/SquadHolderFacet@Leonardo
     mov r12, qword ptr [rax]
     mov r13, qword ptr [rax + 8]
     mov eax, 1
@@ -228,7 +228,7 @@ next_soldier:
     test rcx, rcx
     jz next_done
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz next_done
     mov rcx, qword ptr [rax + 0x50]
@@ -262,7 +262,7 @@ firing_soldier:
     test rcx, rcx
     jz soldier_pinned
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x88]        ; in a vehicle?
+    call qword ptr [rax + 0x88]        ; vt:logic/HumanGunner@Leonardo in a vehicle?
     test al, al
     jz soldier_pinned
     xor eax, eax
@@ -318,7 +318,7 @@ fire_pin:
     test rcx, rcx
     jz fire_none
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz fire_none
     mov rcx, qword ptr [rax + 0x50]

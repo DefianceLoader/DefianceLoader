@@ -1,0 +1,279 @@
+{
+ "unit_schema": 1,
+ "name": "vehicle-special-fire-logic",
+ "plugin": "vehicle-special-fire",
+ "module": "logic.dll",
+ "source_sha256": "da62ed73b43fafa8af0f25fba0501bff641a0cfd1bfb0d3a0b8777a1b0d99271",
+ "unit_bytes": 2518,
+ "code_offset": 0,
+ "cells": [],
+ "writes": [
+  {
+   "kind": "jmp",
+   "rva": 1889616,
+   "before": "498b5f60488bc3",
+   "tail": "9090",
+   "entry": 2285,
+   "label": "vehicle_special_fire_dynamic_client"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2787410,
+   "before": "c783bc0000000000803f",
+   "tail": "9090909090",
+   "entry": 1339,
+   "label": "vehicle_special_fire_dynamic_tick"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2787701,
+   "before": "85f60f88c2000000",
+   "tail": "909090",
+   "entry": 127,
+   "label": "vehicle_special_fire_rebind_guard"
+  },
+  {
+   "kind": "call",
+   "rva": 4713003,
+   "before": "e810e0e3ff",
+   "tail": "",
+   "stock": 0,
+   "entry": 0,
+   "label": "vehicle_special_fire_source"
+  },
+  {
+   "kind": "jmp",
+   "rva": 4713787,
+   "before": "488b5c2478",
+   "tail": "",
+   "entry": 209,
+   "label": "vehicle_special_fire_board_tail"
+  },
+  {
+   "kind": "call",
+   "rva": 4715536,
+   "before": "e82bd6e3ff",
+   "tail": "",
+   "stock": 0,
+   "entry": 0,
+   "label": "vehicle_special_fire_source"
+  },
+  {
+   "kind": "jmp",
+   "rva": 4716363,
+   "before": "488b742448",
+   "tail": "",
+   "entry": 237,
+   "label": "vehicle_special_fire_disembark_tail"
+  }
+ ],
+ "fixups": [
+  {
+   "kind": "rel32",
+   "offset": 11,
+   "target": 2869824
+  },
+  {
+   "kind": "rel32",
+   "offset": 200,
+   "target": 2787903
+  },
+  {
+   "kind": "rel32",
+   "offset": 205,
+   "target": 2787709
+  },
+  {
+   "kind": "rel32",
+   "offset": 233,
+   "target": 4713792
+  },
+  {
+   "kind": "rel32",
+   "offset": 261,
+   "target": 4716368
+  },
+  {
+   "kind": "rel32",
+   "offset": 705,
+   "target": 849344
+  },
+  {
+   "kind": "rel32",
+   "offset": 1055,
+   "target": 849344
+  },
+  {
+   "kind": "rel32",
+   "offset": 1393,
+   "target": 2787420
+  },
+  {
+   "kind": "rel32",
+   "offset": 1398,
+   "target": 2787903
+  },
+  {
+   "kind": "rel32",
+   "offset": 2340,
+   "target": 1889623
+  },
+  {
+   "kind": "rel32",
+   "offset": 2345,
+   "target": 1889697
+  }
+ ],
+ "natives": [],
+ "anchors": [],
+ "sites": [
+  {
+   "site_name": "vehicle_special_fire_source",
+   "site_start": 4713003,
+   "site_group": 4712096,
+   "site_pattern": "e8????????4c8be04885c074624180bfa4010000007558488b4d20",
+   "site_offset": 0
+  },
+  {
+   "site_name": "vehicle_special_fire_disembark_source",
+   "site_start": 4715536,
+   "site_group": 4715523,
+   "site_pattern": "e8????????488bd84885c0741e488b4d20488b11ff92b0000000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "vehicle_special_fire_original",
+   "site_start": 2869824,
+   "site_group": 2869824,
+   "site_pattern": "48895c240848896c24104889742418574883ec20488b81f0010000",
+   "site_offset": 0
+  },
+  {
+   "site_name": "vehicle_special_fire_rebind",
+   "site_start": 2787701,
+   "site_group": 2786864,
+   "site_pattern": "85f60f88????????4d63ee488b43204a8b0ce8488b01488b5368",
+   "site_offset": 0
+  },
+  {
+   "site_name": "vehicle_special_fire_rebind_skip",
+   "site_start": 2787903,
+   "site_group": 2786864,
+   "site_pattern": "83bbc0000000010f85????????498b1424488955304885d2",
+   "site_offset": 0
+  },
+  {
+   "site_name": "vehicle_special_fire_dynamic_tick",
+   "site_start": 2787410,
+   "site_group": 2786864,
+   "site_pattern": "c783bc0000000000803f488b4358483943500f85????????",
+   "site_offset": 0
+  },
+  {
+   "site_name": "vehicle_special_fire_dynamic_client",
+   "site_start": 1889616,
+   "site_group": 1889104,
+   "site_pattern": "498b5f60488bc348c1e8204863f8488b4618488b0cf8488b01488b5660488b14faff50604863db488b4618488b0cd8488b01488b5660488b14faff5058488b4e60488b04f9488904d9488b46604c8924f8",
+   "site_offset": 0
+  },
+  {
+   "site_name": "vehicle_special_fire_board",
+   "site_start": 4713785,
+   "site_group": 4712096,
+   "site_pattern": "ffd7488b5c24784883c430415f415e415d415c5f5e5dc3488d0d????????ff15????????cc",
+   "site_offset": 2
+  },
+  {
+   "site_name": "vehicle_special_fire_disembark",
+   "site_start": 4716347,
+   "site_group": 4716261,
+   "site_pattern": "488b11ff5240448bc3488bce8bd0ffd7488b742448488b7c2450",
+   "site_offset": 16
+  },
+  {
+   "site_name": "vehicle_special_fire_refresh_ai",
+   "site_start": 849344,
+   "site_group": 849344,
+   "site_pattern": "48895c24084889742410574883ec20c681d001000000488bf1",
+   "site_offset": 0
+  }
+ ],
+ "verified_sha": "",
+ "labels": {
+  "vehicle_special_fire_source": 0,
+  "vehicle_special_fire_next": 52,
+  "vehicle_special_fire_advance": 110,
+  "vehicle_special_fire_done": 116,
+  "vehicle_special_fire_rebind_guard": 127,
+  "vehicle_special_fire_guard_release": 163,
+  "vehicle_special_fire_guard_skip": 199,
+  "vehicle_special_fire_guard_resume": 204,
+  "vehicle_special_fire_board_tail": 209,
+  "vehicle_special_fire_disembark_tail": 237,
+  "vehicle_special_fire_rebalance": 265,
+  "vehicle_special_fire_pass": 335,
+  "vehicle_special_fire_passenger": 349,
+  "vehicle_special_fire_try_free": 482,
+  "vehicle_special_fire_try_preempt": 519,
+  "vehicle_special_fire_next_gunner": 544,
+  "vehicle_special_fire_scan_bound": 570,
+  "vehicle_special_fire_advance_bound": 686,
+  "vehicle_special_fire_advance_gunner": 692,
+  "vehicle_special_fire_bound": 701,
+  "vehicle_special_fire_next_passenger": 709,
+  "vehicle_special_fire_next_pass": 718,
+  "vehicle_special_fire_rebalance_done": 731,
+  "vehicle_special_fire_is_bound": 747,
+  "vehicle_special_fire_bound_gunner": 763,
+  "vehicle_special_fire_bound_slot": 779,
+  "vehicle_special_fire_bound_next": 795,
+  "vehicle_special_fire_already_bound": 801,
+  "vehicle_special_fire_not_bound": 807,
+  "vehicle_special_fire_cleanup": 810,
+  "vehicle_special_fire_cleanup_gunner": 855,
+  "vehicle_special_fire_cleanup_slot": 933,
+  "vehicle_special_fire_cleanup_release": 988,
+  "vehicle_special_fire_cleanup_clear": 1014,
+  "vehicle_special_fire_cleanup_next_slot": 1029,
+  "vehicle_special_fire_cleanup_next_gunner": 1035,
+  "vehicle_special_fire_cleanup_done": 1044,
+  "vehicle_special_fire_cleanup_return": 1059,
+  "vehicle_special_fire_roster_gun": 1075,
+  "vehicle_special_fire_roster_passenger": 1099,
+  "vehicle_special_fire_roster_weapon": 1181,
+  "vehicle_special_fire_roster_next": 1197,
+  "vehicle_special_fire_roster_missing": 1203,
+  "vehicle_special_fire_roster_found": 1207,
+  "vehicle_special_fire_roster_return": 1212,
+  "vehicle_special_fire_duplicate": 1220,
+  "vehicle_special_fire_duplicate_gunner": 1235,
+  "vehicle_special_fire_duplicate_slot": 1301,
+  "vehicle_special_fire_duplicate_next": 1322,
+  "vehicle_special_fire_duplicate_missing": 1328,
+  "vehicle_special_fire_duplicate_found": 1332,
+  "vehicle_special_fire_dynamic_tick": 1339,
+  "vehicle_special_fire_dynamic_skip": 1397,
+  "vehicle_special_fire_dynamic_rebalance": 1402,
+  "vehicle_special_fire_dynamic_special": 1498,
+  "vehicle_special_fire_dynamic_destination": 1627,
+  "vehicle_special_fire_dynamic_restore": 1810,
+  "vehicle_special_fire_dynamic_next_destination": 1839,
+  "vehicle_special_fire_dynamic_next_special": 1848,
+  "vehicle_special_fire_dynamic_done": 1857,
+  "vehicle_special_fire_dynamic_return": 1859,
+  "vehicle_special_fire_dynamic_live": 1875,
+  "vehicle_special_fire_dynamic_live_done": 1931,
+  "vehicle_special_fire_dynamic_exchange": 1932,
+  "vehicle_special_fire_dynamic_state": 2015,
+  "vehicle_special_fire_dynamic_magazines": 2070,
+  "vehicle_special_fire_dynamic_target": 2207,
+  "vehicle_special_fire_dynamic_target_aux": 2255,
+  "vehicle_special_fire_dynamic_set_target": 2265,
+  "vehicle_special_fire_dynamic_client": 2285,
+  "vehicle_special_fire_dynamic_client_skip": 2344,
+  "vehicle_special_fire_dynamic_client_swap": 2349,
+  "vehicle_special_fire_dynamic_client_handled": 2493,
+  "vehicle_special_fire_dynamic_client_stock": 2500,
+  "vehicle_special_fire_dynamic_client_return": 2502
+ }
+}

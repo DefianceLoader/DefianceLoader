@@ -27,14 +27,23 @@ unsafe fn log(api: &Api, level: u32, text: &str) {
     }
 }
 
-/// The loaded game.dll and its resolved sites.
+/// The loaded game.dll and its resolved sites. The widget move comes from
+/// Core's game-symbol catalog.
 unsafe fn resolve(api: &Api) -> Result<(Image<'static>, sites::Sites), String> {
+    let move_widget = defiance_feature_sdk::services::game_symbol(
+        sites::MOVE_WIDGET_SYMBOL,
+        1,
+        defiance_api::SYMBOL_USE_CALL,
+    )?;
+    if move_widget.module != c"game.dll" {
+        return Err("Core placed the widget move outside game.dll".into());
+    }
     let base = (api.module_base)(c"game.dll".as_ptr());
     if base.is_null() {
         return Err("game.dll is not loaded".into());
     }
     let image = Image::loaded(base as *const u8, (api.module_size)(base));
-    let sites = sites::sites(&image)?;
+    let sites = sites::sites(&image, move_widget.rva)?;
     Ok((image, sites))
 }
 
@@ -107,3 +116,4 @@ pub unsafe extern "C" fn defiance_patch_contract_v1(api: *const Api) -> *const P
     unsafe { patch_contract(api) }
 }
 defiance_feature_sdk::crash_handshake!();
+defiance_feature_sdk::service_handshake!();

@@ -35,7 +35,7 @@ ammo_set:                              ; rcx the AI facet, rdx slot, r8d the val
     ; the ones the writes below reach
     mov rcx, qword ptr [rsp + 0x20]
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {ammo_pool_get}]
+    call qword ptr [rax + {ammo_pool_get}]    ; vt:logic/BaseAiFacet@Leonardo
     test rax, rax
     jz ammo_entry_noted
     mov r9, rax
@@ -58,7 +58,7 @@ set_count:
     inc edi
     mov rax, qword ptr [rbx]
     mov rcx, rbx
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jz set_count
     inc esi
@@ -86,7 +86,7 @@ set_marked:
     jz set_marked
     mov rax, qword ptr [rbx]
     mov rcx, rbx
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jz set_marked
     mov rcx, rbx                       ; the pin lives on his selectable facet
@@ -147,12 +147,12 @@ ammo_release_written:
     jne ammo_set_done
     mov rcx, qword ptr [rsp + 0x20]
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {ammo_pool_get}]
+    call qword ptr [rax + {ammo_pool_get}]    ; vt:logic/BaseAiFacet@Leonardo
     test rax, rax
     jz ammo_set_done
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x48]
+    call qword ptr [rax + 0x48]    ; vt:logic/AmmunitionDepotHelper@Leonardo
     test rax, rax
     jz ammo_set_done
     mov rcx, qword ptr [rax]
@@ -223,7 +223,7 @@ get_count:
     inc edi
     mov rax, qword ptr [rbx]
     mov rcx, rbx
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jz get_count
     inc esi
@@ -245,7 +245,7 @@ get_marked:
     jz get_member
     mov rax, qword ptr [rbx]
     mov rcx, rbx
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jz get_marked
 get_member:
@@ -294,7 +294,7 @@ list_members:
     jz listed
     mov rax, qword ptr [rbx]
     mov rcx, rbx
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz listed
     mov r14, qword ptr [rax + 0x50]    ; the squad's own facet
@@ -303,12 +303,12 @@ list_members:
     test rcx, rcx
     jz listed
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {squad_roster}]
+    call qword ptr [rax + {squad_roster}]    ; vt:logic/SquadAiFacet@Leonardo
     test rax, rax
     jz listed
     mov rdx, qword ptr [rax]
     mov rcx, rax
-    call qword ptr [rdx + 0x68]
+    call qword ptr [rdx + 0x68]    ; vt:logic/SquadHolderFacet@Leonardo
     mov r12, qword ptr [rax]
     mov r13, qword ptr [rax + 8]
     mov eax, 1
@@ -329,7 +329,7 @@ next_soldier:
     test rcx, rcx
     jz next_done
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz next_done
     mov rcx, qword ptr [rax + 0x50]
@@ -356,7 +356,7 @@ write_one:
     mov ebx, r8d
     mov qword ptr [rsp + 0x20], rcx    ; the AI facet written
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {ammo_pool_get}]
+    call qword ptr [rax + {ammo_pool_get}]    ; vt:logic/BaseAiFacet@Leonardo
     test rax, rax
     jz write_done
     mov qword ptr [rsp + 0x18], rax    ; its ammo data object
@@ -368,7 +368,7 @@ write_one:
     call amo_note
     mov rcx, qword ptr [rsp + 0x18]
     mov r9, qword ptr [rcx]
-    call qword ptr [r9 + 0x48]
+    call qword ptr [r9 + 0x48]    ; vt:logic/AmmunitionDepotHelper@Leonardo
     test rax, rax
     jz write_done
     mov rcx, qword ptr [rax]
@@ -391,12 +391,12 @@ get_one:
     sub rsp, 0x20
     mov rbx, rdx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {ammo_pool_get}]
+    call qword ptr [rax + {ammo_pool_get}]    ; vt:logic/BaseAiFacet@Leonardo
     test rax, rax
     jz get_default
     mov r8, qword ptr [rax]
     mov rcx, rax
-    call qword ptr [r8 + 0x48]
+    call qword ptr [r8 + 0x48]    ; vt:logic/AmmunitionDepotHelper@Leonardo
     test rax, rax
     jz get_default
     mov rdx, qword ptr [rax]
@@ -602,7 +602,7 @@ ammo_gate_body:
     mov rbx, rcx
     mov rsi, rdx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x60]
+    call qword ptr [rax + 0x60]    ; vt:logic/AmmunitionDepotHelper@Leonardo
     mov dword ptr [rsp + 0x20], eax
     mov rcx, rdi
     mov rdx, rsi
@@ -662,12 +662,12 @@ gun_pin:
     mov rcx, rdi
     mov edx, 0x20
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x98]
+    call qword ptr [rax + 0x98]    ; vt:essence/EntityImpl@Essence@Galileo
     test al, al
     jz gun_pin_none
     mov rcx, rdi
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz gun_pin_none
     mov r8, qword ptr [rax + 0x50]
@@ -820,7 +820,7 @@ ammo_unload_disabled:
     mov qword ptr [rsp + 0x68], rdx
     mov rbx, rcx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {gunner_count}]
+    call qword ptr [rax + {gunner_count}]    ; vt:logic/SquadAiFacet@Leonardo
     mov r12, rax
     xor esi, esi
 unload_next_gunner:
@@ -830,13 +830,13 @@ unload_next_gunner:
     mov rdx, rsi
     inc rsi
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {gunner_get}]
+    call qword ptr [rax + {gunner_get}]    ; vt:logic/SquadAiFacet@Leonardo
     test rax, rax
     jz unload_next_gunner
     mov rdi, rax
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xf0]
+    call qword ptr [rax + 0xf0]    ; vt:logic/Gunner@Leonardo
     mov r13, rax
     xor ebp, ebp
 unload_next_gun:
@@ -846,7 +846,7 @@ unload_next_gun:
     mov rdx, rbp
     inc rbp
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xf8]
+    call qword ptr [rax + 0xf8]    ; vt:logic/Gunner@Leonardo
     test rax, rax
     jz unload_next_gun
     mov r14, rax
@@ -867,7 +867,7 @@ unload_next_gun:
 unload_release:
     mov rcx, r14
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xf8]
+    call qword ptr [rax + 0xf8]    ; vt:logic/Gun@Leonardo
     jmp unload_next_gun
 unload_done:
     add rsp, 0x20

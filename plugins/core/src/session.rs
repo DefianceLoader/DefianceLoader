@@ -8,8 +8,14 @@
 //! reloads land then, and the state counts as being built); once it returns,
 //! `mission(1)`; once the destructor returns, `mission(-1)`. So the whole of a
 //! construction and a destruction counts as a mission.
+//!
+//! It also hooks world2.dll's mission frame ([`install_frames`]) and passes
+//! each frame to the loader's `mission-feed` service, which dispatches the
+//! `mission-events` frame events plugins subscribe to.
+use crate::plan::{Kind, Plan, Write};
 use core::ffi::c_void;
-use defiance_api::{Api, SessionV1, LOG_INFO, LOG_WARN};
+use defiance_api::{Api, MissionFeedV1, SessionV1, LOG_INFO, LOG_WARN};
+use defiance_core::sites::Image;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
@@ -55,9 +61,106 @@ unsafe extern "system" fn destroyed(this: usize, a: usize, b: usize, c: usize) -
     result
 }
 
+/// world2.dll's mission frame (`SceneViewImpl` slot 3).
+type Frame = unsafe extern "C" fn(scene: *mut c_void, dt: f32);
+
+static FRAME: AtomicUsize = AtomicUsize::new(0);
+static FEED: OnceLock<&'static MissionFeedV1> = OnceLock::new();
+
+unsafe extern "C" fn frame(scene: *mut c_void, dt: f32) {
+    if let Some(feed) = FEED.get() {
+        unsafe { (feed.frame)(scene, dt) };
+    }
+    let original: Frame = unsafe { core::mem::transmute(FRAME.load(Ordering::Acquire)) };
+    unsafe { original(scene, dt) };
+}
+
+/// The loaded world2.dll's mission frame ([`crate::sites::mission_frame`]),
+/// found in its original view so it resolves the same once hooked.
+pub fn frame_target(api: &Api) -> Result<usize, String> {
+    let base = unsafe { (api.module_base)(c"world2.dll".as_ptr()) } as *mut u8;
+    if base.is_null() {
+        return Err("world2.dll is not loaded".into());
+    }
+    let size = unsafe { (api.module_size)(base.cast()) };
+    let image = crate::plan::original_image(base, size).ok_or("world2.dll is unreadable")?;
+    let image = Image {
+        image: &image,
+        base: base as usize,
+    };
+    Ok(base as usize + crate::sites::mission_frame(&image)?)
+}
+
+/// The mission frame's hook; empty without the loader's `mission-feed`
+/// service.
+pub fn frames_plan(api: &Api) -> Result<Plan, String> {
+    if unsafe { defiance_feature_sdk::services::mission_feed() }.is_none() {
+        return Ok(Plan::default());
+    }
+    Ok(Plan {
+        writes: vec![Write {
+            target: frame_target(api)?,
+            kind: Kind::Entry(None),
+            detour: frame as Frame as *mut c_void,
+            original: Some(&FRAME),
+        }],
+    })
+}
+
+/// Hook the mission frame to feed the loader's `mission-events` frame
+/// events, during Core's `init`. Without the loader's `mission-feed` service
+/// or the frame, plugins get no frame events.
+pub fn install_frames(api: &Api) {
+    let Some(feed) = (unsafe { defiance_feature_sdk::services::mission_feed() }) else {
+        return;
+    };
+    let plan = match frames_plan(api) {
+        Ok(plan) => plan,
+        Err(error) => {
+            say(
+                api,
+                LOG_WARN,
+                &format!("session: no mission frame events ({error})"),
+            );
+            return;
+        }
+    };
+    let _ = FEED.set(feed);
+    if crate::plan::apply(api, &plan).is_err() {
+        say(
+            api,
+            LOG_WARN,
+            "session: the mission frame could not be hooked; no frame events",
+        );
+        return;
+    }
+    unsafe { (feed.frames)() };
+    say(api, LOG_INFO, "session: mission frames fed");
+}
+
 fn say(api: &Api, level: u32, text: &str) {
     let text = std::ffi::CString::new(text).unwrap_or_default();
     unsafe { (api.log)(level, text.as_ptr()) };
+}
+
+/// The tactical state's constructor and destructor hooks; empty without the
+/// loader's `session` service.
+pub fn plan(constructor: usize, destructor: usize) -> Plan {
+    if unsafe { defiance_feature_sdk::services::session() }.is_none() {
+        return Plan::default();
+    }
+    let hook = |target, detour: usize, original| Write {
+        target,
+        kind: Kind::Entry(None),
+        detour: detour as *mut c_void,
+        original: Some(original),
+    };
+    Plan {
+        writes: vec![
+            hook(constructor, constructed as Constructor as usize, &CTOR),
+            hook(destructor, destroyed as Method as usize, &DTOR),
+        ],
+    }
 }
 
 /// Hook the tactical state's constructor and destructor, during Core's
@@ -68,22 +171,13 @@ pub fn install(api: &Api, constructor: usize, destructor: usize) {
         return;
     };
     let _ = SERVICE.set(service);
-    for (address, detour, slot) in [
-        (constructor, constructed as Constructor as usize, &CTOR),
-        (destructor, destroyed as Method as usize, &DTOR),
-    ] {
-        let mut original = core::ptr::null_mut();
-        let result =
-            unsafe { (api.hook)(address as *mut c_void, detour as *mut c_void, &mut original) };
-        if result != 0 || original.is_null() {
-            say(
-                api,
-                LOG_WARN,
-                &format!("session: the mission state could not be hooked ({result}); hot reload stays off"),
-            );
-            return;
-        }
-        slot.store(original as usize, Ordering::Release);
+    if crate::plan::apply(api, &plan(constructor, destructor)).is_err() {
+        say(
+            api,
+            LOG_WARN,
+            "session: the mission state could not be hooked; hot reload stays off",
+        );
+        return;
     }
     unsafe { (service.tracking)() };
     say(api, LOG_INFO, "session: missions tracked");

@@ -66,7 +66,7 @@ ammo_panel_reload_shown:
     jne ammo_panel_slot
     mov rax, qword ptr [rcx]
     mov dl, 1
-    call qword ptr [rax + 0x48]
+    call qword ptr [rax + 0x48]    ; vt:game/AmmoWidget@Leonardo
 ammo_panel_slot:
     imul rax, rbp, 0xb8
     lea r10, [rdi + rax + 0x180]
@@ -125,7 +125,7 @@ attack_recipient:
     sub rsp, 0x30
     mov qword ptr [rsp + 0x20], rcx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {ai_attack_order}] ; displaced: the stock recipient test
+    call qword ptr [rax + {ai_attack_order}] ; vt:logic/SquadAiFacet@Leonardo displaced: the stock recipient test
     test al, al
     jz attack_recipient_done
     mov rcx, qword ptr [rsi + 0x130]
@@ -135,19 +135,19 @@ attack_recipient:
     test rcx, rcx
     jz attack_recipient_yes
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz attack_recipient_yes
     mov rcx, qword ptr [rax + 0x18]
     test rcx, rcx
     jz attack_recipient_yes
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x68]
+    call qword ptr [rax + 0x68]    ; vt:logic/HumanDamageableFacet@Leonardo|logic/DamageableModulesFacet@Leonardo|logic/DamageableBuildingFacet@Leonardo
     mov edx, eax
     mov rcx, qword ptr [rsp + 0x20]
     mov rax, qword ptr [rcx]
     mov r8b, 1
-    call qword ptr [rax + {ai_can_attack}]
+    call qword ptr [rax + {ai_can_attack}]    ; vt:logic/SquadAiFacet@Leonardo
     jmp attack_recipient_done
 attack_recipient_yes:
     mov al, 1
@@ -179,7 +179,7 @@ attack_button_next:
     test rcx, rcx
     jz attack_button_next
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz attack_button_next
     mov rdi, qword ptr [rax + 0x28]
@@ -187,12 +187,12 @@ attack_button_next:
     jz attack_button_next
     mov rcx, rdi
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {ammo_pool_get}]
+    call qword ptr [rax + {ammo_pool_get}]    ; vt:logic/BaseAiFacet@Leonardo
     test rax, rax
     jz attack_button_next
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x48]
+    call qword ptr [rax + 0x48]    ; vt:logic/AmmunitionDepotHelper@Leonardo
     mov rcx, qword ptr [rax + 8]
     cmp qword ptr [rax], rcx
     je attack_button_next
@@ -200,12 +200,12 @@ attack_button_next:
     mov rax, qword ptr [rcx]
     xor r8d, r8d
     mov edx, 0xffffe7ff
-    call qword ptr [rax + {ai_can_attack}]
+    call qword ptr [rax + {ai_can_attack}]    ; vt:logic/SquadAiFacet@Leonardo
     test al, al
     jz attack_button_next
     mov rcx, rdi
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {ai_attack_ready}]
+    call qword ptr [rax + {ai_attack_ready}]    ; vt:logic/SquadAiFacet@Leonardo
     test al, al
     jz attack_button_next
     jmp attack_button_done
@@ -279,7 +279,7 @@ ammo_step_wheel_done:
     pop rbx
     ret
 ammo_step_wheel_native:
-    jmp qword ptr [rax + 0xd8]
+    jmp qword ptr [rax + 0xd8]    ; vt:game/AmmunitionMenu@Leonardo
 
 ; The camera's zoom reads a wheel axis (game+2dc4a0, kind 2) that the window
 ; procedure feeds each message before the GUI's dispatch sees it. rcx is the
@@ -372,7 +372,7 @@ ammo_step_click_held:
     mov rcx, rbx
     mov rax, qword ptr [rcx]
     xorps xmm1, xmm1
-    call qword ptr [rax + 0x38]
+    call qword ptr [rax + 0x38]    ; vt:game/AmmunitionMenu@Leonardo
 ammo_step_click_done:
     add rsp, 0x30
     pop rdi
@@ -393,9 +393,9 @@ ammo_step_click_release:
 ammo_step_click_native:
     test r10d, r10d
     jl ammo_step_click_native_right
-    jmp qword ptr [rax + 0x78]
+    jmp qword ptr [rax + 0x78]    ; vt:game/AmmunitionMenu@Leonardo
 ammo_step_click_native_right:
-    jmp qword ptr [rax + 0x88]
+    jmp qword ptr [rax + 0x88]    ; vt:game/AmmunitionMenu@Leonardo
 
 ; al 1 when the step modifier is held or there is none. Volatile registers only.
 ammo_step_modifier:
@@ -492,7 +492,7 @@ step_single_squad:
     jae step_done                      ; pins cover local slots 0..7
     mov rcx, qword ptr [rsp + 0x30]
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz step_done
     mov r14, qword ptr [rax + 0x50]    ; the squad's own facet
@@ -502,12 +502,12 @@ step_single_squad:
     mov qword ptr [rsp + 0x38], rcx
     ; the slot's ammunition
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {ammo_pool_get}]
+    call qword ptr [rax + {ammo_pool_get}]    ; vt:logic/BaseAiFacet@Leonardo
     test rax, rax
     jz step_done
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x48]
+    call qword ptr [rax + 0x48]    ; vt:logic/AmmunitionDepotHelper@Leonardo
     test rax, rax
     jz step_done
     mov rcx, qword ptr [rax]
@@ -526,12 +526,12 @@ step_single_squad:
     mov dword ptr [rsp + 0x48], eax    ; the shared flag: nonzero disabled
     mov rcx, qword ptr [rsp + 0x38]
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {squad_roster}]
+    call qword ptr [rax + {squad_roster}]    ; vt:logic/SquadAiFacet@Leonardo
     test rax, rax
     jz step_done                       ; not a squad: no pins
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x68]
+    call qword ptr [rax + 0x68]    ; vt:logic/SquadHolderFacet@Leonardo
     mov r12, qword ptr [rax]
     mov r13, qword ptr [rax + 8]
     ; marked and live members, as ammo_ui_state counts them
@@ -547,7 +547,7 @@ step_count:
     inc edi
     mov rcx, rbx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jz step_count
     inc esi
@@ -570,7 +570,7 @@ step_user:
     jz step_user_guns
     mov rcx, rbx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jz step_user
 step_user_guns:
@@ -639,7 +639,7 @@ step_refresh:
     mov rcx, qword ptr [rsp + 0x20]
     mov rax, qword ptr [rcx]
     xorps xmm1, xmm1
-    call qword ptr [rax + 0x38]        ; the menu's refresh, as its click ends
+    call qword ptr [rax + 0x38]        ; vt:game/AmmunitionMenu@Leonardo the menu's refresh, as its click ends
     mov al, 1
     jmp step_exit
 step_done:
@@ -675,13 +675,13 @@ ammo_step_alone:
     test rbx, rbx
     jz alone_done
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x40]
+    call qword ptr [rax + 0x40]    ; vt:logic/LogicHybridServer@Leonardo
     test rax, rax
     jz alone_done
     mov rdx, rax
     mov rcx, rbx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x700]
+    call qword ptr [rax + 0x700]    ; vt:logic/LogicUtilsImpl@Leonardo
     test rax, rax
     jz alone_done
     mov rsi, qword ptr [rax + 0x40]
@@ -698,7 +698,7 @@ alone_next:
     je alone_next
     mov rcx, rbx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz alone_next
     mov rcx, qword ptr [rax + 0x50]
@@ -706,13 +706,13 @@ alone_next:
     jz alone_next
     mov qword ptr [rsp + 0x20], rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jz alone_next                      ; not selected
     mov rcx, rbx
     mov edx, 0x20
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x98]
+    call qword ptr [rax + 0x98]    ; vt:essence/EntityImpl@Essence@Galileo
     test al, al
     jz alone_other                     ; not a soldier
     ; one of this squad's soldiers
@@ -732,7 +732,7 @@ alone_other:
     test rcx, rcx
     jz alone_next
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {ammo_pool_get}]
+    call qword ptr [rax + {ammo_pool_get}]    ; vt:logic/BaseAiFacet@Leonardo
     test rax, rax
     jz alone_next
     xor eax, eax
@@ -758,7 +758,7 @@ ammo_step_release:
     mov rbx, rcx
     mov r14, rdx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {gunner_count}]
+    call qword ptr [rax + {gunner_count}]    ; vt:logic/SquadAiFacet@Leonardo
     mov r12, rax
     xor esi, esi
 release_gunner:
@@ -768,13 +768,13 @@ release_gunner:
     mov rdx, rsi
     inc rsi
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {gunner_get}]
+    call qword ptr [rax + {gunner_get}]    ; vt:logic/SquadAiFacet@Leonardo
     test rax, rax
     jz release_gunner
     mov rdi, rax
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xf0]
+    call qword ptr [rax + 0xf0]    ; vt:logic/Gunner@Leonardo
     mov r13, rax
     xor ebp, ebp
 release_gun:
@@ -784,7 +784,7 @@ release_gun:
     mov rdx, rbp
     inc rbp
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xf8]
+    call qword ptr [rax + 0xf8]    ; vt:logic/Gunner@Leonardo
     test rax, rax
     jz release_gun
     cmp dword ptr [rax + 0xdc], 0
@@ -793,7 +793,7 @@ release_gun:
     jne release_gun
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xf8]
+    call qword ptr [rax + 0xf8]    ; vt:logic/Gun@Leonardo
     jmp release_gun
 release_done:
     add rsp, 0x20
@@ -873,7 +873,7 @@ ui_query:
 ui_query_weapon:
     mov qword ptr [rsp + 0x20], rdx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz ui_usable_yes
     mov r14, qword ptr [rax + 0x50]
@@ -881,13 +881,13 @@ ui_query_weapon:
     test rcx, rcx
     jz ui_usable_yes
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {squad_roster}]
+    call qword ptr [rax + {squad_roster}]    ; vt:logic/SquadAiFacet@Leonardo
     test rax, rax
     jz ui_usable_yes                   ; not a squad: native
     mov dword ptr [rsp + 0x44], 0
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x68]
+    call qword ptr [rax + 0x68]    ; vt:logic/SquadHolderFacet@Leonardo
     mov r12, qword ptr [rax]
     mov r13, qword ptr [rax + 8]
     mov rbp, r12
@@ -902,7 +902,7 @@ ui_count_members:
     inc edi
     mov rcx, rbx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jz ui_count_members
     inc esi
@@ -923,7 +923,7 @@ ui_find_user:
     jz ui_check_guns
     mov rcx, rbx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jz ui_find_user
 ui_check_guns:
@@ -1017,7 +1017,7 @@ ammo_ui_next:
     test rcx, rcx
     jz ui_next_done
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz ui_next_done
     mov rcx, qword ptr [rax + 0x50]
@@ -1047,7 +1047,7 @@ ammo_ui_has_weapon:
     mov rbx, rcx
     mov r14, rdx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {gunner_count}]
+    call qword ptr [rax + {gunner_count}]    ; vt:logic/SquadAiFacet@Leonardo
     mov r12, rax
     xor esi, esi
 ui_next_gunner:
@@ -1057,13 +1057,13 @@ ui_next_gunner:
     mov rdx, rsi
     inc rsi
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {gunner_get}]
+    call qword ptr [rax + {gunner_get}]    ; vt:logic/SquadAiFacet@Leonardo
     test rax, rax
     jz ui_next_gunner
     mov rdi, rax
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xf0]
+    call qword ptr [rax + 0xf0]    ; vt:logic/Gunner@Leonardo
     mov r13, rax
     xor ebp, ebp
 ui_next_gun:
@@ -1073,13 +1073,13 @@ ui_next_gun:
     mov rdx, rbp
     inc rbp
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xf8]
+    call qword ptr [rax + 0xf8]    ; vt:logic/Gunner@Leonardo
     test rax, rax
     jz ui_next_gun
     mov rcx, rax
     mov rdx, r14
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x148]
+    call qword ptr [rax + 0x148]    ; vt:logic/Gun@Leonardo
     test al, al
     jz ui_next_gun
     mov eax, 1
@@ -1114,7 +1114,7 @@ ammo_ui_ready:
     mov r14, rdx
     mov dword ptr [rsp + 0x20], 0x3f800000
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {gunner_count}]
+    call qword ptr [rax + {gunner_count}]    ; vt:logic/SquadAiFacet@Leonardo
     mov r12, rax
     xor esi, esi
 ui_ready_gunner:
@@ -1124,13 +1124,13 @@ ui_ready_gunner:
     mov rdx, rsi
     inc rsi
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {gunner_get}]
+    call qword ptr [rax + {gunner_get}]    ; vt:logic/SquadAiFacet@Leonardo
     test rax, rax
     jz ui_ready_gunner
     mov rdi, rax
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xf0]
+    call qword ptr [rax + 0xf0]    ; vt:logic/Gunner@Leonardo
     mov r13, rax
     xor ebp, ebp
 ui_ready_gun:
@@ -1140,18 +1140,18 @@ ui_ready_gun:
     mov rdx, rbp
     inc rbp
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xf8]
+    call qword ptr [rax + 0xf8]    ; vt:logic/Gunner@Leonardo
     test rax, rax
     jz ui_ready_gun
     mov qword ptr [rsp + 0x28], rax
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {gun_selected_ammo}]
+    call qword ptr [rax + {gun_selected_ammo}]    ; vt:logic/Gun@Leonardo
     cmp rax, r14
     jne ui_ready_gun
     mov rcx, qword ptr [rsp + 0x28]
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xc8]
+    call qword ptr [rax + 0xc8]    ; vt:logic/Gun@Leonardo
     xorps xmm1, xmm1
     comiss xmm0, xmm1
     jb ui_ready_gun                  ; negative or NaN: not a reload

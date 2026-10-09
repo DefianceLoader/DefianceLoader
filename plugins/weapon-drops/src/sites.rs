@@ -428,11 +428,11 @@ impl Sites {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use defiance_core::sites::{reference, BUILDS, SEPTEMBER_BUILDS};
+    use defiance_core::sites::{reference, BUILDS, BUILDS_2026};
 
     /// The rvas the plugin's per-build table held before it resolved them,
-    /// in [`SEPTEMBER_BUILDS`] order.
-    const TABLE: [(&str, Sites); 4] = [
+    /// in [`BUILDS_2026`] order.
+    const TABLE: [(&str, Sites); 6] = [
         (
             "gog/2026-09-14",
             Sites {
@@ -565,12 +565,78 @@ mod tests {
                 human_vtable: 0x72cd00,
             },
         ),
+        (
+            "gog/2026-10-07",
+            Sites {
+                death_call: 0x2d1ee8,
+                collect: 0x5686e0,
+                collect_drop: 0x568817,
+                collect_add: 0x568827,
+                rebuild: 0x45cb60,
+                reserve_writer: 0x121e90,
+                reserve_load: 0x1217a0,
+                reserve_destroy: 0x1216d0,
+                string_copy: 0x24b70,
+                string_destroy: 0x24c90,
+                detach: 0x2d81a0,
+                ammo_dispose: 0x5d9a0,
+                primary_add: 0x2d7490,
+                ammo_mode: 0x113e90,
+                ammo_remove: 0x122130,
+                import_rounds: 0x122940,
+                ammo_set_record: 0x122490,
+                weak_bind: 0x24670,
+                visual_switch: 0x436170,
+                visual_sync: 0x2da3f0,
+                spawn: 0x567ae0,
+                slot_type: 0x116e40,
+                slot_context: 0x2d8c80,
+                item_override: 0x2dd1f0,
+                canonical: 0x10fb00,
+                manager_get: 0x545c10,
+                holder_get: 0x2d3230,
+                human_vtable: 0x731c70,
+            },
+        ),
+        (
+            "steam/2026-10-07",
+            Sites {
+                death_call: 0x2d1f78,
+                collect: 0x568770,
+                collect_drop: 0x5688a7,
+                collect_add: 0x5688b7,
+                rebuild: 0x45cbf0,
+                reserve_writer: 0x121f20,
+                reserve_load: 0x121830,
+                reserve_destroy: 0x121760,
+                string_copy: 0x24b70,
+                string_destroy: 0x24c90,
+                detach: 0x2d8230,
+                ammo_dispose: 0x5da30,
+                primary_add: 0x2d7520,
+                ammo_mode: 0x113f20,
+                ammo_remove: 0x1221c0,
+                import_rounds: 0x1229d0,
+                ammo_set_record: 0x122520,
+                weak_bind: 0x24670,
+                visual_switch: 0x436200,
+                visual_sync: 0x2da480,
+                spawn: 0x567b70,
+                slot_type: 0x116ed0,
+                slot_context: 0x2d8d10,
+                item_override: 0x2dd280,
+                canonical: 0x10fb90,
+                manager_get: 0x545ca0,
+                holder_get: 0x2d32c0,
+                human_vtable: 0x731d10,
+            },
+        ),
     ];
 
     #[test]
     fn sites_resolve_where_the_build_table_had_them() {
         for (build, expected) in TABLE {
-            assert!(SEPTEMBER_BUILDS.contains(&build), "{build}");
+            assert!(BUILDS_2026.contains(&build), "{build}");
             let Some(mapped) = reference(build, "logic.dll") else {
                 eprintln!("skipping {build}: no bin/{build}/logic.dll");
                 continue;
@@ -581,7 +647,7 @@ mod tests {
 
     #[test]
     fn sites_resolve_on_every_september_build() {
-        for build in SEPTEMBER_BUILDS {
+        for build in BUILDS_2026 {
             if let Some(mapped) = reference(build, "logic.dll") {
                 assert!(sites(&Image::mapped(&mapped)).is_ok(), "{build}");
             }
@@ -592,7 +658,7 @@ mod tests {
     /// they are not supported.
     #[test]
     fn the_december_builds_are_refused() {
-        for build in BUILDS.into_iter().filter(|b| !SEPTEMBER_BUILDS.contains(b)) {
+        for build in BUILDS.into_iter().filter(|b| !BUILDS_2026.contains(b)) {
             if let Some(mapped) = reference(build, "logic.dll") {
                 assert!(sites(&Image::mapped(&mapped)).is_err(), "{build}");
             }
@@ -602,7 +668,7 @@ mod tests {
     /// Every entry hook relocates whole instructions that need no fixup.
     #[test]
     fn displaced_prologues_need_no_relocation() {
-        for build in SEPTEMBER_BUILDS {
+        for build in BUILDS_2026 {
             let Some(mapped) = reference(build, "logic.dll") else {
                 continue;
             };

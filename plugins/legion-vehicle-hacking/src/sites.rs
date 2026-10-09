@@ -86,10 +86,12 @@ mod tests {
 
     /// The rvas the per-build hash table held before the plugin resolved its
     /// site, in [`BUILDS`] order.
-    const TABLE: [usize; 6] = [0x3373c5, 0x33d875, 0x3395a5, 0x33fa85, 0x3395a5, 0x33fa85];
+    const TABLE: [usize; 7] = [
+        0x3373c5, 0x33d875, 0x3395a5, 0x33fa85, 0x3395a5, 0x33fa85, 0x347dc5,
+    ];
 
     /// The suspension check's vtable offset, in [`BUILDS`] order.
-    const SLOTS: [usize; 6] = [0x170, 0x170, 0x180, 0x180, 0x180, 0x180];
+    const SLOTS: [usize; 7] = [0x170, 0x170, 0x180, 0x180, 0x180, 0x180, 0x180];
 
     #[test]
     fn the_branch_resolves_where_the_build_table_had_it() {
@@ -123,7 +125,9 @@ mod tests {
 
     /// The hacking state's suspension call in each logic.dll, in [`BUILDS`]
     /// order.
-    const STATE: [usize; 6] = [0x7d057, 0x7d0e7, 0x85717, 0x857a7, 0x85717, 0x857a7];
+    const STATE: [usize; 7] = [
+        0x7d057, 0x7d0e7, 0x85717, 0x857a7, 0x85717, 0x857a7, 0x85717,
+    ];
 
     #[test]
     fn the_state_check_resolves_in_every_build() {

@@ -1,7 +1,7 @@
 # Moving grenades
 
-Version 0.1.21 supports GOG 2026-09-14 / 2026-09-25 and Steam 2026-09-22 /
-2026-09-25 logic.dll snapshots. It depends on defiance.moving-actions.
+Version 0.1.21 supports GOG 2026-09-14 / 2026-09-25 / 2026-10-07 and Steam
+2026-09-22 / 2026-09-25 / 2026-10-07 logic.dll snapshots. It depends on defiance.moving-actions.
 Fully restart the game after installation. Preserve previous DLL/manifest
 pairs as inactive backups; keep all other plugins.
 
@@ -28,7 +28,7 @@ The plugin finds its sixteen hook sites, helper functions, caller return
 addresses and RTTI vtables by signature and RTTI in the loaded `logic.dll`
 ([`src/sites.rs`](src/sites.rs)), and checks each hook entry and the
 navigation bounds before hooking. Its sites test resolves every site uniquely
-on the four September 2026 snapshots in `bin/` and proves they equal the
+on the six 2026 snapshots in `bin/` and proves they equal the
 addresses the plugin used before. The December 2025 builds lack the point-turn
 steering call the plugin relies on, so they are refused. A site that does not
 resolve, or a changed entry, logs a warning ("not a supported build") and

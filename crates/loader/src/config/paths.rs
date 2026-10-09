@@ -139,6 +139,8 @@ impl Paths {
                 && !super::builtin::LOADER_SETTINGS
                     .iter()
                     .any(|decl| decl.key == entry.key)
+                && super::builtin::moved_from_loader(super::builtin::PERFORMANCE_ID, &entry.key)
+                    .is_none()
             {
                 warnings.push(format!(
                     "{}:{}: unknown bootstrap key `{}` is kept but not used",

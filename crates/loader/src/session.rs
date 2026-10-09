@@ -114,6 +114,7 @@ unsafe extern "C" fn service_tracking() {
 
 unsafe extern "C" fn service_mission(delta: i32) {
     let before = GATE.mission(delta);
+    crate::mission_events::transition(before, delta);
     if before == 0 && delta > 0 {
         // `[trace] when = mission`
         crate::trace::start_deferred();

@@ -1,7 +1,7 @@
 """tools/patch_inventory.py's rules on synthetic runs: overlaps between
 plugins' solo writes, and plugins that install differently when started with
 every other plugin. Needs no DLLs."""
-import pathlib, sys, unittest
+import pathlib, sys, tempfile, types, unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import patch_inventory
@@ -72,6 +72,17 @@ class Rules(unittest.TestCase):
 
 
 class Fixture(unittest.TestCase):
+    def test_module_selection_returns_present_and_missing_payloads(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = pathlib.Path(temporary)
+            for module in ("logic.dll", "game.dll", "galileo.dll"):
+                (folder / module).touch()
+
+            present, absent = patch_inventory.module_files(types.SimpleNamespace(folder=folder))
+
+        self.assertEqual(present, ("logic.dll", "game.dll", "galileo.dll"))
+        self.assertEqual(absent, ("world2.dll",))
+
     def test_writes_in_a_module_the_build_lacks_are_not_compared(self):
         recorded = {"plugins": {"a": {"state": "Active", "spans": [["game", 16, 5, "function"],
                                                                  ["world2", 32, 5, "function"]]}}}

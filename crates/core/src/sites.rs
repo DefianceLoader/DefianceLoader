@@ -215,21 +215,26 @@ pub fn code_ranges(image: &[u8]) -> Vec<(usize, usize)> {
 }
 
 /// Every game build kept in `bin/<store>/<date>/`, oldest first.
-pub const BUILDS: [&str; 6] = [
+pub const BUILDS: [&str; 8] = [
     "gog/2025-12-23",
     "steam/2025-12-23",
     "gog/2026-09-14",
     "steam/2026-09-22",
     "gog/2026-09-25",
     "steam/2026-09-25",
+    "gog/2026-10-07",
+    "steam/2026-10-07",
 ];
 
-/// The four 2026-09 builds.
-pub const SEPTEMBER_BUILDS: [&str; 4] = [
+/// The 2026 builds: [`BUILDS`] without the December 2025 ones, which predate
+/// much of what the plugins hook.
+pub const BUILDS_2026: [&str; 6] = [
     "gog/2026-09-14",
     "steam/2026-09-22",
     "gog/2026-09-25",
     "steam/2026-09-25",
+    "gog/2026-10-07",
+    "steam/2026-10-07",
 ];
 
 /// `bin/<build>/<dll>` mapped, or `None` when this checkout lacks it (the game

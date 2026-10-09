@@ -6,14 +6,14 @@
 //! version, the supported host ABI, the config group, the declared settings and
 //! the hard dependencies with supported version ranges.
 //!
-//! Built-in manifests are generated from `config::builtin`, the one
-//! authoritative table, so feature IDs, dependency declarations and the
-//! packaged manifests cannot drift apart. A known built-in whose manifest is
-//! missing or disagrees with the table is a packaging error, not a reason to
-//! fall back to the legacy path.
+//! Every plugin's manifest is committed beside its source, the feature
+//! plugins shipped with the loader included, except Core's: the loader owns
+//! Core's facts (`config::builtin`) and its manifest is generated from them. A
+//! Core whose manifest is missing or disagrees with them is a packaging error,
+//! not a reason to fall back to the legacy path.
 
 use super::config::builtin::{self, Builtin};
-use super::config::schema::ValueType;
+use super::config::schema::{Restart, SettingDecl, ValueType};
 use super::json::{self, Value};
 use defiance_api::ABI_VERSION;
 use std::collections::BTreeSet;
@@ -55,6 +55,10 @@ pub struct ManifestSetting {
     pub default: String,
     pub description: String,
     pub sensitive: bool,
+    /// `choices`: the accepted spellings of a `choice` setting, the default
+    /// among them. Empty for other types, and for a `choice` that lists none
+    /// (any text is then accepted).
+    pub choices: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -349,13 +353,72 @@ fn parse_setting(value: &Value) -> Result<ManifestSetting, String> {
             ))
         }
     };
+    let choices = match json_object(&entries).get("choices") {
+        None => Vec::new(),
+        Some(Value::Array(items)) if ty == "choice" => {
+            let mut choices = Vec::new();
+            for item in items {
+                let Value::String(choice) = item else {
+                    return Err(format!("setting `{key}` `choices` must be strings"));
+                };
+                choices.push(choice.clone());
+            }
+            if !choices.contains(&default) {
+                return Err(format!(
+                    "setting `{key}` default `{default}` is not one of its `choices`"
+                ));
+            }
+            choices
+        }
+        Some(Value::Array(_)) => {
+            return Err(format!("setting `{key}` has `choices` but is not a choice"))
+        }
+        Some(other) => {
+            return Err(format!(
+                "setting `{key}` `choices` must be an array, not {}",
+                json::kind(other)
+            ))
+        }
+    };
     Ok(ManifestSetting {
         key,
         ty,
         default,
         description,
         sensitive,
+        choices,
     })
+}
+
+/// The core declaration for a manifest setting. A `choice` with `choices` is
+/// checked against them; one without is accepted as text. Strings are leaked,
+/// for the process's life.
+pub fn leak_decl(setting: &ManifestSetting) -> SettingDecl {
+    let leak = |text: &str| -> &'static str { Box::leak(text.to_string().into_boxed_str()) };
+    let ty = match setting.ty.as_str() {
+        "bool" => ValueType::Bool,
+        "int" => ValueType::Integer {
+            min: i64::MIN,
+            max: i64::MAX,
+        },
+        "number" => ValueType::Number {
+            min: f64::MIN,
+            max: f64::MAX,
+        },
+        "choice" if !setting.choices.is_empty() => {
+            let choices: Vec<&'static str> = setting.choices.iter().map(|c| leak(c)).collect();
+            ValueType::Choice(Box::leak(choices.into_boxed_slice()))
+        }
+        _ => ValueType::Text,
+    };
+    SettingDecl {
+        key: leak(&setting.key),
+        ty,
+        default: leak(&setting.default),
+        description: leak(&setting.description),
+        restart: Restart::Startup,
+        sensitive: setting.sensitive,
+    }
 }
 
 fn parse_dependency(value: &Value) -> Result<Dependency, String> {
@@ -384,32 +447,8 @@ fn parse_dependency(value: &Value) -> Result<Dependency, String> {
     })
 }
 
-/// Render a built-in's manifest from the authoritative table.
+/// Render a built-in's manifest from the loader's facts about it.
 pub fn render_builtin(builtin: &Builtin) -> String {
-    let settings: Vec<Value> = builtin::settings(builtin.id)
-        .iter()
-        .map(|decl| {
-            Value::Object(vec![
-                ("key".into(), Value::String(decl.key.into())),
-                ("type".into(), Value::String(type_name(decl.ty).into())),
-                ("default".into(), Value::String(decl.default.into())),
-                ("description".into(), Value::String(decl.description.into())),
-                ("sensitive".into(), Value::Bool(decl.sensitive)),
-            ])
-        })
-        .collect();
-    let depends: Vec<Value> = builtin
-        .depends
-        .iter()
-        .map(|id| {
-            let min = builtin::find(id).map(|dependency| dependency.version.to_string());
-            Value::Object(vec![
-                ("id".into(), Value::String((*id).into())),
-                ("min".into(), min.map(Value::String).unwrap_or(Value::Null)),
-                ("max".into(), Value::Null),
-            ])
-        })
-        .collect();
     let document = Value::Object(vec![
         ("schema".into(), Value::Number(SCHEMA as f64)),
         ("id".into(), Value::String(builtin.id.into())),
@@ -417,30 +456,14 @@ pub fn render_builtin(builtin: &Builtin) -> String {
         ("version".into(), Value::String(builtin.version.into())),
         ("abi".into(), Value::Number(ABI_VERSION as f64)),
         ("group".into(), Value::String(builtin.group.into())),
-        ("settings".into(), Value::Array(settings)),
-        ("depends".into(), Value::Array(depends)),
+        ("settings".into(), Value::Array(Vec::new())),
+        ("depends".into(), Value::Array(Vec::new())),
         ("conflicts".into(), Value::Array(Vec::new())),
-        (
-            "multiplayer_safe".into(),
-            Value::Bool(builtin.multiplayer_safe),
-        ),
-        (
-            "hot_reload".into(),
-            Value::Bool(builtin::hot_reload(builtin)),
-        ),
+        ("multiplayer_safe".into(), Value::Bool(true)),
+        ("hot_reload".into(), Value::Bool(false)),
         ("patch_contract".into(), Value::Bool(builtin.patch_contract)),
     ]);
     json::render(&document)
-}
-
-fn type_name(ty: ValueType) -> &'static str {
-    match ty {
-        ValueType::Bool => "bool",
-        ValueType::Integer { .. } => "int",
-        ValueType::Number { .. } => "number",
-        ValueType::Choice(_) => "choice",
-        ValueType::Text => "text",
-    }
 }
 
 /// Every built-in's `(dll basename, manifest JSON)`, for the generator.
@@ -451,7 +474,7 @@ pub fn builtin_manifests() -> Vec<(String, String)> {
         .collect()
 }
 
-/// Whether a packaged built-in's version is in the release series the table
+/// Whether a packaged built-in's version is in the release series the loader
 /// names: the same major and minor, any patch. A patch release of one plugin
 /// then loads under a loader built for a neighbouring patch, in either
 /// direction; every field the loader acts on is still checked exactly.
@@ -460,7 +483,7 @@ fn same_series(version: Version, table: &str) -> bool {
         .is_ok_and(|table| (version.major, version.minor) == (table.major, table.minor))
 }
 
-/// Check a packaged built-in manifest against the authoritative table. Any
+/// Check a packaged built-in manifest against the loader's facts. Any
 /// disagreement is a packaging error rather than a silent downgrade, except a
 /// patch-level version difference (see [`same_series`]).
 pub fn check_builtin(manifest: &Manifest, builtin: &Builtin) -> Result<(), String> {
@@ -494,12 +517,8 @@ pub fn check_builtin(manifest: &Manifest, builtin: &Builtin) -> Result<(), Strin
             manifest.group, builtin.group
         ));
     }
-    if manifest.hot_reload != builtin::hot_reload(builtin) {
-        return Err(format!(
-            "manifest hot_reload {} is not {}",
-            manifest.hot_reload,
-            builtin::hot_reload(builtin)
-        ));
+    if manifest.hot_reload {
+        return Err("manifest hot_reload true is not false".into());
     }
     if manifest.patch_contract != builtin.patch_contract {
         return Err(format!(
@@ -507,26 +526,14 @@ pub fn check_builtin(manifest: &Manifest, builtin: &Builtin) -> Result<(), Strin
             manifest.patch_contract, builtin.patch_contract
         ));
     }
-    if manifest.multiplayer_safe != builtin.multiplayer_safe {
-        return Err(format!(
-            "manifest multiplayer_safe {} is not {}",
-            manifest.multiplayer_safe, builtin.multiplayer_safe
-        ));
+    if !manifest.multiplayer_safe {
+        return Err("manifest multiplayer_safe false is not true".into());
     }
-    let declared: Vec<&str> = manifest.depends.iter().map(|d| d.id.as_str()).collect();
-    let expected: Vec<&str> = builtin.depends.iter().copied().collect();
-    if declared != expected {
-        return Err(format!("manifest depends {declared:?} is not {expected:?}"));
+    if let Some(dependency) = manifest.depends.first() {
+        return Err(format!("manifest depends on `{}`", dependency.id));
     }
-    let declared: Vec<&str> = manifest.settings.iter().map(|s| s.key.as_str()).collect();
-    let expected: Vec<&str> = builtin::settings(builtin.id)
-        .iter()
-        .map(|s| s.key)
-        .collect();
-    if declared != expected {
-        return Err(format!(
-            "manifest settings {declared:?} is not {expected:?}"
-        ));
+    if let Some(setting) = manifest.settings.first() {
+        return Err(format!("manifest declares setting `{}`", setting.key));
     }
     Ok(())
 }
@@ -665,6 +672,69 @@ pub fn catalog(dir: &Path) -> Catalog {
     Catalog { entries, warnings }
 }
 
+/// The committed manifests of the feature plugins shipped with the loader, as
+/// `(dll basename, manifest JSON)`, for tests that plan or reload them.
+#[cfg(any(test, feature = "test-host"))]
+pub(crate) const FEATURE_MANIFESTS: &[(&str, &str)] = &[
+    (
+        "defiance_plugin_feature_ammunition.dll",
+        include_str!("../../../plugins/ammunition/defiance_plugin_feature_ammunition.plugin.json"),
+    ),
+    (
+        "defiance_plugin_feature_attack.dll",
+        include_str!("../../../plugins/attack/defiance_plugin_feature_attack.plugin.json"),
+    ),
+    (
+        "defiance_plugin_feature_diagnostics.dll",
+        include_str!("../../../plugins/diagnostics/defiance_plugin_feature_diagnostics.plugin.json"),
+    ),
+    (
+        "defiance_plugin_feature_firing.dll",
+        include_str!("../../../plugins/firing/defiance_plugin_feature_firing.plugin.json"),
+    ),
+    (
+        "defiance_plugin_feature_garrison.dll",
+        include_str!("../../../plugins/garrison/defiance_plugin_feature_garrison.plugin.json"),
+    ),
+    (
+        "defiance_plugin_feature_movement.dll",
+        include_str!("../../../plugins/movement/defiance_plugin_feature_movement.plugin.json"),
+    ),
+    (
+        "defiance_plugin_feature_performance.dll",
+        include_str!("../../../plugins/performance/defiance_plugin_feature_performance.plugin.json"),
+    ),
+    (
+        "defiance_plugin_feature_pickup.dll",
+        include_str!("../../../plugins/pickup/defiance_plugin_feature_pickup.plugin.json"),
+    ),
+    (
+        "defiance_plugin_feature_posture.dll",
+        include_str!("../../../plugins/posture/defiance_plugin_feature_posture.plugin.json"),
+    ),
+    (
+        "defiance_plugin_feature_preview_weapon.dll",
+        include_str!("../../../plugins/preview-weapon/defiance_plugin_feature_preview_weapon.plugin.json"),
+    ),
+    (
+        "defiance_plugin_feature_selection.dll",
+        include_str!("../../../plugins/selection/defiance_plugin_feature_selection.plugin.json"),
+    ),
+    (
+        "defiance_plugin_feature_vehicle_special_fire.dll",
+        include_str!("../../../plugins/vehicle-special-fire/defiance_plugin_feature_vehicle_special_fire.plugin.json"),
+    ),
+];
+
+/// The committed manifest of the shipped feature plugin `dll`, parsed.
+#[cfg(any(test, feature = "test-host"))]
+pub(crate) fn feature_manifest(dll: &str) -> Option<Manifest> {
+    FEATURE_MANIFESTS
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(dll))
+        .map(|(name, json)| parse(json, name).unwrap_or_else(|e| panic!("{name}: {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -705,6 +775,33 @@ mod tests {
     }
 
     #[test]
+    fn committed_feature_manifests_parse_and_are_ordinary_plugins() {
+        let mut ids = Vec::new();
+        for (dll, json) in FEATURE_MANIFESTS {
+            let manifest = parse(json, dll).unwrap_or_else(|e| panic!("{dll}: {e}"));
+            assert!(builtin::by_dll(dll).is_none(), "{dll}");
+            assert_eq!(manifest.abi, ABI_VERSION, "{dll}");
+            assert!(builtin::safe_group(&manifest.group), "{dll}");
+            assert!(builtin::GROUPS.contains(&manifest.group.as_str()), "{dll}");
+            assert_eq!(
+                manifest.settings.first().map(|s| s.key.as_str()),
+                Some("enabled"),
+                "{dll}"
+            );
+            assert_eq!(
+                manifest.multiplayer_safe,
+                !builtin::NOT_MULTIPLAYER_SAFE.contains(&manifest.id.as_str()),
+                "{dll}"
+            );
+            ids.push(manifest.id);
+        }
+        let mut sorted = ids.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), ids.len());
+    }
+
+    #[test]
     fn generated_manifests_parse_and_match_the_table() {
         for builtin in BUILTINS {
             let json = render_builtin(builtin);
@@ -717,7 +814,7 @@ mod tests {
 
     #[test]
     fn a_builtin_accepts_any_patch_in_its_series() {
-        let builtin = builtin::find("defiance.selection").unwrap();
+        let builtin = builtin::find(builtin::CORE_ID).unwrap();
         let table = Version::parse(builtin.version).unwrap();
         let mut manifest = parse(&render_builtin(builtin), builtin.dll).unwrap();
         let checked = |manifest: &Manifest| check_builtin(manifest, builtin);
@@ -743,8 +840,8 @@ mod tests {
 
     #[test]
     fn a_dll_that_is_not_a_basename_is_refused() {
-        let json = render_builtin(&BUILTINS[1]);
-        assert!(parse(&json.replace(BUILTINS[1].dll, "../evil.dll"), "../evil.dll").is_err());
+        let json = render_builtin(&BUILTINS[0]);
+        assert!(parse(&json.replace(BUILTINS[0].dll, "../evil.dll"), "../evil.dll").is_err());
     }
 
     #[test]
@@ -828,7 +925,7 @@ mod tests {
 
     #[test]
     fn a_mismatched_dll_is_refused() {
-        let json = render_builtin(&BUILTINS[1]);
+        let json = render_builtin(&BUILTINS[0]);
         assert!(parse(&json, "other.dll").is_err());
     }
 }

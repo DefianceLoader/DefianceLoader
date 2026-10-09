@@ -23,6 +23,7 @@ use defiance_api::Api;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
 /// The game executable. A helper process has no `logic.dll` to patch.
@@ -30,6 +31,9 @@ const GAME_EXE: &str = "trm.exe";
 
 /// One host per process, however many times the proxy is attached.
 static STARTED: AtomicBool = AtomicBool::new(false);
+
+/// Failure reasons survive until a safe retry reports its current result.
+static PLUGIN_STATES: Mutex<BTreeMap<String, RunState>> = Mutex::new(BTreeMap::new());
 
 /// Arm `[trace] sites`, if any. Diagnostic only: a bad value is logged and
 /// startup goes on without tracing.
@@ -240,11 +244,13 @@ pub fn run() {
         }
     }
 
+    let stamps = crate::reload::startup_stamps(&plan);
     let result = run_plan(
         &plan,
         |node, index| load(node, api, index),
         crate::multiplayer::guarded,
     );
+    remember_startup(&plan, &result, &stamps);
     for (node, state) in plan.nodes.iter().zip(&result.states) {
         match state {
             RunState::Active => crate::log::debug(&format!("{} active", node.id)),
@@ -279,14 +285,14 @@ pub fn run() {
             .unwrap_or(false)
     };
     let (develop, toggle) = (flag("hot_reload"), flag("live_toggle"));
-    if develop || toggle {
+    if !result.degraded && (develop || toggle) {
         crate::reload::start_watcher(api, develop, toggle);
     }
 }
 
 /// This is the production executor. Tests replace only the DLL operation;
 /// planning, prerequisite checks, failure propagation and counts are shared.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum RunState {
     Active,
     Disabled,
@@ -302,21 +308,97 @@ struct StartupResult {
 
 impl StartupResult {
     fn summary(&self) -> String {
-        let mut counts = [0usize; 5];
-        for state in &self.states {
-            counts[match state {
-                RunState::Active => 0,
-                RunState::Disabled => 1,
-                RunState::Blocked(_) => 2,
-                RunState::Ignored => 3,
-                RunState::Failed(_) => 4,
-            }] += 1;
-        }
-        format!(
-            "{} active, {} disabled, {} blocked, {} ignored, {} failed",
-            counts[0], counts[1], counts[2], counts[3], counts[4]
-        )
+        summarize(self.states.iter())
     }
+}
+
+fn summarize<'a>(states: impl Iterator<Item = &'a RunState>) -> String {
+    let mut counts = [0usize; 5];
+    for state in states {
+        counts[match state {
+            RunState::Active => 0,
+            RunState::Disabled => 1,
+            RunState::Blocked(_) => 2,
+            RunState::Ignored => 3,
+            RunState::Failed(_) => 4,
+        }] += 1;
+    }
+    format!(
+        "{} active, {} disabled, {} blocked, {} ignored, {} failed",
+        counts[0], counts[1], counts[2], counts[3], counts[4]
+    )
+}
+
+fn remember_startup(
+    plan: &crate::plan::Plan,
+    result: &StartupResult,
+    stamps: &[crate::reload::Stamp],
+) {
+    let failed: Vec<_> = result
+        .states
+        .iter()
+        .enumerate()
+        .filter_map(|(index, state)| matches!(state, RunState::Failed(_)).then_some(index))
+        .collect();
+    crate::reload::remember_startup(plan, &failed, stamps, result.degraded);
+    *PLUGIN_STATES.lock().unwrap_or_else(|p| p.into_inner()) = plan
+        .nodes
+        .iter()
+        .zip(&result.states)
+        .map(|(node, state)| (node.id.to_ascii_lowercase(), state.clone()))
+        .collect();
+}
+
+/// Report the live catalog and loaded owners, with unresolved initialization errors.
+pub(crate) fn plugin_summary() -> String {
+    let config = crate::config::refresh_later();
+    let loaded = crate::lifecycle::loaded();
+    let versions = loaded
+        .iter()
+        .map(|p| (p.id.clone(), p.version))
+        .collect::<Vec<_>>();
+    let plan =
+        crate::plan::plan_with_loaded_versions(config.catalog.entries.clone(), config, &versions);
+    let states = PLUGIN_STATES.lock().unwrap_or_else(|p| p.into_inner());
+    let mut current: BTreeMap<_, _> = plan
+        .nodes
+        .iter()
+        .map(|node| {
+            let id = node.id.to_ascii_lowercase();
+            let state = if loaded.iter().any(|p| p.id.eq_ignore_ascii_case(&node.id)) {
+                RunState::Active
+            } else {
+                match &node.decision {
+                    Decision::Disabled { .. } => RunState::Disabled,
+                    Decision::Blocked { reason } => RunState::Blocked(reason.clone()),
+                    Decision::Ignored { .. } => RunState::Ignored,
+                    Decision::Initialize => match states.get(&id) {
+                        Some(RunState::Failed(reason)) => RunState::Failed(reason.clone()),
+                        _ => RunState::Blocked("not active".into()),
+                    },
+                }
+            };
+            (id, state)
+        })
+        .collect();
+    for plugin in loaded {
+        current.insert(plugin.id.to_ascii_lowercase(), RunState::Active);
+    }
+    summarize(current.values())
+}
+
+pub(crate) fn retry_finished(id: &str, result: &Result<(), String>) {
+    PLUGIN_STATES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(
+            id.to_ascii_lowercase(),
+            match result {
+                Ok(()) => RunState::Active,
+                Err(reason) => RunState::Failed(reason.clone()),
+            },
+        );
+    crate::log::info(&format!("plugin summary: {}", plugin_summary()));
 }
 
 /// The plan without the multiplayer guard's gate, for tests of the rest.
@@ -631,11 +713,13 @@ pub fn test_load(exe_dir: &std::path::Path) -> Vec<(String, String)> {
         .collect();
     let api: &'static Api =
         TEST_API.get_or_init(|| Box::leak(Box::new(crate::resolve::build_api())));
+    let stamps = crate::reload::startup_stamps(&plan);
     let result = run_plan(
         &plan,
         |node, owner| load(node, api, owner),
         crate::multiplayer::guarded,
     );
+    remember_startup(&plan, &result, &stamps);
     let active: Vec<bool> = result
         .states
         .iter()
@@ -647,6 +731,11 @@ pub fn test_load(exe_dir: &std::path::Path) -> Vec<(String, String)> {
         .zip(result.states)
         .map(|(node, state)| (node.id.clone(), format!("{state:?}")))
         .collect()
+}
+
+#[cfg(feature = "test-host")]
+pub fn test_apply_pending() {
+    crate::reload::test_apply_pending(TEST_API.get().copied().expect("test startup API"));
 }
 
 /// A hot reload, as the watcher runs it.

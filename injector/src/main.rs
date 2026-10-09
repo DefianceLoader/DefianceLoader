@@ -19,9 +19,9 @@ mod host_mode;
 mod settings;
 
 use defiance_core::apply::Process;
-use defiance_core::descriptor::{GamePatch, Patch};
-use defiance_core::install::{self, Scan};
-use defiance_core::{relocate, sha256, Target};
+use defiance_core::compat::{install, relocate, GamePatch, Patch};
+use defiance_core::install::Scan;
+use defiance_core::{sha256, Target};
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use std::path::PathBuf;
@@ -945,8 +945,10 @@ fn main() {
                 let patch = logic_patch();
                 println!("self test against a stand-in image");
                 let game = game_patch();
-                let result = defiance_core::apply::self_test(&patch, PAYLOAD)
-                    .and_then(|()| defiance_core::apply::self_test_game(&game, GAME_PAYLOAD))
+                let result = defiance_core::compat::apply::self_test(&patch, PAYLOAD)
+                    .and_then(|()| {
+                        defiance_core::compat::apply::self_test_game(&game, GAME_PAYLOAD)
+                    })
                     .and_then(|()| relocate::self_test(&patch, &game, PAYLOAD, GAME_PAYLOAD))
                     .and_then(|()| builds::self_test());
                 match result {

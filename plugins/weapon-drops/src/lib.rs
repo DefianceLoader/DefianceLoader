@@ -14,6 +14,8 @@ mod reserve;
 mod sites;
 mod squad_death;
 
+defiance_feature_sdk::service_handshake!();
+
 enum InstallError {
     /// The build is not one the plugin supports; nothing was written.
     UnsupportedBuild(String),

@@ -1,0 +1,422 @@
+{
+ "unit_schema": 1,
+ "name": "selection-logic",
+ "plugin": "selection",
+ "module": "logic.dll",
+ "source_sha256": "fdb1d3bb7fdd0a47ac1b8a530cf0ee302fa2a96cc7283972504b0aa41ab2336f",
+ "unit_bytes": 1102,
+ "code_offset": 32,
+ "cells": [
+  {
+   "name": "marquee",
+   "offset": 0,
+   "bytes": 16
+  },
+  {
+   "name": "preview_dim",
+   "offset": 16,
+   "bytes": 16
+  }
+ ],
+ "writes": [
+  {
+   "kind": "jmp",
+   "rva": 1992640,
+   "before": "885130c3cc",
+   "tail": "",
+   "entry": 918,
+   "label": "building_select"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2169929,
+   "before": "450fb6742420",
+   "tail": "90",
+   "entry": 928,
+   "label": "dim_pose"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2170784,
+   "before": "488b4588807820000f8499000000",
+   "tail": "909090909090909090",
+   "entry": 948,
+   "label": "dim_mode"
+  },
+  {
+   "kind": "jmp",
+   "rva": 2170848,
+   "before": "488b0e488b01498d5720",
+   "tail": "9090909090",
+   "entry": 1030,
+   "label": "dim_part"
+  },
+  {
+   "kind": "jmp",
+   "rva": 4382392,
+   "before": "498b06498bce",
+   "tail": "90",
+   "entry": 856,
+   "label": "region_icon_gate"
+  },
+  {
+   "kind": "edit",
+   "rva": 4385386,
+   "before": "488b03ba10000000488bcbff909800000084c00f84b4000000488b03488bcbff90b0000000488b48284885c90f849b000000488b01ff90d00300004885c00f8489000000488b10488bc8ff5268488b104c8b40084c2bc249c1f8034d85c0746d4e8d04c500000000488d4c2420e8fec92600488b4c2420488b01eb3a",
+   "after": "488b034889d9ff90b0000000488b48284885c90f84b4000000488b01ff90d00300004885c00f84a2000000488b104889c1ff5268488b18488b40084889442420483b5c24200f8382000000488b0b4883c3084885c974e9488b01ff90b0000000488b48504885c974d7488b01b201ff5050ebcd909090909090909090"
+  },
+  {
+   "kind": "call",
+   "rva": 4385711,
+   "before": "e8dcf1ffff",
+   "tail": "",
+   "stock": 0,
+   "entry": 448,
+   "label": "region_individual"
+  },
+  {
+   "kind": "call",
+   "rva": 4385824,
+   "before": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff5050",
+   "tail": "909090909090909090909090909090909090909090909090",
+   "stock": 0,
+   "entry": 768,
+   "label": "marquee_select"
+  },
+  {
+   "kind": "call",
+   "rva": 4386343,
+   "before": "e864efffff",
+   "tail": "",
+   "stock": 0,
+   "entry": 448,
+   "label": "region_individual"
+  },
+  {
+   "kind": "call",
+   "rva": 4386496,
+   "before": "e8cbeeffff",
+   "tail": "",
+   "stock": 0,
+   "entry": 448,
+   "label": "region_individual"
+  },
+  {
+   "kind": "edit",
+   "rva": 4386969,
+   "before": "488b06b201488bceff5050",
+   "after": "4c89f24c89e9e89cf9ffff"
+  },
+  {
+   "kind": "call",
+   "rva": 4387200,
+   "before": "e80becffff",
+   "tail": "",
+   "stock": 0,
+   "entry": 448,
+   "label": "region_individual"
+  },
+  {
+   "kind": "edit",
+   "rva": 4389427,
+   "before": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff5050",
+   "after": "488b1331c9e803f0ffff90909090909090909090909090909090909090"
+  },
+  {
+   "kind": "jmp",
+   "rva": 4587792,
+   "before": "488bc1488b49284885c97407488b0148ff6050885030c3cccccccc",
+   "tail": "90909090909090909090909090909090909090909090",
+   "entry": 32,
+   "label": "set_selected"
+  },
+  {
+   "kind": "jmp",
+   "rva": 4587824,
+   "before": "40534883ec20",
+   "tail": "90",
+   "entry": 360,
+   "label": "is_selected"
+  },
+  {
+   "kind": "edit",
+   "rva": 4587840,
+   "before": "7410488b01ff505884c0741a807b1800eb0a",
+   "after": "7410488b01ff505884c0741a807b1800eb00"
+  }
+ ],
+ "fixups": [
+  {
+   "kind": "rel32",
+   "offset": 545,
+   "target": 4382096
+  },
+  {
+   "kind": "rel32",
+   "offset": 704,
+   "target": 4382096
+  },
+  {
+   "kind": "rel32",
+   "offset": 799,
+   "target": 4385344
+  },
+  {
+   "kind": "rel32",
+   "offset": 844,
+   "target": 4382096
+  },
+  {
+   "kind": "rel32",
+   "offset": 909,
+   "target": 4382398
+  },
+  {
+   "kind": "rel32",
+   "offset": 914,
+   "target": 4382563
+  },
+  {
+   "kind": "rel32",
+   "offset": 944,
+   "target": 2169935
+  },
+  {
+   "kind": "rel32",
+   "offset": 1021,
+   "target": 2170798
+  },
+  {
+   "kind": "rel32",
+   "offset": 1026,
+   "target": 2170951
+  },
+  {
+   "kind": "rel32",
+   "offset": 1078,
+   "target": 2170858
+  },
+  {
+   "kind": "rel32",
+   "offset": 1093,
+   "target": 2170858
+  },
+  {
+   "kind": "rel32",
+   "offset": 1098,
+   "target": 2170861
+  },
+  {
+   "kind": "edit",
+   "rva": 4385386,
+   "offset": 21,
+   "target": 4385591
+  },
+  {
+   "kind": "edit",
+   "rva": 4385386,
+   "offset": 39,
+   "target": 4385591
+  },
+  {
+   "kind": "edit",
+   "rva": 4385386,
+   "offset": 71,
+   "target": 4385591
+  },
+  {
+   "kind": "edit",
+   "rva": 4389427,
+   "offset": 6,
+   "target": 4385344
+  },
+  {
+   "kind": "edit",
+   "rva": 4386969,
+   "offset": 7,
+   "target": 4385344
+  }
+ ],
+ "natives": [
+  {
+   "name": "setter",
+   "rva": 4587792
+  },
+  {
+   "name": "is_selected",
+   "rva": 4587824
+  }
+ ],
+ "anchors": [],
+ "sites": [
+  {
+   "site_name": "setter",
+   "site_start": 4587792,
+   "site_group": 4587792,
+   "site_pattern": "488bc1488b49284885c97407488b0148ff6050885030c3cccccccc",
+   "site_offset": 0
+  },
+  {
+   "site_name": "is_selected",
+   "site_start": 4587824,
+   "site_group": 4587824,
+   "site_pattern": "40534883ec20488bd9488b49284885c97410488b01ff5058",
+   "site_offset": 0
+  },
+  {
+   "site_name": "select_trace",
+   "site_start": 4385344,
+   "site_group": 4385344,
+   "site_pattern": "40534881ecc0000000488bda4885d20f84????????488b02",
+   "site_offset": 0
+  },
+  {
+   "site_name": "select_is",
+   "site_start": 4587840,
+   "site_group": 4587824,
+   "site_pattern": "7410488b01ff505884c0741a807b1800eb0a807b1800740e807b30007408b0014883c4205bc3",
+   "site_offset": 0
+  },
+  {
+   "site_name": "select_squad",
+   "site_start": 4385386,
+   "site_group": 4385344,
+   "site_pattern": "488b03ba10000000488bcbff909800000084c00f84????????488b03488bcbff90b0000000488b48284885c90f84????????488b01ff90b80300004885c00f84????????488b10488bc8ff5268488b104c8b40084c2bc249c1f8034d85c0746d4e8d04c500000000488d4c2420e8????????488b4c2420488b01eb3a488bcbe8????????4885c07427488b80b00200004885c0741b488b48104885c97412488b01ff90b0000000488b48504885c97515488b03488bcbff90b0000000488b48504885c97408488b01b201ff5050",
+   "site_offset": 0
+  },
+  {
+   "site_name": "select_toggle",
+   "site_start": 4389427,
+   "site_group": 4389360,
+   "site_pattern": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff50504883c308483b5c2428",
+   "site_offset": 0
+  },
+  {
+   "site_name": "select_type",
+   "site_start": 4386969,
+   "site_group": 4386803,
+   "site_pattern": "488b06b201488bceff50504883c308483bdf0f85????????",
+   "site_offset": 0
+  },
+  {
+   "site_name": "region_individual_0",
+   "site_start": 4385711,
+   "site_group": 4385600,
+   "site_pattern": "e8????????84c07421488b55df483b55e7740a48893a488345df08",
+   "site_offset": 0
+  },
+  {
+   "site_name": "region_individual_1",
+   "site_start": 4386343,
+   "site_group": 4386224,
+   "site_pattern": "e8????????84c07425498b06498bceff90b0000000488b4820",
+   "site_offset": 0
+  },
+  {
+   "site_name": "region_individual_2",
+   "site_start": 4386496,
+   "site_group": 4386224,
+   "site_pattern": "e8????????84c07426488b542428483b542430740b48893a",
+   "site_offset": 0
+  },
+  {
+   "site_name": "region_individual_3",
+   "site_start": 4387200,
+   "site_group": 4387088,
+   "site_pattern": "e8????????84c0742f483bfe740e4c89374883c70848897c2428",
+   "site_offset": 0
+  },
+  {
+   "site_name": "marquee_select",
+   "site_start": 4385824,
+   "site_group": 4385600,
+   "site_pattern": "488b0b488b01ff90b0000000488b48504885c97408488b01b201ff50504883c308483b5dff",
+   "site_offset": 0
+  },
+  {
+   "site_name": "dim_pose",
+   "site_start": 2169929,
+   "site_group": 2167152,
+   "site_pattern": "450fb67424204488b5280c0000448be3488b4570488b08488b4008",
+   "site_offset": 0
+  },
+  {
+   "site_name": "dim_mode",
+   "site_start": 2170784,
+   "site_group": 2167152,
+   "site_pattern": "488b4588807820000f84????????488b4c2440488b01488d5550ff90c8020000904c8b7558488b7550493bf674304c8bbd100c00006666660f1f840000000000488b0e488b01498d5720ff50584883c610493bf675ea4c8b7558488b75504885f67444498bd6488bcee8????????488b5560488b4d50482bd14883e2f0488bc14881fa0010000072194883c227488b49f8482bc14883c0f84883f81f0f87????????e8????????",
+   "site_offset": 0
+  },
+  {
+   "site_name": "dim_part",
+   "site_start": 2170848,
+   "site_group": 2167152,
+   "site_pattern": "488b0e488b01498d5720ff50584883c610493bf675ea4c8b7558",
+   "site_offset": 0
+  },
+  {
+   "site_name": "region_native_eligible",
+   "site_start": 4382096,
+   "site_group": 4382096,
+   "site_pattern": "488bc44889581048896818565741564881eca00000000f2970d8440f2940c8440f2948b8",
+   "site_offset": 0
+  },
+  {
+   "site_name": "region_icon_gate",
+   "site_start": 4382392,
+   "site_group": 4382096,
+   "site_pattern": "498b06498bceff5040488bc8e8????????488bd84885c00f84????????488b08488bb1a0000000488d9424d8000000488bcfff15????????488b0848898c24c00000004885c974148b51088d420189410885d27507488b01ff500890488b8c24d80000004885c9740d834108ff7507488b01ff5010904c8bc5488d9424c0000000488bcbffd60fb6d8488b8c24c00000004885c9740d834108ff7507488b11ff52109084db0f85????????",
+   "site_offset": 0
+  },
+  {
+   "site_name": "building_select",
+   "site_start": 1992640,
+   "site_group": 1992640,
+   "site_pattern": "885130c3cccccccccccccccccccccccc488bc44889580848896818",
+   "site_offset": 0
+  }
+ ],
+ "verified_sha": "",
+ "labels": {
+  "set_selected": 32,
+  "squad_selected": 120,
+  "walk": 128,
+  "next": 216,
+  "check": 278,
+  "walked": 296,
+  "mark": 313,
+  "forward": 319,
+  "own_only": 342,
+  "done": 346,
+  "is_selected": 360,
+  "own": 412,
+  "is_false": 428,
+  "is_done": 430,
+  "is_end": 436,
+  "region_individual": 448,
+  "marquee_squads": 510,
+  "marquee_member": 646,
+  "marquee_soldiers": 719,
+  "marquee_reject": 756,
+  "marquee_done": 758,
+  "marquee_select": 768,
+  "marquee_select_stock": 805,
+  "marquee_select_done": 834,
+  "native_eligible": 839,
+  "region_native_return": 848,
+  "region_reject": 853,
+  "region_icon_gate": 856,
+  "region_icon_stock": 902,
+  "region_position_only": 913,
+  "building_select": 918,
+  "dim_pose": 928,
+  "dim_pose_done": 943,
+  "dim_mode": 948,
+  "dim_mode_scan": 998,
+  "dim_mode_parts": 1020,
+  "dim_mode_skip": 1025,
+  "dim_part": 1030,
+  "dim_part_stock": 1082,
+  "dim_part_next": 1097
+ }
+}

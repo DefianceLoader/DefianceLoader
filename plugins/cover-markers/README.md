@@ -26,8 +26,8 @@ with no readable tracks times out after three minutes.
 Garrisoning a building or boarding a vehicle can also leave the earlier move
 arrow visible until another move order; these order paths are under study.
 
-This plugin supports the GOG 2026-09-14 and 2026-09-25 builds and the Steam
-2026-09-22 and 2026-09-25 builds. It finds its code by signature, so it does
+This plugin supports the GOG 2026-09-14, 2026-09-25 and 2026-10-07 builds
+and the Steam 2026-09-22, 2026-09-25 and 2026-10-07 builds. It finds its code by signature, so it does
 not depend on exact DLL hashes. It is on by default. To disable it, set
 `enabled=false` under `[defiance.cover-markers]` in
 `DefianceLoader/config/infantry.ini`, then restart the game. On a build where

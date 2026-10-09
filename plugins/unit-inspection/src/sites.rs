@@ -54,7 +54,7 @@ pub(crate) fn sites(game: &Image) -> Result<Sites, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use defiance_core::sites::{reference, BUILDS, SEPTEMBER_BUILDS};
+    use defiance_core::sites::{reference, BUILDS, BUILDS_2026};
 
     #[test]
     fn sites_resolve_on_every_2026_build_and_not_on_2025() {
@@ -64,7 +64,7 @@ mod tests {
                 continue;
             };
             let resolved = sites(&Image::mapped(&game));
-            if SEPTEMBER_BUILDS.contains(&build) {
+            if BUILDS_2026.contains(&build) {
                 let resolved = resolved.unwrap_or_else(|error| panic!("{build}: {error}"));
                 let image = Image::mapped(&game);
                 assert!(image.starts_with(resolved.squad, &[0xff, 0x90, 0x80, 0, 0, 0]));
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn a_changed_label_query_or_prologue_is_refused() {
-        let build = SEPTEMBER_BUILDS[0];
+        let build = BUILDS_2026[0];
         let Some(game) = reference(build, "game.dll") else {
             return;
         };

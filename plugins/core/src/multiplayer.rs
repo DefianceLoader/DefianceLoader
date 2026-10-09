@@ -10,7 +10,7 @@
 //!
 //! The game's multiplayer error window shows the result's message as a string
 //! table key ([`MESSAGE_KEY`]). `galileo.dll`'s lookup (found by
-//! [`LOOKUP_PATTERN`]) answers that one key with [`MESSAGE`], in every
+//! [`LOOKUP_PATTERNS`]) answers that one key with [`MESSAGE`], in every
 //! language; a mod cannot add it to the table, since the table is one file
 //! (`locale/strres`) and a mod's language layers are all mounted at once.
 //! Without the lookup hook the window shows `String [key] not found`.
@@ -29,6 +29,7 @@
 //!
 //! The message longer than the inline buffer is allocated with the game's own
 //! C runtime (`ucrtbase` `malloc`), which its `std::string` frees.
+use crate::plan::{Kind, Plan, Write};
 use core::ffi::{c_char, c_void};
 use defiance_api::{Api, MultiplayerV1, LOG_INFO, LOG_WARN};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -59,14 +60,19 @@ pub const MESSAGE: &str =
     "Gameplay plugins are active. Disable them in DefianceLoader and restart the game to play online.";
 /// `galileo.dll`'s string table lookup, `(table, const char *key) -> const
 /// std::string *`: a binary search that, on a miss, inserts and returns
-/// `String [key] not found`. The prologue and the search loop.
-pub const LOOKUP_PATTERN: &str =
+/// `String [key] not found`. The prologue and the search: an inline binary
+/// search, then (from GOG 2026-10-07) a call to a lower-bound helper.
+pub const LOOKUP_PATTERNS: [&str; 2] = [
     "48 89 5c 24 10 48 89 74 24 18 48 89 7c 24 20 55 41 54 41 55 41 56 41 57 \
      48 8d 6c 24 b0 48 81 ec 50 01 00 00 4c 8b fa 33 db 89 9d 80 00 00 00 48 8b 41 08 48 8b 48 08 \
      48 89 8d 80 00 00 00 4c 8b 28 48 8b f1 49 2b f5 48 c1 fe 06 4c 8d 73 ff 48 85 f6 7e 63 \
      0f 1f 40 00 0f 1f 84 00 00 00 00 00 4c 8b e6 49 d1 ec 49 8b fc 48 c1 e7 06 49 03 fd 49 8b de \
      48 ff c3 41 80 3c 1f 00 75 f6 48 8b 47 10 48 8b cf 48 83 7f 18 10 72 03 48 8b 0f 4c 8b c0 \
-     48 3b d8 4c 0f 42 c3 49 8b d7 e8 ?? ?? ?? ??";
+     48 3b d8 4c 0f 42 c3 49 8b d7 e8 ?? ?? ?? ??",
+    "48 89 5c 24 18 48 89 54 24 10 55 56 57 48 8d 6c 24 a0 48 81 ec 60 01 00 00 \
+     48 8b f2 c7 85 80 00 00 00 00 00 00 00 48 8b 79 08 4c 8b 47 08 48 8b 17 \
+     4c 8d 8d 88 00 00 00 48 8d 8d 80 00 00 00 e8 ?? ?? ?? ?? 48 8b 18 48 3b 5f 08 74 ??",
+];
 
 type Lookup = unsafe extern "system" fn(table: *mut c_void, key: *const c_char) -> *const u8;
 static LOOKUP: AtomicUsize = AtomicUsize::new(0);
@@ -106,34 +112,61 @@ pub(super) fn message_target(api: &Api) -> Option<usize> {
         return None;
     }
     let size = unsafe { (api.module_size)(base) };
-    let pattern = std::ffi::CString::new(LOOKUP_PATTERN).unwrap_or_default();
-    let target = unsafe { (api.find_pattern)(base, size, pattern.as_ptr()) };
-    (!target.is_null()).then_some(target as usize)
+    let order = crate::matching_first(base, size, &LOOKUP_PATTERNS);
+    order.into_iter().find_map(|i| {
+        let pattern = std::ffi::CString::new(LOOKUP_PATTERNS[i]).unwrap_or_default();
+        let target = unsafe { (api.find_pattern)(base, size, pattern.as_ptr()) };
+        (!target.is_null()).then_some(target as usize)
+    })
+}
+
+/// The string lookup's hook, so [`MESSAGE_KEY`] reads as [`MESSAGE`]; empty
+/// when galileo.dll's lookup is not found.
+fn message_plan(api: &Api) -> Plan {
+    Plan {
+        writes: message_target(api)
+            .map(|target| Write {
+                target,
+                kind: Kind::Entry(None),
+                detour: lookup as *mut c_void,
+                original: Some(&LOOKUP),
+            })
+            .into_iter()
+            .collect(),
+    }
+}
+
+/// The lobby connection's guard at `address`, then the refusal message's
+/// lookup; empty without the loader's service or the game's malloc.
+pub(super) fn plan(api: &Api, address: usize) -> Plan {
+    if !guard_available() {
+        return Plan::default();
+    }
+    let mut writes = vec![guard(address)];
+    writes.extend(message_plan(api).writes);
+    Plan { writes }
+}
+
+/// The lobby connection's hook at `address`.
+fn guard(address: usize) -> Write {
+    Write {
+        target: address,
+        kind: Kind::Entry(None),
+        detour: connect as *mut c_void,
+        original: Some(&ORIGINAL),
+    }
 }
 
 fn install_message(api: &Api) {
-    let name = c"galileo.dll";
-    let base = unsafe { (api.module_base)(name.as_ptr()) };
-    if base.is_null() {
-        say(
-            api,
-            LOG_WARN,
-            "multiplayer: galileo.dll is not loaded; the refusal shows its message key",
-        );
-        return;
-    }
-    let Some(target) = message_target(api).map(|target| target as *mut c_void) else {
+    let plan = message_plan(api);
+    if plan.writes.is_empty() {
         say(api, LOG_WARN, "multiplayer: galileo.dll's string lookup was not found; the refusal shows its message key");
         return;
-    };
-    let _ = MESSAGE_STRING.set(std_string(MESSAGE));
-    let mut original = core::ptr::null_mut();
-    let result = unsafe { (api.hook)(target, lookup as *mut c_void, &mut original) };
-    if result != 0 || original.is_null() {
-        say(api, LOG_WARN, &format!("multiplayer: galileo.dll's string lookup could not be hooked ({result}); the refusal shows its message key"));
-        return;
     }
-    LOOKUP.store(original as usize, Ordering::Release);
+    let _ = MESSAGE_STRING.set(std_string(MESSAGE));
+    if crate::plan::apply(api, &plan).is_err() {
+        say(api, LOG_WARN, "multiplayer: galileo.dll's string lookup could not be hooked; the refusal shows its message key");
+    }
 }
 
 fn game_malloc() -> Option<Malloc> {
@@ -256,19 +289,17 @@ pub fn install(api: &Api, address: usize) {
         return;
     };
     let _ = MALLOC.set(malloc);
-    let mut original = core::ptr::null_mut();
-    let result = unsafe {
-        (api.hook)(
-            address as *mut c_void,
-            connect as *mut c_void,
-            &mut original,
-        )
+    let guard = Plan {
+        writes: vec![guard(address)],
     };
-    if result != 0 || original.is_null() {
-        say(api, LOG_WARN, &format!("multiplayer: the lobby connection could not be hooked ({result}); online play is not guarded"));
+    if crate::plan::apply(api, &guard).is_err() {
+        say(
+            api,
+            LOG_WARN,
+            "multiplayer: the lobby connection could not be hooked; online play is not guarded",
+        );
         return;
     }
-    ORIGINAL.store(original as usize, Ordering::Release);
     unsafe { (service.guard_installed)() };
     install_message(api);
     say(api, LOG_INFO, "multiplayer: lobby connection guarded");
@@ -320,10 +351,10 @@ mod tests {
         let bytes = unsafe { core::slice::from_raw_parts(words[0] as *const u8, words[2] + 1) };
         assert_eq!(&bytes[..MESSAGE.len()], MESSAGE.as_bytes());
         assert_eq!(bytes[MESSAGE.len()], 0);
-        // The pattern is what the loader's find_pattern takes.
-        assert!(LOOKUP_PATTERN
+        // The patterns are what the loader's find_pattern takes.
+        assert!(LOOKUP_PATTERNS.iter().all(|pattern| pattern
             .split_whitespace()
-            .all(|b| b == "??" || u8::from_str_radix(b, 16).is_ok()));
+            .all(|b| b == "??" || u8::from_str_radix(b, 16).is_ok())));
     }
 
     #[test]

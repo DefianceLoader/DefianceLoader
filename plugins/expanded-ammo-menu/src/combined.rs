@@ -8,7 +8,7 @@ use std::{
         OnceLock,
     },
 };
-static SELECT: OnceLock<&'static defiance_api::SelectionV1> = OnceLock::new();
+static SNAPSHOT: OnceLock<&'static defiance_api::SelectionSnapshotV1> = OnceLock::new();
 static FUNCTIONS: OnceLock<[usize; 8]> = OnceLock::new();
 pub static CLICK: AtomicUsize = AtomicUsize::new(0);
 /// The hover trampoline, and the hover's callees in [`crate::sites::Sites::hover`] order.
@@ -25,7 +25,6 @@ const REFERENCE: Offsets = Offsets {
     gunner_count: 0x130,
     gunner_get: 0x120,
     pool_get: 0x1b8,
-    world_player: 0x700,
     ai_set: 0x3e0,
     tooltip: 0x238,
 };
@@ -237,40 +236,41 @@ unsafe fn state(record: &[u64; 9], index: usize, users: &[(Vec<usize>, usize)]) 
     }
     state
 }
+/// Core's snapshot of the selected entities, in the game's selection order.
+/// The count is checked again after the copy, so a selection that changes
+/// between the two calls reads as unavailable for this frame.
+unsafe fn selected(context: usize) -> Option<Vec<usize>> {
+    let snapshot = SNAPSHOT.get()?;
+    let player = context as *mut std::ffi::c_void;
+    let count = (snapshot.copy_selected)(player, std::ptr::null_mut(), 0);
+    if count == usize::MAX {
+        return None;
+    }
+    let mut out = vec![std::ptr::null_mut(); count];
+    if count > 0 && (snapshot.copy_selected)(player, out.as_mut_ptr(), count) != count {
+        return None;
+    }
+    Some(out.into_iter().map(|e| e as usize).collect())
+}
 unsafe fn sources(menu: usize) -> Option<Vec<Source>> {
     // AmmunitionMenu's constructor (game+3df21) copies the server context
     // to +128 and LogicUtils world facade to +130. Other UI classes use the
-    // opposite order. Calling the facade's +40 as a player getter enters an
-    // unrelated multi-argument utility and crashes on the first redraw.
+    // opposite order. The context is the player context the snapshot takes;
+    // the facade is not.
     let context = read(menu + 0x128);
-    let world = read(menu + 0x130);
-    if world == 0 || context == 0 {
+    if context == 0 {
         return None;
     }
-    let player = get(context, 0x40);
-    if player == 0 {
-        return None;
-    }
-    let manager = std::mem::transmute::<usize, unsafe extern "C" fn(usize, usize) -> usize>(read(
-        read(world) + offsets().world_player,
-    ))(world, player);
-    if manager == 0 {
-        return None;
-    }
-    let select = SELECT.get()?;
+    let selected = selected(context)?;
     let mut entities = Vec::new();
     let mut seen = BTreeSet::new();
-    for at in vector(manager + 0x40, 8, 100_000)? {
-        let mut e = read(at);
-        if e == 0 {
-            continue;
-        }
+    for mut e in selected {
         let f = get(e, 0xb0);
         if f == 0 {
             continue;
         }
         let facet = read(f + 0x50);
-        if facet == 0 || (select.is_selected)(facet as *mut _) == 0 {
+        if facet == 0 {
             continue;
         }
         // A soldier stands for his squad. Any other selected unit (a squad or
@@ -350,9 +350,9 @@ struct View {
 }
 thread_local! { static VIEW: RefCell<View> = RefCell::new(View::default()); }
 pub unsafe fn configure(base: usize, rvas: &[usize; 8], hover: &[usize; 8]) -> Result<(), String> {
-    let selection =
-        defiance_feature_sdk::services::selection().ok_or("selection service unavailable")?;
-    SELECT.get_or_init(|| selection);
+    let snapshot = defiance_feature_sdk::services::selection_snapshot()
+        .ok_or("selection snapshot service unavailable")?;
+    SNAPSHOT.get_or_init(|| snapshot);
     FUNCTIONS.get_or_init(|| rvas.map(|rva| base + rva));
     HOVER_FUNCTIONS.get_or_init(|| hover.map(|rva| base + rva));
     Ok(())

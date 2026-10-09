@@ -248,6 +248,45 @@ typedef struct DefianceSessionV1 {
     void (*before_mission)(void);
 } DefianceSessionV1;
 
+/* Mission event values for DefianceMissionEventFn. LOADED: a mission's state
+ * is constructed (game thread). ENDED: it is destroyed (game thread). FRAME:
+ * one mission frame is about to run, before world2.dll's SceneViewImpl slot 3
+ * (render thread), with frame set. */
+#define DEFIANCE_MISSION_LOADED 1u
+#define DEFIANCE_MISSION_ENDED 2u
+#define DEFIANCE_MISSION_FRAME 4u
+
+/* What a FRAME event carries; valid only during the callback. scene: the
+ * SceneViewImpl running the frame. dt: the time step in seconds. */
+typedef struct DefianceMissionFrameV1 {
+    void *scene;
+    float dt;
+} DefianceMissionFrameV1;
+
+/* event is one value from the subscribed mask; frame is null except for FRAME. */
+typedef void (*DefianceMissionEventFn)(void *context, uint32_t event,
+                                       const DefianceMissionFrameV1 *frame);
+
+/* Provider defiance.loader, name mission-events, service version 1. Mission
+ * load, end and frame callbacks shared through one hook each.
+ * subscribe: init thread only; calls callback with context for each event in
+ * mask until the plugin unloads, withdraws or fails init. Returns a nonzero ID;
+ * 0 outside init or for an empty mask. frames: any thread; 1 when Core feeds
+ * FRAME events, else 0 (frame subscriptions are then never called).
+ */
+typedef struct DefianceMissionEventsV1 {
+    uint64_t (*subscribe)(uint32_t mask, DefianceMissionEventFn callback, void *context);
+    int32_t (*frames)(void);
+} DefianceMissionEventsV1;
+
+/* Provider defiance.loader, name mission-feed, service version 1. For Core:
+ * frames: Core hooks the mission frame. frame: a mission frame is about to
+ * run; dispatched only while a mission is loaded. */
+typedef struct DefianceMissionFeedV1 {
+    void (*frames)(void);
+    void (*frame)(void *scene, float dt);
+} DefianceMissionFeedV1;
+
 /* Provider defiance.loader, name original, service version 1. Memory as it was
  * before any plugin hooked or patched it through the loader, so checking bytes
  * a plugin only reads or calls does not depend on start order; check the live
@@ -267,6 +306,31 @@ typedef struct DefianceOriginalV1 {
 typedef struct DefianceSelectionV1 {
     uint8_t (*is_selected)(void *selectable);
 } DefianceSelectionV1;
+
+/* A plugin's override of the move cursor, given to DefianceMovePreviewV1.
+ * Game thread only. members are the infantry soldier entities the cursor
+ * would move; cursor is its ground point (x, y, z). Pointers are not retained.
+ * preview returns -1 when inactive (the stock preview stays), else the number
+ * of xyz points written (at most capacity): the first *assigned are the
+ * members' destinations, the rest candidate markers. confirm runs when the
+ * cursor issues its order; nonzero skips the stock move.
+ */
+typedef struct DefianceMovePreviewHandlerV1 {
+    void *context;
+    int32_t (*preview)(void *context, const float *cursor, void *const *members,
+                       size_t count, float *points, size_t capacity,
+                       size_t *assigned);
+    uint8_t (*confirm)(void *context, const float *cursor, void *const *members,
+                       size_t count);
+} DefianceMovePreviewHandlerV1;
+
+/* Provider defiance.cover-markers, name move-preview, service version 1.
+ * set_handler: init thread only; copies the handler. Returns 0, 1 for NULL,
+ * 2 when another plugin already set one.
+ */
+typedef struct DefianceMovePreviewV1 {
+    int32_t (*set_handler)(const DefianceMovePreviewHandlerV1 *handler);
+} DefianceMovePreviewV1;
 
 typedef struct DefianceMemberStateV1 {
     void *selectable;
@@ -295,6 +359,69 @@ typedef struct DefianceGameAccessV1 {
     uint8_t (*squad_firing)(void *ai);
     int32_t (*set_squad_firing)(void *ai, uint8_t value);
 } DefianceGameAccessV1;
+
+/* Provider defiance.core, name relation, service version 1. Read-only, game
+ * thread only; an entity must be null or live. relation returns the first of
+ * ally, enemy, neutral, abandoned that holds, or NONE (also without an owner).
+ */
+#define DEFIANCE_RELATION_NONE 0u
+#define DEFIANCE_RELATION_ALLY 1u
+#define DEFIANCE_RELATION_ENEMY 2u
+#define DEFIANCE_RELATION_NEUTRAL 3u
+#define DEFIANCE_RELATION_ABANDONED 4u
+typedef struct DefianceRelationV1 {
+    uint8_t (*owned)(void *entity);
+    uint32_t (*relation)(void *entity);
+} DefianceRelationV1;
+
+/* Provider defiance.core, name facets, service version 1. Read-only, game
+ * thread only; an entity must be null or live. Each query returns null for a
+ * missing facet or one of another live type.
+ */
+typedef struct DefianceFacetsV1 {
+    void *(*squad_ai)(void *entity);
+} DefianceFacetsV1;
+
+/* Provider defiance.core, name selection-snapshot, service version 1.
+ * Read-only, game thread only; player must be null or the live player context.
+ * Each copy returns the count or SIZE_MAX when unavailable; capacity 0 queries,
+ * a too-small buffer is untouched, entities come in the game's selection order.
+ */
+typedef struct DefianceSelectionSnapshotV1 {
+    size_t (*copy_selected)(void *player, void **out, size_t capacity);
+    size_t (*copy_command_targets)(void *player, void **out, size_t capacity);
+} DefianceSelectionSnapshotV1;
+
+/* Provider defiance.core, name game-symbols, service version 1. Thread-safe.
+ * resolve returns DEFIANCE_SYMBOL_OK and fills out, or another status with out
+ * untouched. Resolution only: patch through the loader and declare it.
+ */
+#define DEFIANCE_SYMBOL_USE_ADDRESS 0u
+#define DEFIANCE_SYMBOL_USE_CALL 1u
+#define DEFIANCE_SYMBOL_USE_ENTRY_HOOK 2u
+#define DEFIANCE_SYMBOL_USE_CALL_SITE 3u
+#define DEFIANCE_SYMBOL_OK 0u
+#define DEFIANCE_SYMBOL_UNKNOWN_NAME 1u
+#define DEFIANCE_SYMBOL_UNAVAILABLE 2u
+#define DEFIANCE_SYMBOL_AMBIGUOUS 3u
+#define DEFIANCE_SYMBOL_ABI_MISMATCH 4u
+#define DEFIANCE_SYMBOL_MISUSE 5u
+#define DEFIANCE_SYMBOL_INVALID 6u
+#define DEFIANCE_SYMBOL_KNOWN_BUILD 1u
+typedef struct DefianceGameSymbolV1 {
+    const char *module;
+    const char *build;
+    size_t rva;
+    uintptr_t address;
+    const uint8_t *expected;
+    size_t expected_len;
+    uint32_t span;
+    uint32_t flags;
+} DefianceGameSymbolV1;
+typedef struct DefianceGameSymbolsV1 {
+    uint32_t (*resolve)(const char *name, uint32_t abi, uint32_t use,
+                        DefianceGameSymbolV1 *out);
+} DefianceGameSymbolsV1;
 
 /* Core service "ammo-menu" v1; see docs/plugin-api.md for publication rules. */
 typedef struct DefianceAmmoMenuV1 {

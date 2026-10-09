@@ -28,12 +28,18 @@
 //! added ([`add`]): its settings come from a fresh read of the configuration
 //! (`config::refresh_later`, which writes its defaults into its group file as
 //! startup would), and it loads if enabled, with its dependencies loaded, and
-//! allowed to load while the game runs. A built-in plugin added later needs a
-//! restart, since Core prepares the built-in features at startup. A loaded
-//! plugin whose files are gone is removed ([`remove`]): unloaded with the
+//! allowed to load while the game runs. A feature plugin shipped with the
+//! loader is an ordinary plugin here: its Core dependency is declared in its
+//! manifest and checked like any other. A loaded plugin whose files are gone is removed ([`remove`]): unloaded with the
 //! plugins holding its tables, which load again only if they still can, and
 //! kept mapped for a startup-only holder, as a reload keeps it. Each change
 //! holds for two polls before it is queued, like a changed DLL.
+//!
+//! A managed, reloadable plugin that fails startup is watched separately from
+//! loaded plugins. Only a changed, settled DLL queues a retry. Fresh planning,
+//! dependency and multiplayer checks still apply, and a feature plugin's retry
+//! runs its unit preparation through the active Core service during
+//! initialization.
 //!
 //! All of that is for development (`[loader] hot_reload`). A player can switch
 //! plugins on and off instead (`[loader] live_toggle`, which starts the watcher
@@ -42,8 +48,7 @@
 //! read the same on two polls, is switched: off unloads it as a removal does,
 //! on loads it as an addition does ([`enable`], [`disable`]), and brings back
 //! the plugins that were unloaded because they needed it. Only a change of the
-//! value counts, so a plugin that failed at startup is not retried. A
-//! built-in plugin comes back only if it was loaded earlier in the session.
+//! value counts, so a plugin that failed at startup is not retried.
 //!
 //! The same read catches a loaded plugin's other settings changing (read the
 //! same on two polls, and different from what it loaded with): the plugin is
@@ -473,7 +478,6 @@ mod tests {
             dll: format!("{id}.dll"),
             path: std::path::PathBuf::from(format!("{id}.dll")),
             manifest: None,
-            builtin: None,
             legacy: false,
             decision,
             depends: depends.iter().map(|id| (*id).into()).collect(),
@@ -609,6 +613,170 @@ mod tests {
 
     fn stamp(n: u64) -> Stamp {
         Some((n, std::time::SystemTime::UNIX_EPOCH))
+    }
+
+    fn managed_planned(id: &str, hot_reload: bool) -> Planned {
+        let mut node = planned(id, &[], Decision::Initialize);
+        node.manifest = Some(crate::manifest::parse(&format!(
+            r#"{{"schema":1,"id":"{id}","dll":"{id}.dll","version":"0.1.0","abi":{},"group":"tests","hot_reload":{hot_reload},"multiplayer_safe":true}}"#,
+            defiance_api::ABI_VERSION,
+        ), &node.dll).unwrap());
+        node
+    }
+
+    #[test]
+    fn startup_retry_tracks_failed_managed_attempts_and_rejects_degraded_startup() {
+        let mut legacy = managed_planned("test.legacy", true);
+        legacy.legacy = true;
+        let mut disabled = managed_planned("test.disabled", true);
+        disabled.decision = Decision::Disabled {
+            reason: "off".into(),
+        };
+        let plan = plan(
+            vec![
+                managed_planned("test.retryable", true),
+                managed_planned("test.fixed", false),
+                legacy,
+                disabled,
+                managed_planned("test.active", true),
+            ],
+            &[],
+        );
+        let stamps = vec![stamp(1); plan.nodes.len()];
+        let failures = startup_failure_candidates(&plan, &[0, 1, 2, 3], &stamps, false);
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures["test.retryable"].stamp, stamp(1));
+        assert!(startup_failure_candidates(&plan, &[0], &stamps, true).is_empty());
+    }
+
+    #[test]
+    fn startup_retry_needs_a_changed_settled_copy_and_suppresses_failed_stamps() {
+        let id = "test.failed".to_string();
+        let startup = HashMap::from([(id.clone(), stamp(1))]);
+        let original = startup.clone();
+        let replacement = HashMap::from([(id.clone(), stamp(2))]);
+        let empty = HashMap::new();
+        let no_failures = HashMap::new();
+        assert!(
+            startup_retry_changes(&original, &original, &empty, &startup, &no_failures).is_empty()
+        );
+        assert!(
+            startup_retry_changes(&replacement, &original, &empty, &startup, &no_failures)
+                .is_empty()
+        );
+        assert_eq!(
+            startup_retry_changes(&replacement, &replacement, &empty, &startup, &no_failures),
+            vec![(id.clone(), stamp(2))]
+        );
+        assert!(startup_retry_changes(
+            &replacement,
+            &replacement,
+            &HashMap::from([(id.clone(), true)]),
+            &startup,
+            &no_failures
+        )
+        .is_empty());
+        assert!(
+            startup_retry_changes(&replacement, &replacement, &empty, &startup, &replacement)
+                .is_empty()
+        );
+        let next = HashMap::from([(id.clone(), stamp(3))]);
+        assert!(
+            startup_retry_changes(
+                &replacement,
+                &replacement,
+                &empty,
+                &replacement,
+                &no_failures
+            )
+            .is_empty(),
+            "config reconciliation cannot reset the last failed DLL observation"
+        );
+        assert!(
+            startup_retry_changes(&next, &replacement, &empty, &startup, &replacement).is_empty()
+        );
+        assert_eq!(
+            startup_retry_changes(&next, &next, &empty, &startup, &replacement),
+            vec![(id, stamp(3))]
+        );
+        assert!(startup_retry_changes(
+            &HashMap::new(),
+            &replacement,
+            &empty,
+            &startup,
+            &no_failures
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn startup_retry_preserves_managed_policy() {
+        let mut node = managed_planned("test.failed", true);
+        assert!(startup_retry_allowed(&node).is_ok());
+        node.legacy = true;
+        assert!(startup_retry_allowed(&node)
+            .unwrap_err()
+            .contains("managed hot-reload"));
+        node.legacy = false;
+        node.manifest.as_mut().unwrap().hot_reload = false;
+        assert!(startup_retry_allowed(&node).is_err());
+    }
+
+    #[test]
+    fn a_failed_startup_id_or_dll_cannot_bypass_retry_policy() {
+        let failures = HashMap::from([(
+            "test.failed".into(),
+            StartupFailure {
+                path: std::path::PathBuf::from("candidate.dll"),
+                stamp: stamp(1),
+            },
+        )]);
+        assert_eq!(
+            failed_startup_owner(
+                &failures,
+                std::path::Path::new("CANDIDATE.dll"),
+                "candidate",
+                false
+            ),
+            Some("test.failed")
+        );
+        assert_eq!(
+            failed_startup_owner(
+                &failures,
+                std::path::Path::new("candidate.dll"),
+                "TEST.FAILED",
+                false
+            ),
+            Some("test.failed")
+        );
+        assert!(failed_startup_owner(
+            &failures,
+            std::path::Path::new("candidate.dll"),
+            "TEST.FAILED",
+            true
+        )
+        .is_none());
+        assert_eq!(
+            failed_startup_owner(
+                &failures,
+                std::path::Path::new("replacement.dll"),
+                "TEST.FAILED",
+                false
+            ),
+            Some("test.failed"),
+            "renaming the DLL cannot bypass the failed plugin's retry policy"
+        );
+        assert!(failed_startup_owner(
+            &failures,
+            std::path::Path::new("replacement.dll"),
+            "TEST.FAILED",
+            true
+        )
+        .is_none());
+        assert!(
+            failed_startup_owner(&failures, std::path::Path::new("other.dll"), "other", false)
+                .is_none()
+        );
     }
 
     fn config_state(enabled: Option<bool>, speed: &str) -> ConfigState {
@@ -851,7 +1019,7 @@ mod tests {
     }
 }
 
-type Stamp = Option<(u64, std::time::SystemTime)>;
+pub(crate) type Stamp = Option<(u64, std::time::SystemTime)>;
 
 /// A stable config snapshot that the watcher wants the loaded plugin to use.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -867,6 +1035,8 @@ enum Change {
     Reload(String, Stamp),
     /// A plugin appeared in the directory; its DLL's stamp.
     Add(String, Stamp),
+    /// A managed plugin that failed startup has a settled replacement DLL.
+    Retry(String, Stamp),
     /// A loaded plugin's files are gone.
     Remove(String),
     /// A settled enabled state and settings snapshot from the config files.
@@ -878,13 +1048,14 @@ impl Change {
         match self {
             Change::Reload(id, _)
             | Change::Add(id, _)
+            | Change::Retry(id, _)
             | Change::Remove(id)
             | Change::Config(id, _) => id,
         }
     }
     fn stamp(&self) -> Stamp {
         match self {
-            Change::Reload(_, stamp) | Change::Add(_, stamp) => *stamp,
+            Change::Reload(_, stamp) | Change::Add(_, stamp) | Change::Retry(_, stamp) => *stamp,
             Change::Remove(_) | Change::Config(_, _) => None,
         }
     }
@@ -892,6 +1063,7 @@ impl Change {
         match self {
             Change::Reload(..) => "changed; it reloads",
             Change::Add(..) => "added; it loads",
+            Change::Retry(..) => "replaced after startup failure; it retries",
             Change::Remove(_) => "removed; it unloads",
             Change::Config(..) => "config changed; it reconciles at the safe point",
         }
@@ -905,9 +1077,76 @@ static APPLIED_CONFIG: Mutex<Option<HashMap<String, ConfigState>>> = Mutex::new(
 /// The plugin IDs (lowercase) that are not new: present at startup (loaded or
 /// not), or added since. A removed plugin leaves it, so it can come back.
 static KNOWN: Mutex<Option<HashSet<String>>> = Mutex::new(None);
-/// The plugin IDs (lowercase) loaded at any time in this session: a built-in
-/// plugin can be switched back on only if Core prepared its feature.
+/// The plugin IDs (lowercase) loaded at any time in this session: switching
+/// a plugin back on restores the dependants among them.
 static EVER_LOADED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+#[derive(Clone, Debug)]
+struct StartupFailure {
+    path: std::path::PathBuf,
+    /// The DLL seen by the most recent failed attempt, including startup.
+    stamp: Stamp,
+}
+
+/// Failed startup attempts remain discoverable without inventing a loaded owner.
+static STARTUP_FAILURES: Mutex<Option<HashMap<String, StartupFailure>>> = Mutex::new(None);
+
+/// Capture the original DLL observations, before startup can run plugin code.
+pub(crate) fn startup_stamps(plan: &crate::plan::Plan) -> Vec<Stamp> {
+    plan.nodes
+        .iter()
+        .map(|node| lifecycle::stamp(&node.path))
+        .collect()
+}
+
+/// Only failed managed, reloadable attempts with complete rollback can retry.
+pub(crate) fn remember_startup(
+    plan: &crate::plan::Plan,
+    failed: &[usize],
+    stamps: &[Stamp],
+    degraded: bool,
+) {
+    let failures = startup_failure_candidates(plan, failed, stamps, degraded);
+    *STARTUP_FAILURES.lock().unwrap_or_else(|p| p.into_inner()) = Some(failures);
+    #[cfg(feature = "test-host")]
+    {
+        let listed = plan
+            .nodes
+            .iter()
+            .map(|node| (node.id.to_ascii_lowercase(), lifecycle::stamp(&node.path)))
+            .collect();
+        *TEST_RETRY_LISTED.lock().unwrap_or_else(|p| p.into_inner()) = Some(listed);
+    }
+}
+
+fn startup_failure_candidates(
+    plan: &crate::plan::Plan,
+    failed: &[usize],
+    stamps: &[Stamp],
+    degraded: bool,
+) -> HashMap<String, StartupFailure> {
+    if degraded {
+        return HashMap::new();
+    }
+    failed
+        .iter()
+        .filter_map(|&index| {
+            let node = &plan.nodes[index];
+            (matches!(node.decision, Decision::Initialize)
+                && !node.legacy
+                && crate::plugin::loads_from_copy(node))
+            .then(|| {
+                (
+                    node.id.to_ascii_lowercase(),
+                    StartupFailure {
+                        path: node.path.clone(),
+                        stamp: stamps[index],
+                    },
+                )
+            })
+        })
+        .collect()
+}
 
 fn ever_loaded() -> std::sync::MutexGuard<'static, Option<HashSet<String>>> {
     EVER_LOADED.lock().unwrap_or_else(|p| p.into_inner())
@@ -919,6 +1158,13 @@ fn note_loaded() {
     let ever = ever.get_or_insert_with(HashSet::new);
     for plugin in lifecycle::loaded() {
         ever.insert(plugin.id.to_ascii_lowercase());
+        if let Some(failures) = STARTUP_FAILURES
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_mut()
+        {
+            failures.remove(&plugin.id.to_ascii_lowercase());
+        }
     }
 }
 
@@ -1015,6 +1261,7 @@ fn apply_pending(failed: &mut HashMap<String, Stamp>) {
                     .get_or_insert_with(HashSet::new)
                     .insert(id.to_ascii_lowercase());
             }),
+            Change::Retry(id, stamp) if current.is_none() => retry_startup(api, id, *stamp),
             Change::Remove(id) if current.is_some() => remove(api, id).map(|()| {
                 if let Some(known) = known().as_mut() {
                     known.remove(&id.to_ascii_lowercase());
@@ -1045,6 +1292,8 @@ fn apply_changes(
         if let Err(e) = result {
             crate::log::warn(&format!("hot reload: {e}"));
             failed.insert(change.id().to_ascii_lowercase(), change.stamp());
+        } else {
+            failed.remove(&change.id().to_ascii_lowercase());
         }
     }
 }
@@ -1194,10 +1443,7 @@ pub fn add(api: &'static Api, id: &str) -> Result<(), String> {
 /// previously loaded dependants in dependency order.
 pub fn enable(api: &'static Api, id: &str) -> Result<(), String> {
     note_loaded();
-    let prepared = ever_loaded()
-        .as_ref()
-        .is_some_and(|ever| ever.contains(&id.to_ascii_lowercase()));
-    let result = add_plugin(api, id, prepared).map(|()| {
+    let result = add_plugin(api, id, false).map(|()| {
         crate::log::info(&format!("hot reload: {id} switched on"));
         note_loaded();
         restore_dependants(api, id);
@@ -1218,7 +1464,7 @@ fn restore_dependants(api: &'static Api, id: &str) {
     let ever = ever_loaded().clone().unwrap_or_default();
     for (dependant, result) in
         restore_dependants_from_plan(&plan, id, &mut active, &ever, |dependant| {
-            add_plugin(api, dependant, true)
+            add_plugin(api, dependant, false)
         })
     {
         match result {
@@ -1297,9 +1543,9 @@ pub fn disable(api: &'static Api, id: &str) -> Result<(), String> {
     result
 }
 
-/// Load `id` from the plugins directory as the files are now. A built-in
-/// plugin only with `prepared` (Core prepared its feature this session).
-fn add_plugin(api: &'static Api, id: &str, prepared: bool) -> Result<(), String> {
+/// Load `id` from the plugins directory as the files are now. A failed
+/// startup attempt also requires the replacement retry policy.
+fn add_plugin(api: &'static Api, id: &str, startup_retry: bool) -> Result<(), String> {
     ensure_running()?;
     if lifecycle::loaded()
         .iter()
@@ -1325,10 +1571,24 @@ fn add_plugin(api: &'static Api, id: &str, prepared: bool) -> Result<(), String>
         .iter()
         .find(|n| n.id.eq_ignore_ascii_case(id))
         .ok_or_else(|| format!("{id} is not in the plugins directory"))?;
-    if node.builtin.is_some() && !prepared {
-        return Err(format!(
-            "{id} is a built-in plugin not loaded this session; restart the game to load it (Core prepares the built-in features at startup)"
-        ));
+    // Only a matching replacement retry can reuse a failed startup ID or DLL path.
+    let previous_id = STARTUP_FAILURES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .and_then(|failures| {
+            failed_startup_owner(failures, &node.path, id, startup_retry).map(str::to_owned)
+        });
+    if let Some(previous_id) = previous_id {
+        return Err(format!("{id} matches failed startup plugin {previous_id}; replace its DLL and keep its managed manifest for a safe retry"));
+    }
+    if startup_retry {
+        startup_retry_allowed(node)?;
+        if loaded_in_place(&node.path) {
+            return Err(format!(
+                "{id}'s failed DLL is loaded in place; restart the game"
+            ));
+        }
     }
     if let Decision::Disabled { reason }
     | Decision::Blocked { reason }
@@ -1367,6 +1627,82 @@ fn add_plugin(api: &'static Api, id: &str, prepared: bool) -> Result<(), String>
     loaded.map_err(|e| format!("{id} failed to load: {}", e.reason))?;
     crate::log::info(&format!("hot reload: {id} loaded"));
     Ok(())
+}
+
+fn startup_retry_allowed(node: &crate::plan::Planned) -> Result<(), String> {
+    if node.legacy || !crate::plugin::loads_from_copy(node) {
+        return Err(format!(
+            "{}'s startup retry requires a managed hot-reload manifest; restart the game",
+            node.id
+        ));
+    }
+    Ok(())
+}
+
+fn loaded_in_place(path: &std::path::Path) -> bool {
+    !unsafe { crate::win::GetModuleHandleW(crate::win::wide(&path.to_string_lossy()).as_ptr()) }
+        .is_null()
+}
+
+fn failed_startup_owner<'a>(
+    failures: &'a HashMap<String, StartupFailure>,
+    path: &std::path::Path,
+    id: &str,
+    startup_retry: bool,
+) -> Option<&'a str> {
+    failures.iter().find_map(|(previous, failure)| {
+        let same_id = previous.eq_ignore_ascii_case(id);
+        let same_path = failure
+            .path
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&path.to_string_lossy());
+        ((!startup_retry || !same_id) && (same_id || same_path)).then_some(previous.as_str())
+    })
+}
+
+/// Retry only the failed startup attempt represented by this replacement stamp.
+fn retry_startup(api: &'static Api, id: &str, stamp: Stamp) -> Result<(), String> {
+    ensure_running()?;
+    let failure = STARTUP_FAILURES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .and_then(|failures| failures.get(&id.to_ascii_lowercase()))
+        .cloned()
+        .ok_or_else(|| format!("{id} has no retryable startup failure"))?;
+    let config = crate::config::current().ok_or_else(|| "no configuration".to_string())?;
+    // A newer copy must settle in the watcher before it can replace this queued one.
+    if directory(&config.paths.plugin_dir).get(&id.to_ascii_lowercase()) != Some(&stamp) {
+        return Ok(());
+    }
+    let result = if loaded_in_place(&failure.path) {
+        Err(format!(
+            "{id}'s failed DLL is loaded in place; restart the game"
+        ))
+    } else {
+        add_plugin(api, id, true)
+    };
+    if result.is_ok() {
+        if let Some(failures) = STARTUP_FAILURES
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_mut()
+        {
+            failures.remove(&id.to_ascii_lowercase());
+        }
+        crate::log::info(&format!("hot reload: {id} recovered from startup failure"));
+    } else if let Some(failure) = STARTUP_FAILURES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_mut()
+        .and_then(|failures| failures.get_mut(&id.to_ascii_lowercase()))
+    {
+        // Config reconciliation must not make the same rejected DLL eligible again.
+        failure.stamp = stamp;
+    }
+    crate::multiplayer::refresh();
+    crate::host::retry_finished(id, &result);
+    result
 }
 
 /// Unload a plugin whose files are gone, with the plugins holding its tables;
@@ -1614,6 +1950,89 @@ fn directory_changes(
     (adds, removes)
 }
 
+/// A replacement must differ from the failed attempt and match two consecutive observations.
+fn startup_retry_changes(
+    now: &HashMap<String, Stamp>,
+    before: &HashMap<String, Stamp>,
+    loaded: &HashMap<String, bool>,
+    startup: &HashMap<String, Stamp>,
+    failed: &HashMap<String, Stamp>,
+) -> Vec<(String, Stamp)> {
+    let mut retries: Vec<_> = startup
+        .iter()
+        .filter_map(|(id, original)| {
+            let stamp = now.get(id)?;
+            (stamp.is_some()
+                && stamp != original
+                && before.get(id) == Some(stamp)
+                && !loaded.contains_key(id)
+                && failed.get(id) != Some(stamp))
+            .then(|| (id.clone(), *stamp))
+        })
+        .collect();
+    retries.sort();
+    retries
+}
+
+fn queue_startup_retries(
+    now: &HashMap<String, Stamp>,
+    before: &HashMap<String, Stamp>,
+    loaded: &HashMap<String, bool>,
+    failed: &HashMap<String, Stamp>,
+) -> Vec<String> {
+    let startup = STARTUP_FAILURES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .map(|failures| {
+            failures
+                .iter()
+                .map(|(id, failure)| (id.clone(), failure.stamp))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut queued = Vec::new();
+    for (id, stamp) in startup_retry_changes(now, before, loaded, &startup, failed) {
+        queue(Change::Retry(id.clone(), stamp));
+        queued.push(id);
+    }
+    queued
+}
+
+#[cfg(feature = "test-host")]
+static TEST_RETRY_LISTED: Mutex<Option<HashMap<String, Stamp>>> = Mutex::new(None);
+
+/// One deterministic poll of the same discovery path the production watcher uses.
+#[cfg(feature = "test-host")]
+pub fn test_poll_startup_retries() -> Vec<String> {
+    let config = crate::config::current().expect("test startup configuration");
+    let now = directory(&config.paths.plugin_dir);
+    let loaded = lifecycle::loaded()
+        .into_iter()
+        .map(|p| (p.id.to_ascii_lowercase(), p.reloadable))
+        .collect();
+    let failed = FAILED
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+        .unwrap_or_default();
+    let mut listed = TEST_RETRY_LISTED.lock().unwrap_or_else(|p| p.into_inner());
+    let queued = queue_startup_retries(
+        &now,
+        listed.get_or_insert_with(HashMap::new),
+        &loaded,
+        &failed,
+    );
+    *listed = Some(now);
+    queued
+}
+
+#[cfg(feature = "test-host")]
+pub fn test_apply_pending(api: &'static Api) {
+    let _ = API.set(api);
+    before_mission();
+}
+
 /// Failures of reloads applied on a game thread, shared with the watcher.
 static FAILED: Mutex<Option<HashMap<String, Stamp>>> = Mutex::new(None);
 
@@ -1728,6 +2147,7 @@ fn watch(develop: bool, toggle: bool) {
                 .collect();
             let (adds, removes) =
                 directory_changes(&now, &listed, &loaded, &known_now, &failed_lower);
+            queue_startup_retries(&now, &listed, &loaded, &failed_lower);
             for (id, stamp) in adds {
                 queue(Change::Add(id, stamp));
             }

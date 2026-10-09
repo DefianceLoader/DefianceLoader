@@ -723,20 +723,14 @@ pub const SITES: [Site; PATCH_COUNT] = [
     },
 ];
 
-const REDRAW: Signature = sig(
-    "ammo menu redraw",
-    &[("488954241048894c24085741544881ece8000000488b02488bf9", 0x0)],
-);
+/// Core's name for the menu redraw ([`crate::resolve`] asks for it).
+pub const REDRAW: &std::ffi::CStr = c"ammo menu redraw";
+/// Core's name for the widget move the compacted grid calls.
+pub const LAYOUT: &std::ffi::CStr = c"widget move";
+/// The redraw's prologue, which the body offsets [`sites`] reads assume.
 pub const REDRAW_BEFORE: &[u8] = &[
     0x48, 0x89, 0x54, 0x24, 0x10, 0x48, 0x89, 0x4c, 0x24, 0x08, 0x57, 0x41, 0x54, 0x48, 0x81, 0xec,
     0xe8, 0x00, 0x00, 0x00,
-];
-const LAYOUT: Signature = sig(
-    "widget move",
-    &[("4889742410574883ec40833a00488bf2488bf9750a837a0400", 0x0)],
-);
-const LAYOUT_BEFORE: &[u8] = &[
-    0x48, 0x89, 0x74, 0x24, 0x10, 0x57, 0x48, 0x83, 0xec, 0x40, 0x83, 0x3a, 0x00, 0x48, 0x8b, 0xf2,
 ];
 pub const COMBINED: [(Signature, &[u8]); 8] = [
     (sig("combined function 0", &[("48895c241048896c2418488974242057415641574883ec40488bf9", 0x0)]), &[0x48, 0x89, 0x5c, 0x24, 0x10, 0x48, 0x89, 0x6c, 0x24, 0x18, 0x48, 0x89, 0x74, 0x24, 0x20]),
@@ -761,30 +755,22 @@ pub const HOVER_BEFORE: &[u8] = &[
 /// The hover's calls, as offsets from its entry, in [`Sites::hover`] order.
 const HOVER_CALLS: [usize; 7] = [0x8f, 0xa7, 0xb9, 0xf3, 0x102, 0x111, 0x158];
 
-/// The selection-manager update, which loads the world's player lookup.
-const SELECTION_MANAGER: Signature = sig(
-    "selection manager",
-    &[("40564883ec20488bf1488b49184885c90f84????????488b4910", 0x0)],
-);
-
 const SQUAD_AI_CLASS: &str = ".?AVSquadAiFacet@Leonardo@@";
 /// The roster-holder getter: `mov rax, [rcx+0x1c8]; test rax, rax; jz ...;
 /// mov rax, [rax+0x10]`. Exactly one SquadAiFacet slot holds it.
 const ROSTER_GETTER: &[u8] = b"\x48\x8b\x81\xc8\x01\x00\x00\x48\x85\xc0\x74";
 const ROSTER_GETTER_TAIL: &[u8] = b"\x48\x8b\x40\x10";
 
-/// The resolved sites, or why this build is not supported.
-pub fn sites(game: &Image, logic: &Image) -> Result<Sites, String> {
+/// The resolved sites, or why this build is not supported. `redraw` and
+/// `layout` are the rvas Core resolved for [`REDRAW`] and [`LAYOUT`].
+pub fn sites(game: &Image, logic: &Image, redraw: usize, layout: usize) -> Result<Sites, String> {
     let mut patches = [0; PATCH_COUNT];
     for (rva, site) in patches.iter_mut().zip(&SITES) {
         *rva = game.find(&site.signature)?;
         game.expect(site.signature.name, *rva, site.before)?;
     }
-    let redraw = game.find(&REDRAW)?;
-    game.expect(REDRAW.name, redraw, REDRAW_BEFORE)?;
-    entry(game, REDRAW.name, redraw, REDRAW_SPAN)?;
-    let layout = game.find(&LAYOUT)?;
-    game.expect(LAYOUT.name, layout, LAYOUT_BEFORE)?;
+    game.expect("ammo menu redraw", redraw, REDRAW_BEFORE)?;
+    entry(game, "ammo menu redraw", redraw, REDRAW_SPAN)?;
     let mut combined = [0; 8];
     for (rva, (signature, before)) in combined.iter_mut().zip(&COMBINED) {
         *rva = game.find(signature)?;
@@ -808,14 +794,12 @@ pub fn sites(game: &Image, logic: &Image) -> Result<Sites, String> {
             .map(|disp| disp as usize)
             .ok_or_else(|| format!("{what} runs off the image"))
     };
-    let selection = game.find(&SELECTION_MANAGER)?;
     let offsets = Offsets {
         roster: roster(logic)?,
         // The redraw fills each slot from the squad's ammo pool and gunners.
         pool_get: field("ammo pool getter", redraw + 0x91, b"\xff\x90")?,
         gunner_count: field("gunner count", redraw + 0x14b, b"\xff\x90")?,
         gunner_get: field("gunner getter", redraw + 0x169, b"\x4c\x8b\x81")?,
-        world_player: field("world player lookup", selection + 0x5a, b"\x48\x8b\x99")?,
         // The slot click sets the chosen ammo type on the AI.
         ai_set: field("ai ammo setter", combined[0] + 0xd0, b"\xff\x90")?,
         // The constructor reads the owner's tooltip controller.
@@ -876,7 +860,7 @@ mod tests {
 
     /// The rvas and offsets the per-build hash table held before the plugin
     /// resolved them, in [`BUILDS`] order.
-    const TABLE: [(&str, Sites); 6] = [
+    const TABLE: [(&str, Sites); 8] = [
         (
             "gog/2025-12-23",
             Sites {
@@ -902,7 +886,6 @@ mod tests {
                     gunner_count: 0x130,
                     gunner_get: 0x120,
                     pool_get: 0x1b8,
-                    world_player: 0x700,
                     ai_set: 0x3e0,
                     tooltip: 0x238,
                 },
@@ -933,7 +916,6 @@ mod tests {
                     gunner_count: 0x130,
                     gunner_get: 0x120,
                     pool_get: 0x1b8,
-                    world_player: 0x700,
                     ai_set: 0x3e0,
                     tooltip: 0x258,
                 },
@@ -964,7 +946,6 @@ mod tests {
                     gunner_count: 0x140,
                     gunner_get: 0x130,
                     pool_get: 0x1c8,
-                    world_player: 0x708,
                     ai_set: 0x3f8,
                     tooltip: 0x238,
                 },
@@ -995,7 +976,6 @@ mod tests {
                     gunner_count: 0x140,
                     gunner_get: 0x130,
                     pool_get: 0x1c8,
-                    world_player: 0x708,
                     ai_set: 0x3f8,
                     tooltip: 0x258,
                 },
@@ -1026,7 +1006,6 @@ mod tests {
                     gunner_count: 0x140,
                     gunner_get: 0x130,
                     pool_get: 0x1c8,
-                    world_player: 0x708,
                     ai_set: 0x3f8,
                     tooltip: 0x238,
                 },
@@ -1057,7 +1036,66 @@ mod tests {
                     gunner_count: 0x140,
                     gunner_get: 0x130,
                     pool_get: 0x1c8,
-                    world_player: 0x708,
+                    ai_set: 0x3f8,
+                    tooltip: 0x258,
+                },
+            },
+        ),
+        (
+            "gog/2026-10-07",
+            Sites {
+                patches: [
+                    0x3e16c, 0x3e177, 0x3e1a7, 0x3e1ae, 0x3e1b5, 0x3e1bc, 0x3e1c3, 0x3e1ca,
+                    0x3e365, 0x3e3e5, 0x3e45f, 0x3e696, 0x3e6ab, 0x3e759, 0x3e790, 0x3e807,
+                    0x3e80e, 0x3e83c, 0x3e843, 0x3e873, 0x3e8f7, 0x3e903, 0x3e90f, 0x3e928,
+                    0x3e9c2, 0x3e9e4, 0x3e9eb, 0x3ea26, 0x3ea2d, 0x3eae0, 0x3ef3c, 0x3f24c,
+                    0x3f2a2, 0x3f36a, 0x3f3fb, 0x3fb75, 0x3fd20, 0x4002e, 0x40035, 0x4005b,
+                    0x40062, 0x4033d, 0x40344, 0x403c9, 0x403d0, 0x40983, 0x409b5, 0x40ab1,
+                    0x40b73, 0x40ba5, 0x40ca1, 0x35daf6, 0x4c81a9,
+                ],
+                redraw: 0x3efc0,
+                layout: 0x2e2650,
+                combined: [
+                    0x3fb50, 0x3f480, 0x3fab0, 0x3b7f0, 0x3bca0, 0x3be50, 0x2dc2d0, 0x2d3e10,
+                ],
+                hover: [
+                    0x401d0, 0x3ef30, 0x3c0d0, 0x404b0, 0x40950, 0x40b40, 0x40710, 0x4a9ee4,
+                ],
+                offsets: Offsets {
+                    roster: 0x3d0,
+                    gunner_count: 0x140,
+                    gunner_get: 0x130,
+                    pool_get: 0x1c8,
+                    ai_set: 0x3f8,
+                    tooltip: 0x238,
+                },
+            },
+        ),
+        (
+            "steam/2026-10-07",
+            Sites {
+                patches: [
+                    0x3e16c, 0x3e177, 0x3e1a7, 0x3e1ae, 0x3e1b5, 0x3e1bc, 0x3e1c3, 0x3e1ca,
+                    0x3e365, 0x3e3e5, 0x3e45f, 0x3e696, 0x3e6ab, 0x3e759, 0x3e790, 0x3e807,
+                    0x3e80e, 0x3e83c, 0x3e843, 0x3e873, 0x3e8f7, 0x3e903, 0x3e90f, 0x3e928,
+                    0x3e9c2, 0x3e9e4, 0x3e9eb, 0x3ea26, 0x3ea2d, 0x3eae0, 0x3ef3c, 0x3f24c,
+                    0x3f2a2, 0x3f36a, 0x3f3fb, 0x3fb75, 0x3fd20, 0x4002e, 0x40035, 0x4005b,
+                    0x40062, 0x4033d, 0x40344, 0x403c9, 0x403d0, 0x40983, 0x409b5, 0x40ab1,
+                    0x40b73, 0x40ba5, 0x40ca1, 0x363fa6, 0x4ceac9,
+                ],
+                redraw: 0x3efc0,
+                layout: 0x2e79e0,
+                combined: [
+                    0x3fb50, 0x3f480, 0x3fab0, 0x3b7f0, 0x3bca0, 0x3be50, 0x2e1660, 0x2d91a0,
+                ],
+                hover: [
+                    0x401d0, 0x3ef30, 0x3c0d0, 0x404b0, 0x40950, 0x40b40, 0x40710, 0x4b0394,
+                ],
+                offsets: Offsets {
+                    roster: 0x3d0,
+                    gunner_count: 0x140,
+                    gunner_get: 0x130,
+                    pool_get: 0x1c8,
                     ai_set: 0x3f8,
                     tooltip: 0x258,
                 },
@@ -1074,8 +1112,13 @@ mod tests {
             else {
                 continue;
             };
-            let resolved = sites(&Image::mapped(&game), &Image::mapped(&logic))
-                .unwrap_or_else(|e| panic!("{build}: {e}"));
+            let resolved = sites(
+                &Image::mapped(&game),
+                &Image::mapped(&logic),
+                expected.redraw,
+                expected.layout,
+            )
+            .unwrap_or_else(|e| panic!("{build}: {e}"));
             assert_eq!(resolved, expected, "{build}");
         }
     }
@@ -1090,7 +1133,8 @@ mod tests {
         };
         let image = Image::mapped(&game);
         let logic = Image::mapped(&logic);
-        let resolved = sites(&image, &logic).unwrap();
+        let (redraw, layout) = (TABLE[0].1.redraw, TABLE[0].1.layout);
+        let resolved = sites(&image, &logic, redraw, layout).unwrap();
         for rva in [
             resolved.redraw,
             resolved.combined[0],
@@ -1103,7 +1147,7 @@ mod tests {
                 image: &changed,
                 base: image.base,
             };
-            assert!(sites(&changed, &logic).is_err(), "{rva:#x}");
+            assert!(sites(&changed, &logic, redraw, layout).is_err(), "{rva:#x}");
         }
     }
 }

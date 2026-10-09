@@ -40,25 +40,25 @@ prone_query:
     mov rax, qword ptr [rbx]
     mov edx, 0x10
     mov rcx, rbx
-    call qword ptr [rax + 0x98]        ; a squad?
+    call qword ptr [rax + 0x98]        ; vt:essence/EntityImpl@Essence@Galileo a squad?
     test al, al
     jz answer
 
     mov rax, qword ptr [rbx]
     mov rcx, rbx
-    call qword ptr [rax + 0xb0]        ; its facets
+    call qword ptr [rax + 0xb0]        ; vt:essence/EntityImpl@Essence@Galileo its facets
     test rax, rax
     jz answer
     mov rcx, qword ptr [rax + 0x28]
     test rcx, rcx
     jz answer
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {squad_roster}]
+    call qword ptr [rax + {squad_roster}]    ; vt:logic/SquadAiFacet@Leonardo
     test rax, rax
     jz answer
     mov rdx, qword ptr [rax]
     mov rcx, rax
-    call qword ptr [rdx + 0x68]        ; the member vector
+    call qword ptr [rdx + 0x68]        ; vt:logic/SquadHolderFacet@Leonardo the member vector
     mov r12, qword ptr [rax]
     mov r13, qword ptr [rax + 8]
 
@@ -74,7 +74,7 @@ next:
     test rcx, rcx
     jz next
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz next
     mov rbx, qword ptr [rax + 0x50]    ; his selectable facet (the entity is done with)
@@ -96,7 +96,7 @@ judged:
 ask:
     mov rax, qword ptr [rbx]
     mov rcx, rbx
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jz next
     inc esi

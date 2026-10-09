@@ -21,9 +21,10 @@ in base order as part of assembling, with their own input/output stamps.
 A test's inputs ([`test_inputs`]) are the script and the tools/ modules it
 imports (followed through their imports), the arguments that name files or
 folders, everything the native tests load that the build or the game provides
-(`TEST_ARTIFACTS`: the assembled and committed payloads, the release DLLs and
-executables, the game DLLs under bin/), the Python and test packages' versions,
-and DEFIANCE_GAME_DIR. A test that reads something outside those must not be
+(`TEST_ARTIFACTS`: the assembled and committed payloads, the release DLLs,
+executables and manifests, the recorded fixtures, the game DLLs under bin/),
+the Python and test packages' versions, DEFIANCE_GAME_DIR and the plugins
+installed there. A test that reads something outside those must not be
 run through here: it would pass from the cache after that input changed. Only
 passes are recorded, and a skipped test says so. The input digest names files
 by their path in the checkout and hashes their contents, so a pass holds in any
@@ -32,8 +33,9 @@ shares (tools/shared_cache.py), and a new worktree skips what another passed.
 
 `digest` and the stamp helpers are also used by tools/test_variant.py.
 """
-import hashlib
 import builds
+import concurrent.futures
+import hashlib
 import json
 import os
 import pathlib
@@ -66,12 +68,13 @@ JOBS = {
 
 # What the cached tests load besides their own code: the assembled and
 # committed payloads, the workspace's and the standalone plugins' release
-# builds, the patch sources and layouts, and every game DLL in bin/.
+# builds and their manifests, the patch sources and layouts, the recorded
+# fixtures, and every game DLL in bin/.
 TEST_ARTIFACTS = ["out/logic.dll", "out/manifest.json", "out/payload*.bin", "out/payload*.json",
                   "tools/variants/**/*.bin", "tools/variants/**/*.json",
-                  "target/release/*.dll", "target/release/*.exe",
-                  "plugins/*/target/release/*.dll", "out/pickup-rust/**/*.dll",
-                  "patch/**/*.asm", "tools/layouts/*.json", "bin/**/*.dll"]
+                  "target/release/*.dll", "target/release/*.exe", "target/release/*.plugin.json",
+                  "plugins/*/target/release/*.dll", "plugins/*/*.plugin.json", "out/pickup-rust/**/*.dll",
+                  "patch/**/*.asm", "tools/layouts/*.json", "tools/fixtures/**/*", "bin/**/*.dll"]
 # Python packages the tests use; a new version reruns them.
 TEST_PACKAGES = ["keystone-engine", "capstone", "pefile"]
 
@@ -89,7 +92,7 @@ def file_digest(path):
         except (OSError, ValueError):
             _file_cache = {}
     stat = path.stat()
-    key = path.relative_to(ROOT).as_posix()
+    key = path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT) else path.as_posix()
     mark = f"{stat.st_size}:{stat.st_mtime_ns}"
     entry = _file_cache.get(key)
     if entry and entry[0] == mark:
@@ -173,42 +176,68 @@ def sync_reference():
             print(f"updated {target.relative_to(ROOT).as_posix()}")
 
 
+def variant_inputs(build):
+    """What assembling `build`'s variant reads: the assembly tooling and
+    sources, every DLL of its lineage and the units of every layout in it
+    (its own included, so an edited or missing unit counts as a change)."""
+    lineage = build.lineage()
+    return (ASSEMBLY_INPUTS + [builds.relative(path) for base in lineage for path in (base.logic, base.game)]
+            + [f"tools/variants/{base.name}/units/*" for base in lineage])
+
+
+def variant_current(build):
+    """Whether `build`'s tracked units are what assembling the current inputs
+    produces: its `assemble-variant-<name>` stamp holds their digest."""
+    return fresh(f"assemble-variant-{build.name}", digest(variant_inputs(build)))
+
+
+def refresh_variant(build, require_all):
+    """Refresh one layout's units; returns (exit status, output)."""
+    lineage = build.lineage()
+    missing = [path for base in lineage for path in (base.logic, base.game) if not path.is_file()]
+    if missing:
+        if require_all:
+            raise SystemExit(f"variant {build.name}: {', '.join(builds.relative(p) for p in missing)} missing")
+        return 0, f"variant {build.name}: DLL lineage incomplete; using committed units\n"
+    if build.hashes_match_layout() is not True:
+        return 1, f"variant {build.name}: DLL hashes differ from its layout; refusing\n"
+    folder = f"tools/variants/{build.name}/units/*"
+    name = f"assemble-variant-{build.name}"
+    if fresh(name, digest(variant_inputs(build))):
+        return 0, f"variant {build.name}: inputs and units unchanged; skipped\n"
+    output = ""
+    for command in [[tool, "--layout", build.name] for tool in ("tools/payload.py", "tools/icon.py", "tools/units.py")] \
+            + [["tools/variant.py", str(build.layout), str(build.logic), str(build.game)]]:
+        result = subprocess.run([sys.executable, *command], cwd=ROOT, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+        output += result.stdout
+        if result.returncode:
+            return result.returncode, output
+    if not files([folder]):
+        return 1, output + f"variant {build.name}: assembly produced no units; refusing to cache\n"
+    # The resolved units are inputs too, so manual edits or missing units
+    # cause a refresh rather than passing through a previous stamp.
+    record(name, digest(variant_inputs(build)), [folder])
+    return 0, output
+
+
 def refresh_variants(require_all=False):
     """Refresh layouts whose DLL lineage is available; builds without game
     files keep committed units. Explicit `variants` requests require all DLLs.
-    A changed output or source invalidates the per-layout cache."""
-    for build in sorted(builds.with_layouts(), key=lambda b: len(b.lineage())):
-        lineage = build.lineage()
-        missing = [path for base in lineage for path in (base.logic, base.game) if not path.is_file()]
-        if missing:
-            if require_all:
-                raise SystemExit(f"variant {build.name}: {', '.join(builds.relative(p) for p in missing)} missing")
-            print(f"variant {build.name}: DLL lineage incomplete; using committed units", flush=True)
-            continue
-        if build.hashes_match_layout() is not True:
-            print(f"variant {build.name}: DLL hashes differ from its layout; refusing", file=sys.stderr)
-            return 1
-        folder = f"tools/variants/{build.name}/units/*"
-        inputs = ASSEMBLY_INPUTS + [builds.relative(path) for base in lineage for path in (base.logic, base.game)]
-        inputs += [f"tools/variants/{base.name}/units/*" for base in lineage]
-        name = f"assemble-variant-{build.name}"
-        key = digest(inputs)
-        if fresh(name, key):
-            print(f"variant {build.name}: inputs and units unchanged; skipped", flush=True)
-            continue
-        for tool in ("tools/payload.py", "tools/icon.py", "tools/units.py"):
-            result = subprocess.run([sys.executable, tool, "--layout", build.name], cwd=ROOT)
-            if result.returncode:
-                return result.returncode
-        result = subprocess.run([sys.executable, "tools/variant.py", str(build.layout), str(build.logic), str(build.game)], cwd=ROOT)
-        if result.returncode:
-            return result.returncode
-        if not files([folder]):
-            print(f"variant {build.name}: assembly produced no units; refusing to cache", file=sys.stderr)
-            return 1
-        # The resolved units are inputs too, so manual edits or missing units
-        # cause a refresh rather than passing through a previous stamp.
-        record(name, digest(inputs), [folder])
+    A changed output or source invalidates the per-layout cache. Layouts of one
+    lineage depth read only shallower layouts' units and write only their own
+    out/*-<name> files and units, so each depth runs at once."""
+    depths = {}
+    for build in builds.with_layouts():
+        depths.setdefault(len(build.lineage()), []).append(build)
+    for depth in sorted(depths):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(depths[depth])) as pool:
+            results = list(pool.map(lambda build: refresh_variant(build, require_all), depths[depth]))
+        for code, output in results:
+            print(output, end="", flush=True)
+        for code, _ in results:
+            if code:
+                return code
     return 0
 
 
@@ -244,6 +273,22 @@ def imported_tools(script):
     return sorted(seen)
 
 
+def installed_plugins():
+    """The plugin DLLs and manifests installed in DEFIANCE_GAME_DIR, which
+    tools/test_vehicle_targeting.py starts; none without a game directory."""
+    game = os.environ.get("DEFIANCE_GAME_DIR")
+    if not game:
+        return []
+    import stage
+    try:
+        directory = stage.plugin_directory(stage.bin_directory(game))
+    except (OSError, SystemExit):
+        return []
+    if not directory.is_dir():
+        return []
+    return sorted(p for p in directory.iterdir() if p.is_file() and (p.suffix == ".dll" or p.name.endswith(".plugin.json")))
+
+
 def test_inputs(script, args):
     """The patterns and strings whose digest decides whether a test reruns."""
     patterns = [p.relative_to(ROOT).as_posix() for p in imported_tools(ROOT / script)]
@@ -261,7 +306,8 @@ def test_inputs(script, args):
         except metadata.PackageNotFoundError:
             versions.append(f"{package} absent")
     extra = [script, *args, sys.version, *versions,
-             *(f"{var}={os.environ.get(var, '')}" for var in ("DEFIANCE_GAME_DIR", "CARGO_TARGET_DIR"))]
+             *(f"{var}={os.environ.get(var, '')}" for var in ("DEFIANCE_GAME_DIR", "CARGO_TARGET_DIR")),
+             *(f"installed {path.name} {file_digest(path)}" for path in installed_plugins())]
     return patterns + TEST_ARTIFACTS, extra
 
 

@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "id": "defiance.diagnostics",
+  "dll": "defiance_plugin_feature_diagnostics.dll",
+  "version": "0.5.1",
+  "abi": 5,
+  "patch_contract": true,
+  "group": "diagnostics",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Enable the diagnostic probe-file watcher. Probes are off by default; valid probe-file edits apply while the game runs. Adds no player controls. You can disable this without disabling gameplay features."
+    },
+    {
+      "key": "probe_file",
+      "type": "text",
+      "default": "diagnostics-probes.json",
+      "description": "JSON probe definitions: an absolute path or a filename below DefianceLoader/config. Editing its contents replaces probes live without recompiling. Missing file arms no probes. Changing this filename reloads the plugin when live_toggle is enabled."
+    }
+  ],
+  "depends": [],
+  "conflicts": []
+}

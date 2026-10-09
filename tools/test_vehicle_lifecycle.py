@@ -19,14 +19,39 @@ def set_ammo(gun, value):
 class LifecycleTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        patch_lines = pathlib.Path("patch/vehicle-priority-fire.asm").read_text().splitlines()
+        patch_symbols = {"vehicle_special_fire_source": 0x9000,
+                         "vehicle_special_fire_board_resume": 0xa900,
+                         "vehicle_special_fire_disembark_resume": 0xa940,
+                         "vehicle_special_fire_refresh_ai": 0xa800}
         code, labels = b.assemble(
-            pathlib.Path("patch/vehicle-priority-fire.asm").read_text().splitlines(),
-            0xb000, b.CURSOR_OFFSET,
-            symbols={"vehicle_special_fire_source": 0x9000,
-                     "vehicle_special_fire_board_resume": 0xa900,
-                     "vehicle_special_fire_disembark_resume": 0xa940,
-                     "vehicle_special_fire_refresh_ai": 0xa800})
+            patch_lines, 0xb000, b.CURSOR_OFFSET, symbols=patch_symbols)
+        tail_wrapper, wrapper_labels = b.assemble(
+            [
+                "push rbp",
+                "push rsi",
+                "sub rsp, 0x58",
+                "mov rbp, rcx",
+                "mov rax, qword ptr [rsp + 0x58]",
+                "mov qword ptr [rsp + 0x48], rax",
+                "jmp {vehicle_special_fire_disembark_tail}",
+                "vehicle_disembark_after_tail:",
+                "add rsp, 0x58",
+                "pop rsi",
+                "pop rbp",
+                "ret",
+            ],
+            0xaa00, b.CURSOR_OFFSET,
+            symbols={"vehicle_special_fire_disembark_tail": labels[
+                "vehicle_special_fire_disembark_tail"]},
+        )
+        patch_symbols["vehicle_special_fire_disembark_resume"] = wrapper_labels[
+            "vehicle_disembark_after_tail"]
+        code, labels = b.assemble(patch_lines, 0xb000, b.CURSOR_OFFSET,
+                                  symbols=patch_symbols)
         put(region + 0xb000, code)
+        put(region + 0xaa00, tail_wrapper)
+        cls.disembark = ctypes.CFUNCTYPE(None, ctypes.c_void_p)(region + 0xaa00)
         cls.cleanup = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p)(
             region + labels["vehicle_special_fire_cleanup"])
         put(region + 0xa700, asm("mov rax, qword ptr [rcx + 8]; ret"))
@@ -124,6 +149,26 @@ class LifecycleTests(unittest.TestCase):
         self.cleanup(self.helper, self.car_ai)
         self.assertEqual((q(self.sources[0]), q(self.sources[0] + 8)), (0, 0))
         self.assertEqual(sum(event[0] == "refresh" for event in self.events), 1)
+
+    def test_disembark_tail_rebalances_after_javelin_fired_on_foot(self):
+        self.vehicle([[(self.primary, 23), (self.special, 3)]])
+        put(self.helper + 0x118, struct.pack("<Q", q(self.helper + 0x110)))
+        facets = obj(0x30, [(0x28, self.car_ai)])
+        vehicle_entity = obj(0x10, [(0, self.entity_vt), (8, facets)])
+        put(self.helper + 0x20, struct.pack("<Q", vehicle_entity))
+        set_ammo(self.primary, 5)
+        set_ammo(self.special, 2)
+
+        self.disembark(self.helper)
+
+        self.assertEqual((q(self.sources[0]), q(self.sources[0] + 8)), (0, 0))
+        self.assertEqual((ammo(self.dummies[0][0]), ammo(self.dummies[0][1])), (0, 0))
+        self.assertEqual((ammo(self.primary), ammo(self.special)), (5, 2))
+        self.assertEqual(self.events, [
+            ("unbind", self.dummies[0][0], None),
+            ("unbind", self.dummies[0][1], None),
+            ("refresh", self.car_ai),
+        ])
 
     def test_inconsistent_mount_vectors_are_left_for_native_handling(self):
         gunners = self.vehicle([[(self.special, 3)]])

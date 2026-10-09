@@ -85,7 +85,7 @@ pin_of:
     test rcx, rcx
     jz pin_none
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]        ; his facets
+    call qword ptr [rax + 0xb0]        ; vt:essence/EntityImpl@Essence@Galileo his facets
     test rax, rax
     jz pin_none
     mov rcx, qword ptr [rax + 0x50]    ; his selectable facet
@@ -121,12 +121,12 @@ move_posture:
     test rcx, rcx
     jz posture_done
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x50]        ; the soldier's entity
+    call qword ptr [rax + 0x50]        ; vt:logic/AiStateMachine@Leonardo|logic/AiSubstateMachine@Leonardo the soldier's entity
     test rax, rax
     jz posture_done
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]        ; his facets
+    call qword ptr [rax + 0xb0]        ; vt:essence/EntityImpl@Essence@Galileo his facets
     test rax, rax
     jz posture_done
     mov rcx, qword ptr [rax + 0x50]    ; his selectable facet

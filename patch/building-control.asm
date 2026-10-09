@@ -47,14 +47,14 @@ icon_find_building:
     mov r12, rax                       ; its ActiveBuilding, if selected
     mov rcx, qword ptr [rsp + 0x20]
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz icon_not_selected
     mov rcx, qword ptr [rax + 0x50]
     test rcx, rcx
     jz icon_not_selected
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jnz icon_found
 icon_not_selected:
@@ -63,13 +63,13 @@ icon_not_selected:
 icon_found:
     mov rcx, rbx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x98]        ; displaced: clear the selection
+    call qword ptr [rax + 0x98]        ; vt:logic/SelectableMgrFacet@Leonardo displaced: clear the selection
     test r12, r12
     jz icon_stock
     mov rcx, rdi
     mov rax, qword ptr [rcx]
     mov edx, 0x10
-    call qword ptr [rax + 0x98]
+    call qword ptr [rax + 0x98]    ; vt:essence/EntityImpl@Essence@Galileo
     test al, al
     jz icon_stock                      ; not a squad
     mov rsi, qword ptr [r12 + 0x1a8]
@@ -94,7 +94,7 @@ icon_next:
     mov rcx, qword ptr [rsp + 0x20]
     mov rax, qword ptr [rcx]
     mov edx, 1
-    call qword ptr [rax + 0x50]
+    call qword ptr [rax + 0x50]    ; vt:logic/SelectableFacet@Leonardo
     inc r12
     jmp icon_next
 icon_marked:
@@ -104,7 +104,7 @@ icon_stock:
     mov rcx, rbx
     mov rax, qword ptr [rcx]
     mov rdx, rdi
-    call qword ptr [rax + 0x60]        ; the stock select
+    call qword ptr [rax + 0x60]        ; vt:logic/SelectableMgrFacet@Leonardo the stock select
 icon_done:
     add rsp, 0x28
     pop r13
@@ -126,7 +126,7 @@ building_focus_candidates:
     mov qword ptr [rsp + 0x28], rcx
     mov qword ptr [rsp + 0x30], rdx
     mov qword ptr [rsp + 0x40], 0
-    call qword ptr [rax + 0x540]
+    call qword ptr [rax + 0x540]    ; vt:logic/LogicUtilsImpl@Leonardo
     mov qword ptr [rsp + 0x38], rax
     mov rcx, qword ptr [rsp + 0x28]
     mov rdx, qword ptr [rsp + 0x30]
@@ -204,13 +204,13 @@ focus_manager:
     jz manager_none
     mov rcx, rdx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x40]
+    call qword ptr [rax + 0x40]    ; vt:logic/LogicHybridServer@Leonardo
     test rax, rax
     jz manager_done
     mov rdx, rax
     mov rcx, rbx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x700]
+    call qword ptr [rax + 0x700]    ; vt:logic/LogicUtilsImpl@Leonardo
     jmp manager_done
 manager_none:
     xor eax, eax
@@ -228,12 +228,12 @@ focus_member:
     jz member_none
     mov rax, qword ptr [rcx]
     mov edx, 0x20
-    call qword ptr [rax + 0x98]
+    call qword ptr [rax + 0x98]    ; vt:essence/EntityImpl@Essence@Galileo
     test al, al
     jz member_none
     mov rcx, rbx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz member_none
     mov rax, qword ptr [rax + 0x50]
@@ -281,12 +281,12 @@ focus_active:
     jz active_none
     mov rax, qword ptr [rcx]
     mov edx, 0x200
-    call qword ptr [rax + 0x98]
+    call qword ptr [rax + 0x98]    ; vt:essence/EntityImpl@Essence@Galileo
     test al, al
     jz active_none
     mov rcx, rbx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz active_done
     mov rax, qword ptr [rax + 0x10]
@@ -401,7 +401,7 @@ apply_change:
 apply_manager_ready:
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x98]
+    call qword ptr [rax + 0x98]    ; vt:logic/SelectableMgrFacet@Leonardo
     cmp r13, r14
     je apply_building
     mov rcx, r14
@@ -433,7 +433,7 @@ apply_mark:
     mov rcx, rbx
     mov rax, qword ptr [rcx]
     mov edx, 1
-    call qword ptr [rax + 0x50]
+    call qword ptr [rax + 0x50]    ; vt:logic/SelectableFacet@Leonardo
     inc qword ptr [rsp + 0x20]
     jmp apply_next
 apply_selected:
@@ -451,7 +451,7 @@ apply_selected:
     mov rcx, qword ptr [r15 + 0x130]
     mov qword ptr [rax + 0x10], rcx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x40]
+    call qword ptr [rax + 0x40]    ; vt:logic/LogicHybridServer@Leonardo
     lea rdx, [rip + {scratch}]
     mov qword ptr [rdx + 0x18], rax
 apply_selected_state:
@@ -464,7 +464,7 @@ apply_building:
     mov r13, r14
     mov rcx, r14
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz apply_focus
     mov rcx, qword ptr [rax + 0x50]
@@ -472,7 +472,7 @@ apply_building:
     jz apply_focus
     mov rax, qword ptr [rcx]
     mov edx, 1
-    call qword ptr [rax + 0x50]
+    call qword ptr [rax + 0x50]    ; vt:logic/SelectableFacet@Leonardo
 apply_focus:
     mov rcx, r12
     mov rdx, r13
@@ -597,7 +597,7 @@ focus_validate:
     jz validate_no
     mov rcx, rdx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x40]
+    call qword ptr [rax + 0x40]    ; vt:logic/LogicHybridServer@Leonardo
     test rax, rax
     jz validate_no
     cmp qword ptr [rbx + 0x18], rax
@@ -638,7 +638,7 @@ validate_occupant:
 validate_member_selected:
     mov rcx, rbx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jz validate_no
     mov rcx, rbx
@@ -666,7 +666,7 @@ validate_group:
     mov rcx, rbx
     mov rax, qword ptr [rcx]
     mov edx, 0x10
-    call qword ptr [rax + 0x98]
+    call qword ptr [rax + 0x98]    ; vt:essence/EntityImpl@Essence@Galileo
     test al, al
     jnz validate_roster
     mov rcx, rbx
@@ -682,19 +682,19 @@ validate_group:
 validate_roster:
     mov rcx, rbx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz validate_no
     mov rcx, qword ptr [rax + 0x28]
     test rcx, rcx
     jz validate_no
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {squad_roster}]
+    call qword ptr [rax + {squad_roster}]    ; vt:logic/SquadAiFacet@Leonardo
     test rax, rax
     jz validate_no
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x68]
+    call qword ptr [rax + 0x68]    ; vt:logic/SquadHolderFacet@Leonardo
     test rax, rax
     jz validate_no
     mov rsi, qword ptr [rax]
@@ -711,7 +711,7 @@ validate_member:
     jz validate_member
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jz validate_member
     mov rcx, rbp

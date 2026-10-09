@@ -51,7 +51,7 @@ capable_members:
     test rcx, rcx
     jz capable_done
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x68]
+    call qword ptr [rax + 0x68]    ; vt:logic/HumanDamageableFacet@Leonardo|logic/DamageableModulesFacet@Leonardo|logic/DamageableBuildingFacet@Leonardo
     mov r14d, eax
     mov rax, r12
     cmp r14d, 0x800
@@ -67,7 +67,7 @@ capable_next:
     test rcx, rcx
     jz capable_keep                   ; no member or AI: the dispatcher's own
     mov rax, qword ptr [rcx]          ; checks decide
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz capable_keep
     mov rcx, qword ptr [rax + 0x28]
@@ -76,7 +76,7 @@ capable_next:
     mov rax, qword ptr [rcx]
     mov edx, r14d
     mov r8b, 1
-    call qword ptr [rax + {ai_can_attack}]
+    call qword ptr [rax + {ai_can_attack}]    ; vt:logic/SquadAiFacet@Leonardo
     test al, al
     jz capable_next
 capable_keep:

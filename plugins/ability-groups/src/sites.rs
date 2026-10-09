@@ -26,6 +26,7 @@ pub const ORDER_KEY: usize = 4;
 /// Every GUI button's click, hooked.
 pub const CLICK: usize = 5;
 pub const HIDE: usize = 6;
+/// The widget move, which Core's game-symbol catalog names [`MOVE_WIDGET_SYMBOL`].
 pub const MOVE_WIDGET: usize = 7;
 pub const LABEL: usize = 8;
 pub const CLOSE_SUBMENUS: usize = 9;
@@ -57,54 +58,55 @@ pub struct Sites {
     pub submenu: usize,
 }
 
-const SIGNATURES: [Signature; COUNT] = [
-    sig(
+/// Core's name for the widget move ([`crate::resolve`] asks for it).
+pub const MOVE_WIDGET_SYMBOL: &std::ffi::CStr = c"widget move";
+
+/// Each site's signature; `None` for [`MOVE_WIDGET`], which Core resolves.
+const SIGNATURES: [Option<Signature>; COUNT] = [
+    Some(sig(
         "ability update",
         &[("89542410564883ec30488bf1440fb6d248b9b301000000010000", 0x0)],
-    ),
-    sig(
+    )),
+    Some(sig(
         "ability reset",
         &[("48895c24084889742410574883ec20488bf1488b49784885c9", 0x0)],
-    ),
-    sig(
+    )),
+    Some(sig(
         "ability key",
         &[("4056574883ec780fb632488bf9488b490848634710488d1440", 0x0)],
-    ),
-    sig(
+    )),
+    Some(sig(
         "ability bar destructor",
         &[(
             "48895c242048894c240855565741544155415641574881ec80000000",
             0x0,
         )],
-    ),
-    sig(
+    )),
+    Some(sig(
         "order key",
         &[("48895c2408574883ec20488bf90fb6da488b494080b98901000000", 0x0)],
-    ),
-    sig(
+    )),
+    Some(sig(
         "button click",
         &[("48895c24084889742410574883ec7083b96802000001498bf8", 0x0)],
-    ),
-    sig(
+    )),
+    Some(sig(
         "hide",
         &[(
             "89542410534883ec204c8bc9440fb6c248b9b30100000001000048b825232284e49cf2cb4c33c00fb64424394c0fafc14c33c00fb644243a4c0fafc14c33c00fb644243b4c0fafc14c33c0498b4120",
             0x0,
         )],
-    ),
-    sig(
-        "move widget",
-        &[("4889742410574883ec40833a00488bf2488bf9750a837a0400", 0x0)],
-    ),
-    sig(
+    )),
+    None,
+    Some(sig(
         "label",
         &[("48895c240848896c24104889742418574883ec3048837a1810", 0x0)],
-    ),
-    sig(
+    )),
+    Some(sig(
         "close submenus",
         &[("48895c2408574883ec20488bf9488b49784885c97406488b01", 0x0)],
-    ),
-    sig(
+    )),
+    Some(sig(
         "clear order",
         &[
             (
@@ -116,25 +118,36 @@ const SIGNATURES: [Signature; COUNT] = [
                 0x0,
             ),
         ],
-    ),
-    sig(
+    )),
+    Some(sig(
         "order reset",
         &[("40534883ec20488bd9e8????????488b8be80d0000488b01", 0x0)],
-    ),
-    sig(
+    )),
+    Some(sig(
         "hide orders",
         &[("48895c24084889742410574883ec20488d99b8010000488bf1", 0x0)],
-    ),
+    )),
 ];
 
-/// The resolved sites, or why this build is not supported.
-pub fn sites(image: &Image) -> Result<Sites, String> {
+/// Site `index`'s name, for errors.
+fn name(index: usize) -> &'static str {
+    SIGNATURES[index]
+        .as_ref()
+        .map_or("move widget", |signature| signature.name)
+}
+
+/// The resolved sites, or why this build is not supported. `move_widget` is
+/// the rva Core resolved for [`MOVE_WIDGET_SYMBOL`].
+pub fn sites(image: &Image, move_widget: usize) -> Result<Sites, String> {
     let mut rvas = [0; COUNT];
     for (rva, signature) in rvas.iter_mut().zip(&SIGNATURES) {
-        *rva = image.find(signature)?;
+        *rva = match signature {
+            Some(signature) => image.find(signature)?,
+            None => move_widget,
+        };
     }
     for (index, span) in HOOKS {
-        entry(image, SIGNATURES[index].name, rvas[index], span)?;
+        entry(image, name(index), rvas[index], span)?;
     }
     // The order panel reset clears both fields: `mov byte [rbx+disp32], 0`
     // and then `mov dword [rbx+disp32], 0`.
@@ -175,7 +188,7 @@ mod tests {
 
     /// The rvas and fields the per-build hash table held before the plugin
     /// resolved them, in [`BUILDS`] order.
-    const TABLE: [(&str, [usize; COUNT], usize, usize); 6] = [
+    const TABLE: [(&str, [usize; COUNT], usize, usize); 8] = [
         (
             "gog/2025-12-23",
             [
@@ -230,6 +243,24 @@ mod tests {
             0xe58,
             0xe78,
         ),
+        (
+            "gog/2026-10-07",
+            [
+                0x1d000, 0x1cf30, 0x1fe80, 0x1ae10, 0x24abc0, 0x2bf740, 0x1d230, 0x2e2650,
+                0x24ef30, 0x1cec0, 0x24f920, 0x24d1b0, 0x24f480,
+            ],
+            0xe58,
+            0xe78,
+        ),
+        (
+            "steam/2026-10-07",
+            [
+                0x1d000, 0x1cf30, 0x1fe80, 0x1ae10, 0x24f4b0, 0x2c4ad0, 0x1d230, 0x2e79e0,
+                0x253820, 0x1cec0, 0x254210, 0x251aa0, 0x253d70,
+            ],
+            0xe58,
+            0xe78,
+        ),
     ];
 
     #[test]
@@ -239,7 +270,8 @@ mod tests {
             let Some(game) = reference(build, "game.dll") else {
                 continue;
             };
-            let resolved = sites(&Image::mapped(&game)).unwrap_or_else(|e| panic!("{build}: {e}"));
+            let resolved = sites(&Image::mapped(&game), rvas[MOVE_WIDGET])
+                .unwrap_or_else(|e| panic!("{build}: {e}"));
             assert_eq!(
                 resolved,
                 Sites {
@@ -258,7 +290,8 @@ mod tests {
             return;
         };
         let image = Image::mapped(&game);
-        let resolved = sites(&image).unwrap();
+        let move_widget = TABLE[0].1[MOVE_WIDGET];
+        let resolved = sites(&image, move_widget).unwrap();
         for (index, _) in HOOKS {
             let mut changed = image.image.to_vec();
             changed[resolved.rvas[index] + 4] ^= 1;
@@ -266,7 +299,7 @@ mod tests {
                 image: &changed,
                 base: image.base,
             };
-            assert!(sites(&changed).is_err(), "{}", SIGNATURES[index].name);
+            assert!(sites(&changed, move_widget).is_err(), "{}", name(index));
         }
     }
 }

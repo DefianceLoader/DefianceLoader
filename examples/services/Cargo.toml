@@ -2,5 +2,11 @@
 resolver = "2"
 members = ["contract", "provider", "consumer", "watch"]
 
+# Tests build with this profile. The site tests scan every build's game DLLs,
+# which unoptimized takes about a minute per workspace; optimized, a few seconds.
+# Debug assertions and overflow checks stay on.
+[profile.dev]
+opt-level = 2
+
 [profile.release]
 panic = "abort"

@@ -143,7 +143,7 @@ pub fn check_dir(dir: &Path) -> Result<bool, String> {
     let logic = sha256::file(&dir.join("logic.dll")).map_err(|e| e.to_string())?;
     let game = sha256::file(&dir.join("game.dll")).map_err(|e| e.to_string())?;
     let Some(build) = select(&logic, &game)? else {
-        return Ok(defiance_core::relocate::check_dir(
+        return Ok(defiance_core::compat::relocate::check_dir(
             &super::logic_patch(),
             &super::game_patch(),
             dir,

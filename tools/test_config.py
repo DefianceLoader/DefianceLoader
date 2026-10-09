@@ -150,6 +150,11 @@ class ConfigToolTests(unittest.TestCase):
         config.mkdir(parents=True)
         (config / "infantry.ini").write_text("[defiance.selection]\nenabled = false\n")
         (config / "core.ini").write_text("[loader]\nwait = 5\n")
+        # A feature plugin declares its settings in the manifest packaged beside it.
+        selection = "defiance_plugin_feature_selection"
+        (self.plugins / f"{selection}.dll").write_bytes(b"defiance.selection plugin")
+        (self.plugins / f"{selection}.plugin.json").write_bytes(
+            (ROOT / "plugins" / "selection" / f"{selection}.plugin.json").read_bytes())
         self.bootstrap.write_text("root = ../DefianceLoader\n")
         result = self.run_tool("--report")
         self.assertEqual(result.returncode, 0, result.stderr)

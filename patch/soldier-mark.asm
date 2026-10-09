@@ -50,7 +50,7 @@
     jz own_only                        ; his squad facet is gone: only his own mark
     mov rcx, rsi
     mov rax, qword ptr [rsi]
-    call qword ptr [rax + 0x58]        ; is his squad selected, as isSelected asks it
+    call qword ptr [rax + 0x58]        ; vt:logic/SelectableFacet@Leonardo is his squad selected, as isSelected asks it
     test al, al
     jnz squad_selected
     test edi, edi
@@ -69,19 +69,19 @@ walk:
     test rcx, rcx
     jz walked
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]        ; its facets
+    call qword ptr [rax + 0xb0]        ; vt:essence/EntityImpl@Essence@Galileo its facets
     test rax, rax
     jz walked
     mov rcx, qword ptr [rax + 0x28]
     test rcx, rcx
     jz walked
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {squad_roster}]
+    call qword ptr [rax + {squad_roster}]    ; vt:logic/SquadAiFacet@Leonardo
     test rax, rax
     jz walked
     mov rdx, qword ptr [rax]
     mov rcx, rax
-    call qword ptr [rdx + 0x68]        ; the member vector, as select-squad.asm reads it
+    call qword ptr [rdx + 0x68]        ; vt:logic/SquadHolderFacet@Leonardo the member vector, as select-squad.asm reads it
     mov r12, qword ptr [rax]
     mov r13, qword ptr [rax + 8]
     xor r14d, r14d
@@ -93,7 +93,7 @@ next:
     test rcx, rcx
     jz next
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz next
     mov rcx, qword ptr [rax + 0x50]    ; the member's selectable facet
@@ -167,7 +167,7 @@ is_selected:                           ; rcx the facet; al the answer
     cmp qword ptr [rcx], 0
     je own                             ; stale parent: follow his own mark instead
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jz is_false
 own:

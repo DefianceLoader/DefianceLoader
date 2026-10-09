@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.unit-inspection",
   "dll": "defiance_plugin_unit_inspection.dll",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "abi": 5,
   "patch_contract": true,
   "group": "infantry",
@@ -62,7 +62,7 @@
       "description": "The reload bar colour on enemy squads' ammo cards (teal, green, yellow, grey-blue, red, or #RRGGBB). Restart required."
     }
   ],
-  "depends": [],
+  "depends": [{"id": "defiance.core", "min": "0.5.0"}],
   "conflicts": [],
   "hot_reload": false
 }

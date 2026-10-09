@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.weapon-drops",
   "dll": "defiance_plugin_weapon_drops.dll",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "abi": 5,
   "group": "infantry",
   "hot_reload": false,

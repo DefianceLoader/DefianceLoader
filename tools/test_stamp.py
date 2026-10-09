@@ -123,11 +123,11 @@ class VariantRefreshTests(unittest.TestCase):
         self.layouts.start()
         self.calls = []
 
-        def successful_run(args, cwd):
+        def successful_run(args, cwd, **_output):
             self.calls.append(args)
             if args[1] == "tools/variant.py":
                 self.output.write_bytes(b"rebuilt variant units")
-            return type("Result", (), {"returncode": 0})()
+            return type("Result", (), {"returncode": 0, "stdout": ""})()
 
         self.run = mock.patch.object(stamp.subprocess, "run", side_effect=successful_run)
         self.run.start()
@@ -170,8 +170,8 @@ class VariantRefreshTests(unittest.TestCase):
         self.run.stop()
         self.run = mock.patch.object(
             stamp.subprocess, "run",
-            side_effect=[type("Result", (), {"returncode": 0})(),
-                         type("Result", (), {"returncode": 7})()],
+            side_effect=[type("Result", (), {"returncode": 0, "stdout": ""})(),
+                         type("Result", (), {"returncode": 7, "stdout": ""})()],
         )
         self.run.start()
         self.assertEqual(self._refresh(), 7)
@@ -204,7 +204,7 @@ class VariantRefreshTests(unittest.TestCase):
     def test_empty_outputs_are_not_stamped(self):
         self.output.unlink()
         self.run.stop()
-        self.run = mock.patch.object(stamp.subprocess, "run", return_value=type("Result", (), {"returncode": 0})())
+        self.run = mock.patch.object(stamp.subprocess, "run", return_value=type("Result", (), {"returncode": 0, "stdout": ""})())
         self.run.start()
         self.assertEqual(self._refresh(), 1)
         self.assertFalse((stamp.STAMPS / "assemble-variant-gog-2099-01-01.json").exists())

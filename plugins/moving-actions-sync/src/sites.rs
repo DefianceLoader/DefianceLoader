@@ -40,20 +40,21 @@ pub(crate) fn step(image: &Image) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use defiance_core::sites::{reference, BUILDS, SEPTEMBER_BUILDS};
+    use defiance_core::sites::{reference, BUILDS, BUILDS_2026};
 
     /// The step and helper rvas the per-build hash table held before the plugin
-    /// resolved them, in [`SEPTEMBER_BUILDS`] order.
-    const TABLE: [(usize, usize); 4] = [
+    /// resolved them, in [`BUILDS_2026`] order.
+    const TABLE: [(usize, usize); 5] = [
         (0x2d8500, 0x2c2860),
         (0x2d8590, 0x2c28f0),
         (0x2d8500, 0x2c2860),
         (0x2d8590, 0x2c28f0),
+        (0x2d8f40, 0x2c31a0),
     ];
 
     #[test]
     fn the_sites_resolve_where_the_build_table_had_them() {
-        for (build, (expected_step, expected_helper)) in SEPTEMBER_BUILDS.iter().zip(TABLE) {
+        for (build, (expected_step, expected_helper)) in BUILDS_2026.iter().zip(TABLE) {
             let Some(mapped) = reference(build, "logic.dll") else {
                 eprintln!("skipping {build}: no bin/{build}/logic.dll");
                 continue;
@@ -77,7 +78,7 @@ mod tests {
 
     #[test]
     fn a_changed_entry_is_refused() {
-        let Some(mapped) = reference(SEPTEMBER_BUILDS[0], "logic.dll") else {
+        let Some(mapped) = reference(BUILDS_2026[0], "logic.dll") else {
             return;
         };
         let mut changed = mapped.image.clone();

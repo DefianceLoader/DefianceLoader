@@ -13,11 +13,12 @@
 //!
 //! Each of those calls is replaced by a stub ([`squad_stub`], [`ammo_stub`])
 //! that makes the call, and when it answers no, answers yes instead if the
-//! squad's relation is one the settings reveal ([`reveal`]). The relation
-//! comes from `logic.dll`'s `LogicUtilsImpl`, which the panel holds at
-//! `+0x410`: vt+0x628 ally, vt+0x630 enemy, vt+0x638 neutral, vt+0x640
-//! abandoned (counted as neutral), as the panel's own relation label asks
-//! (`fn_366ad0`, [`LABEL_PATTERN`]).
+//! squad's relation is one the settings reveal ([`reveal`]). Ownership and
+//! the relation come from Core's `relation` service (`RelationV1`), which asks
+//! the owner's predicates in the order the panel's own relation label does
+//! (`fn_366ad0`, [`LABEL_PATTERN`]); abandoned counts as neutral
+//! ([`Relation::from_service`]). Without the service the plugin changes
+//! nothing.
 //!
 //! The revealed ammo menu's toggles would act on the other player's squad
 //! (the AI keeps what they set), so in the grid's click handler (`fn_3fa40`,
@@ -61,14 +62,17 @@
 //! ally toggles change another player's units.
 use core::ffi::c_void;
 use defiance_api::{
-    Api, PatchContractV1, Plugin, ABI_VERSION, LOG_DEBUG, LOG_INFO, LOG_WARN, PATCH_KIND_CALL,
-    PATCH_KIND_ENTRY,
+    Api, PatchContractV1, Plugin, RelationV1, ABI_VERSION, LOG_DEBUG, LOG_INFO, LOG_WARN,
+    PATCH_KIND_CALL, PATCH_KIND_ENTRY, RELATION_ABANDONED, RELATION_ALLY, RELATION_ENEMY,
+    RELATION_NEUTRAL,
 };
 use defiance_core::sites::{code_ranges, Image};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 
 mod patterns;
 mod sites;
+
+defiance_feature_sdk::service_handshake!();
 
 pub use patterns::*;
 
@@ -95,15 +99,11 @@ const SET_COLOUR_START: [u8; 19] = [
 const SUB_PANEL: usize = 0x18;
 const PANEL_ENTITY: usize = 0x3f0;
 const WEAK_OBJECT: usize = 0x10;
-const PANEL_LOGIC: usize = 0x410;
 const PANEL_LABEL: usize = 0x580;
 const WIDGET_VISIBLE: usize = 0x5b;
 const WIDGET_SHOW: usize = 0x48;
-const ENTITY_CONTROL: usize = 0xb0;
-const CONTROL_OWNER: usize = 0x20;
-const OWNER_IS_PLAYER: usize = 0x80;
 
-/// A squad's relation to the player, as `LogicUtilsImpl` answers.
+/// A squad's relation to the player, as Core's relation service answers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Relation {
     Ally,
@@ -112,14 +112,17 @@ pub enum Relation {
     Unknown,
 }
 
-/// `LogicUtilsImpl`'s relation queries, `bool (this, entity)`, in the order
-/// asked: ally, enemy, neutral, abandoned (neutral).
-const RELATION: [(usize, Relation); 4] = [
-    (0x628, Relation::Ally),
-    (0x630, Relation::Enemy),
-    (0x638, Relation::Neutral),
-    (0x640, Relation::Neutral),
-];
+impl Relation {
+    /// The service's answer: abandoned counts as neutral, none as unknown.
+    pub fn from_service(relation: u32) -> Self {
+        match relation {
+            RELATION_ALLY => Self::Ally,
+            RELATION_ENEMY => Self::Enemy,
+            RELATION_NEUTRAL | RELATION_ABANDONED => Self::Neutral,
+            _ => Self::Unknown,
+        }
+    }
+}
 
 /// The settings.
 #[derive(Clone, Copy, Debug, Default)]
@@ -211,9 +214,12 @@ static ALLIED: AtomicBool = AtomicBool::new(false);
 static NEUTRAL: AtomicBool = AtomicBool::new(false);
 static ENEMY: AtomicBool = AtomicBool::new(false);
 static ALLY_TOGGLES: AtomicBool = AtomicBool::new(false);
-/// `LogicUtilsImpl`, recorded from the panel (the ammo menu does not hold it;
-/// the panel takes a clicked squad before the menu refreshes it).
-static LOGIC: AtomicUsize = AtomicUsize::new(0);
+/// Core's relation service, set by each `init` before anything is hooked.
+static RELATIONS: AtomicPtr<RelationV1> = AtomicPtr::new(core::ptr::null_mut());
+
+fn relations() -> Option<&'static RelationV1> {
+    unsafe { RELATIONS.load(Ordering::Acquire).as_ref() }
+}
 // Read by the stubs as plain qwords.
 static SQUAD_RESUME: AtomicUsize = AtomicUsize::new(0);
 static AMMO_RESUME: AtomicUsize = AtomicUsize::new(0);
@@ -253,32 +259,19 @@ unsafe fn field(object: usize, offset: usize) -> usize {
     unsafe { *((object + offset) as *const usize) }
 }
 
-unsafe fn relation(logic: usize, entity: usize) -> Relation {
-    if logic == 0 || entity == 0 {
-        return Relation::Unknown;
-    }
-    for (slot, relation) in RELATION {
-        let ask: unsafe extern "C" fn(usize, usize) -> u8 = unsafe { method(logic, slot) };
-        if unsafe { ask(logic, entity) } != 0 {
-            return relation;
+/// `entity`'s relation to the player; unknown for none or without the service.
+unsafe fn relation(entity: usize) -> Relation {
+    match relations() {
+        Some(service) => {
+            Relation::from_service(unsafe { (service.relation)(entity as *mut c_void) })
         }
+        None => Relation::Unknown,
     }
-    Relation::Unknown
 }
 
 /// Whether the player owns `entity`, as both tests ask it.
 unsafe fn owned(entity: usize) -> bool {
-    let control: unsafe extern "C" fn(usize) -> usize = unsafe { method(entity, ENTITY_CONTROL) };
-    let control = unsafe { control(entity) };
-    if control == 0 {
-        return false;
-    }
-    let owner = unsafe { field(control, CONTROL_OWNER) };
-    if owner == 0 {
-        return false;
-    }
-    let is_player: unsafe extern "C" fn(usize) -> u8 = unsafe { method(owner, OWNER_IS_PLAYER) };
-    unsafe { is_player(owner) != 0 }
+    relations().is_some_and(|service| unsafe { (service.owned)(entity as *mut c_void) } != 0)
 }
 
 /// The squad setter's owner said no: answer yes if the panel's squad is one
@@ -288,24 +281,20 @@ unsafe extern "C" fn squad_reveals(sub: usize) -> u8 {
     if panel == 0 {
         return 0;
     }
-    let logic = unsafe { field(panel, PANEL_LOGIC) };
-    LOGIC.store(logic, Ordering::Relaxed);
     let weak = unsafe { field(panel, PANEL_ENTITY) };
     let entity = if weak == 0 {
         0
     } else {
         unsafe { field(weak, WEAK_OBJECT) }
     };
-    let revealed = reveal(settings(), unsafe { relation(logic, entity) });
+    let revealed = reveal(settings(), unsafe { relation(entity) });
     REVEALED_SQUAD.store(if revealed { entity } else { 0 }, Ordering::Relaxed);
     revealed as u8
 }
 
 /// The ammo menu's owner said no: answer yes if `entity` is revealed.
 unsafe extern "C" fn ammo_reveals(entity: usize) -> u8 {
-    reveal(settings(), unsafe {
-        relation(LOGIC.load(Ordering::Relaxed), entity)
-    }) as u8
+    reveal(settings(), unsafe { relation(entity) }) as u8
 }
 
 /// In place of the squad setter's `call [rax+0x80]` (the owner in `rcx`, the
@@ -357,7 +346,7 @@ unsafe extern "C" fn clicked_entity(menu: usize) -> usize {
     let shown: Shown = unsafe { core::mem::transmute(SHOWN.load(Ordering::Acquire)) };
     let entity = unsafe { shown(menu) };
     if entity != 0 && !unsafe { owned(entity) } {
-        let relation = unsafe { relation(LOGIC.load(Ordering::Relaxed), entity) };
+        let relation = unsafe { relation(entity) };
         if !toggles(settings(), false, relation) {
             return 0;
         }
@@ -372,8 +361,6 @@ unsafe extern "C" fn clicked_entity(menu: usize) -> usize {
 unsafe extern "C" fn label(panel: usize, entity: usize) -> usize {
     let original: Label = unsafe { core::mem::transmute(LABEL_ORIGINAL.load(Ordering::Acquire)) };
     let result = unsafe { original(panel, entity) };
-    let logic = unsafe { field(panel, PANEL_LOGIC) };
-    LOGIC.store(logic, Ordering::Relaxed);
     if entity != 0 && REVEALED_SQUAD.load(Ordering::Relaxed) == entity {
         let widget = unsafe { field(panel, PANEL_LABEL) };
         if widget != 0 && unsafe { *((widget + WIDGET_VISIBLE) as *const u8) } != 0 {
@@ -470,7 +457,7 @@ unsafe extern "C" fn fill(menu: usize, index: usize, record: usize) -> usize {
         let relation = if owned {
             Relation::Unknown
         } else {
-            unsafe { relation(LOGIC.load(Ordering::Relaxed), entity) }
+            unsafe { relation(entity) }
         };
         let [own, allied, neutral, enemy] =
             [0, 1, 2, 3].map(|i| COLOURS[i].load(Ordering::Relaxed));
@@ -672,6 +659,15 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
         slot.store(colour, Ordering::Relaxed);
     }
     LOG.store(api.log as usize, Ordering::Relaxed);
+    let Some(service) = (unsafe { defiance_feature_sdk::services::relation() }) else {
+        say(
+            api,
+            LOG_WARN,
+            "unit inspection: Core's relation service is unavailable; the game's panel stays",
+        );
+        return 1;
+    };
+    RELATIONS.store((service as *const RelationV1).cast_mut(), Ordering::Release);
     match resolve(api).and_then(|(base, sites, _)| install(api, base, &sites)) {
         Ok(()) => {
             let who: Vec<&str> = [(allied, "allied"), (neutral, "neutral"), (enemy, "enemy")]
@@ -800,6 +796,20 @@ mod tests {
             neutral,
             enemy,
         }
+    }
+
+    #[test]
+    fn service_relations_map_abandoned_to_neutral() {
+        use defiance_api::RELATION_NONE;
+        assert_eq!(Relation::from_service(RELATION_ALLY), Relation::Ally);
+        assert_eq!(Relation::from_service(RELATION_ENEMY), Relation::Enemy);
+        assert_eq!(Relation::from_service(RELATION_NEUTRAL), Relation::Neutral);
+        assert_eq!(
+            Relation::from_service(RELATION_ABANDONED),
+            Relation::Neutral
+        );
+        assert_eq!(Relation::from_service(RELATION_NONE), Relation::Unknown);
+        assert_eq!(Relation::from_service(99), Relation::Unknown);
     }
 
     #[test]

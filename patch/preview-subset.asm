@@ -33,7 +33,7 @@ subset_mark:
     jz subset_mark_done
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jnz subset_mark_done
     mov byte ptr [rbp - 0x79], 2       ; alive, not selected
@@ -86,24 +86,24 @@ subset_record:
     mov rcx, rdi
     mov rax, qword ptr [rcx]
     mov edx, 0x10
-    call qword ptr [rax + 0x98]
+    call qword ptr [rax + 0x98]    ; vt:essence/EntityImpl@Essence@Galileo
     test al, al
     jz subset_record_done              ; not a squad
     mov rcx, rdi
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz subset_record_done
     mov rcx, qword ptr [rax + 0x28]
     test rcx, rcx
     jz subset_record_done
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {squad_roster}]
+    call qword ptr [rax + {squad_roster}]    ; vt:logic/SquadAiFacet@Leonardo
     test rax, rax
     jz subset_record_done
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x68]
+    call qword ptr [rax + 0x68]    ; vt:logic/SquadHolderFacet@Leonardo
     test rax, rax
     jz subset_record_done
     mov rsi, qword ptr [rax]
@@ -118,7 +118,7 @@ subset_record_member:
     jz subset_record_member
     mov rcx, rax
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     add rbp, rbp
     test al, al
     jz subset_record_member
@@ -153,12 +153,12 @@ subset_facet:
     jz subset_facet_none
     mov rax, qword ptr [rcx]
     mov edx, 0x20
-    call qword ptr [rax + 0x98]
+    call qword ptr [rax + 0x98]    ; vt:essence/EntityImpl@Essence@Galileo
     test al, al
     jz subset_facet_none
     mov rcx, rbx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz subset_facet_none
     mov rax, qword ptr [rax + 0x50]

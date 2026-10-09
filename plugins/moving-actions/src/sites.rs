@@ -100,13 +100,15 @@ mod tests {
 
     /// The getter rvas and patch offsets the per-build hash table held before
     /// the plugin resolved them, in [`BUILDS`] order.
-    const TABLE: [(&str, usize); 6] = [
+    const TABLE: [(&str, usize); 8] = [
         ("gog/2025-12-23", 0x2bcac0),
         ("steam/2025-12-23", 0x2bcb50),
         ("gog/2026-09-14", 0x2caf20),
         ("steam/2026-09-22", 0x2cafb0),
         ("gog/2026-09-25", 0x2caf20),
         ("steam/2026-09-25", 0x2cafb0),
+        ("gog/2026-10-07", 0x2cb840),
+        ("steam/2026-10-07", 0x2cb8d0),
     ];
     const OFFSETS: [usize; 3] = [0xd4, 0xd5, 0xe8];
 

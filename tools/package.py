@@ -68,9 +68,15 @@ EXCLUDED = {"defiance_plugin_pickup.dll", "defiance_plugin_example.dll", REGROUP
 # A plugin whose DLL name or ID contains one of these is a private test aid
 # (cheats, test-only probes) and is never packaged.
 PRIVATE_WORDS = ("testing", "god_mode", "god-mode", "godmode", "cheat")
-# Built-in manifests whose `enabled` default the package enforces; it must
-# agree with `OFF_BY_DEFAULT` in crates/loader/src/config/builtin.rs.
-BUILTIN_DEFAULTS = {"defiance.vehicle-special-fire": "false"}
+# Feature plugins ship the manifest committed beside their crate as
+# plugins/<crate>/<stem>.plugin.json; `manifest-gen` stages it beside the DLL.
+FEATURE_PREFIX = "defiance_plugin_feature_"
+
+
+def committed_feature_manifest(stem):
+    """The committed manifest of the feature plugin `stem`, or None."""
+    found = sorted((ROOT / "plugins").glob(f"*/{stem}.plugin.json"))
+    return found[0] if len(found) == 1 else None
 
 
 def game_root(path):
@@ -251,11 +257,13 @@ def main(argv):
         data = json.loads(manifest.read_text(encoding="utf-8"))
         if any(word in name.lower() for name in (dll.name, data["id"]) for word in PRIVATE_WORDS):
             parser.error(f"{dll.name} is a private test plugin and is never packaged")
-        expected = BUILTIN_DEFAULTS.get(data["id"])
-        enabled = next((setting["default"] for setting in data.get("settings", [])
-                        if setting["key"] == "enabled"), None)
-        if expected is not None and enabled != expected:
-            parser.error(f"the packaged {data['id']} manifest must default enabled to {expected}")
+        if dll.name.lower().startswith(FEATURE_PREFIX):
+            committed = committed_feature_manifest(dll.stem)
+            if committed is None:
+                parser.error(f"{dll.name} has no committed manifest under plugins/")
+            if json.loads(committed.read_text(encoding="utf-8")) != data:
+                parser.error(f"the staged {manifest.name} differs from {committed.relative_to(ROOT)}; "
+                             "run mise run loader")
 
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as package:
         readme = (ROOT / "INSTALL.md").read_text(encoding="utf-8")

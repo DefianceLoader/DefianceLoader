@@ -18,6 +18,13 @@ fn main() {
         Some("revoke-target") => return revoke_reload_permission(dir, true),
         Some("revoke-consumer") => return revoke_reload_permission(dir, false),
         Some("mixed-reload-config") => return mixed_reload_config(dir),
+        Some("startup-retry") => return startup_retry(dir, "normal"),
+        Some("startup-retry-repeat") => return startup_retry(dir, "repeat"),
+        Some("startup-retry-moved") => return startup_retry(dir, "moved"),
+        Some("startup-retry-disabled") => return startup_retry_refusal(dir, "disabled"),
+        Some("startup-retry-revoked") => return startup_retry_refusal(dir, "revoked"),
+        Some("startup-retry-legacy") => return startup_retry_refusal(dir, "legacy"),
+        Some("startup-retry-superseded") => return startup_retry_superseded(dir),
         #[cfg(feature = "patch-v1-test")]
         Some("patch-v1") => return patch_v1_test::run(),
         _ => {}
@@ -213,6 +220,269 @@ fn set_value(dir: &std::path::Path, id: &str, key: &str, value: &str) {
         }
     }
     std::fs::write(&path, out).unwrap();
+}
+
+/// Retry a failed startup provider only after its DLL changes. The repeat
+/// variant proves another changed candidate can fail and then recover.
+fn startup_retry(dir: &std::path::Path, mode: &str) {
+    let repeat_failure = mode == "repeat";
+    let moved_dll = mode == "moved";
+    std::fs::write(
+        dir.join("../DefianceLoader/config/examples.ini"),
+        "[example.counter]\nfail_init = true\n",
+    )
+    .unwrap();
+    let initial: Vec<_> = defiance_loader::test_host::load_plugins(dir)
+        .into_iter()
+        .collect();
+    println!("startup: {initial:?}");
+    assert!(initial
+        .iter()
+        .any(|(id, state)| { id == "example.counter" && state.starts_with("Failed") }));
+    assert!(initial
+        .iter()
+        .any(|(id, state)| { id == "example.counter-user" && state.starts_with("Blocked") }));
+    assert!(!defiance_loader::test_host::loaded_plugins()
+        .iter()
+        .any(|(id, _)| id == "example.counter"));
+
+    let poll = || defiance_loader::test_host::poll_startup_retries();
+    assert!(
+        poll().is_empty(),
+        "a failed plugin is not retried without a DLL change"
+    );
+    set_value(dir, "example.counter", "fail_init", "false");
+    let unchanged = defiance_loader::test_host::toggle_plugin("example.counter", true);
+    assert!(
+        unchanged.is_err(),
+        "config enable cannot bypass the settled DLL retry path"
+    );
+    assert!(defiance_loader::test_host::loaded_plugins().is_empty());
+    assert!(
+        poll().is_empty(),
+        "config-only correction does not replace the DLL"
+    );
+    if repeat_failure {
+        set_value(dir, "example.counter", "fail_init", "true");
+    }
+
+    let plugins = dir.join("../DefianceLoader/plugins");
+    let mut provider = plugins.join("defiance_example_counter.dll");
+    if moved_dll {
+        let moved_provider = plugins.join("defiance_example_counter_moved.dll");
+        let manifest = plugins.join("defiance_example_counter.plugin.json");
+        let moved_manifest = plugins.join("defiance_example_counter_moved.plugin.json");
+        std::fs::rename(&provider, &moved_provider).unwrap();
+        std::fs::rename(&manifest, &moved_manifest).unwrap();
+        let text = std::fs::read_to_string(&moved_manifest).unwrap();
+        let changed = text.replace(
+            "\"dll\": \"defiance_example_counter.dll\"",
+            "\"dll\": \"defiance_example_counter_moved.dll\"",
+        );
+        assert_ne!(changed, text, "the managed manifest names its DLL");
+        std::fs::write(&moved_manifest, changed).unwrap();
+        provider = moved_provider;
+
+        let enabled = defiance_loader::test_host::toggle_plugin("example.counter", true);
+        println!("ordinary enable after move: {enabled:?}");
+        assert!(
+            enabled.is_err(),
+            "ordinary config enable cannot bypass the failed-startup ID guard after a DLL move"
+        );
+        assert!(!defiance_loader::test_host::loaded_plugins()
+            .iter()
+            .any(|(id, _)| id == "example.counter"));
+        assert!(
+            defiance_loader::test_host::plugin_summary().contains("1 failed"),
+            "ordinary enable preserves the startup failure"
+        );
+    }
+    let append_overlay = || {
+        let mut bytes = std::fs::read(&provider).unwrap();
+        bytes.push(0);
+        std::fs::write(&provider, bytes).unwrap();
+    };
+    let apply = || {
+        defiance_loader::test_host::apply_pending_changes();
+        let loaded = defiance_loader::test_host::loaded_plugins();
+        let active = loaded.iter().any(|(id, _)| id == "example.counter");
+        println!("loaded after apply: {loaded:?}");
+        println!(
+            "summary after apply: {}",
+            defiance_loader::test_host::plugin_summary()
+        );
+        active
+    };
+
+    if repeat_failure {
+        append_overlay();
+        assert!(
+            poll().is_empty(),
+            "first observation only starts the stability window"
+        );
+        assert_eq!(poll(), vec!["example.counter".to_string()]);
+        assert!(
+            !defiance_loader::test_host::loaded_plugins()
+                .iter()
+                .any(|(id, _)| id == "example.counter"),
+            "discovery must not initialize before the safe-boundary drain"
+        );
+        assert!(
+            !apply(),
+            "the unchanged failing configuration must fail again"
+        );
+        assert!(
+            defiance_loader::test_host::plugin_summary().contains("1 failed"),
+            "a second failure remains visible in the fresh summary"
+        );
+        assert!(
+            poll().is_empty(),
+            "the same failed DLL stamp must not queue another retry"
+        );
+    }
+
+    set_value(dir, "example.counter", "fail_init", "false");
+    append_overlay();
+    assert!(
+        poll().is_empty(),
+        "first observation only starts the stability window"
+    );
+    assert_eq!(poll(), vec!["example.counter".to_string()]);
+    assert!(
+        !defiance_loader::test_host::loaded_plugins()
+            .iter()
+            .any(|(id, _)| id == "example.counter"),
+        "discovery must not initialize before the safe-boundary drain"
+    );
+    assert!(apply(), "the corrected candidate should become active");
+    let summary = defiance_loader::test_host::plugin_summary();
+    assert!(
+        summary.contains("0 failed"),
+        "recovery clears the stale failure: {summary}"
+    );
+    assert!(
+        !defiance_loader::test_host::loaded_plugins()
+            .iter()
+            .any(|(id, _)| id == "example.counter-user"),
+        "a dependant blocked at startup is not implicitly started by provider retry"
+    );
+}
+
+/// A fresh disabled or non-reloadable candidate cannot retry a startup failure.
+fn startup_retry_refusal(dir: &std::path::Path, refusal: &str) {
+    let config = dir.join("../DefianceLoader/config/examples.ini");
+    std::fs::write(&config, "[example.counter]\nfail_init = true\n").unwrap();
+    let initial = defiance_loader::test_host::load_plugins(dir);
+    println!("startup: {initial:?}");
+    assert!(initial
+        .iter()
+        .any(|(id, state)| { id == "example.counter" && state.starts_with("Failed") }));
+    let poll = || defiance_loader::test_host::poll_startup_retries();
+    assert!(poll().is_empty());
+
+    let plugins = dir.join("../DefianceLoader/plugins");
+    let provider = plugins.join("defiance_example_counter.dll");
+    match refusal {
+        "disabled" => std::fs::write(
+            &config,
+            "[example.counter]\nfail_init = false\nenabled = false\n",
+        )
+        .unwrap(),
+        "revoked" => {
+            std::fs::write(&config, "[example.counter]\nfail_init = false\n").unwrap();
+            let sidecar = plugins.join("defiance_example_counter.plugin.json");
+            let text = std::fs::read_to_string(&sidecar).unwrap();
+            let changed = text.replace("\"hot_reload\": true", "\"hot_reload\": false");
+            assert_ne!(
+                changed, text,
+                "the provider manifest declares hot_reload true"
+            );
+            std::fs::write(sidecar, changed).unwrap();
+        }
+        "legacy" => {
+            std::fs::write(&config, "[example.counter]\nfail_init = false\n").unwrap();
+            std::fs::remove_file(plugins.join("defiance_example_counter.plugin.json")).unwrap()
+        }
+        _ => panic!("unknown startup retry refusal: {refusal}"),
+    }
+    let mut bytes = std::fs::read(&provider).unwrap();
+    bytes.push(0);
+    std::fs::write(&provider, bytes).unwrap();
+    assert!(
+        poll().is_empty(),
+        "the first changed observation is unsettled"
+    );
+    if refusal == "legacy" {
+        assert!(poll().is_empty(), "legacy discovery has a different ID");
+        let addition = defiance_loader::test_host::add_plugin("defiance_example_counter");
+        assert!(
+            addition.unwrap_err().contains("failed startup plugin"),
+            "deleting the sidecar cannot bypass recovery policy as a legacy addition"
+        );
+    } else {
+        assert_eq!(poll(), vec!["example.counter".to_string()]);
+    }
+    defiance_loader::test_host::apply_pending_changes();
+    let loaded = defiance_loader::test_host::loaded_plugins();
+    let summary = defiance_loader::test_host::plugin_summary();
+    println!("{refusal} loaded after apply: {loaded:?}");
+    println!("{refusal} summary after apply: {summary}");
+    assert!(!loaded.iter().any(|(id, _)| id == "example.counter"));
+    assert!(
+        summary.contains("0 active"),
+        "candidate stayed inactive: {summary}"
+    );
+    if refusal == "disabled" {
+        assert!(
+            summary.contains("1 disabled"),
+            "fresh disabled config is reflected: {summary}"
+        );
+    }
+}
+
+/// A queued candidate becomes stale if a newer DLL stamp arrives before apply.
+fn startup_retry_superseded(dir: &std::path::Path) {
+    let config = dir.join("../DefianceLoader/config/examples.ini");
+    std::fs::write(&config, "[example.counter]\nfail_init = true\n").unwrap();
+    let initial = defiance_loader::test_host::load_plugins(dir);
+    println!("startup: {initial:?}");
+    assert!(initial
+        .iter()
+        .any(|(id, state)| { id == "example.counter" && state.starts_with("Failed") }));
+    let poll = || defiance_loader::test_host::poll_startup_retries();
+    assert!(poll().is_empty());
+    std::fs::write(&config, "[example.counter]\nfail_init = false\n").unwrap();
+    let provider = dir.join("../DefianceLoader/plugins/defiance_example_counter.dll");
+    let append_overlay = || {
+        let mut bytes = std::fs::read(&provider).unwrap();
+        bytes.push(0);
+        std::fs::write(&provider, bytes).unwrap();
+    };
+    append_overlay();
+    assert!(poll().is_empty());
+    assert_eq!(poll(), vec!["example.counter".to_string()]);
+
+    append_overlay();
+    defiance_loader::test_host::apply_pending_changes();
+    let loaded = defiance_loader::test_host::loaded_plugins();
+    let stale_summary = defiance_loader::test_host::plugin_summary();
+    println!("loaded after stale apply: {loaded:?}");
+    println!("summary after stale apply: {stale_summary}");
+    assert!(!loaded.iter().any(|(id, _)| id == "example.counter"));
+    assert!(stale_summary.contains("1 failed"));
+
+    assert!(
+        poll().is_empty(),
+        "the newer stamp starts a fresh stability window"
+    );
+    assert_eq!(poll(), vec!["example.counter".to_string()]);
+    defiance_loader::test_host::apply_pending_changes();
+    let loaded = defiance_loader::test_host::loaded_plugins();
+    let summary = defiance_loader::test_host::plugin_summary();
+    println!("loaded after current apply: {loaded:?}");
+    println!("summary after current apply: {summary}");
+    assert!(loaded.iter().any(|(id, _)| id == "example.counter"));
+    assert!(summary.contains("0 failed"));
 }
 
 /// The counter and counter-user at startup; the counter is switched off in

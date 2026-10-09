@@ -56,12 +56,12 @@ left_behind_member:
     mov rcx, r13
     mov rax, qword ptr [rcx]
     mov edx, 0x20
-    call qword ptr [rax + 0x98]       ; a soldier
+    call qword ptr [rax + 0x98]       ; vt:essence/EntityImpl@Essence@Galileo a soldier
     test al, al
     jz next_member
     mov rcx, r13
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz next_member
     mov rcx, qword ptr [rax + 0x58]   ; posture
@@ -94,14 +94,14 @@ member_selected:
     test rcx, rcx
     jz no_selection
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz no_selection
     mov rcx, qword ptr [rax + 0x50]
     test rcx, rcx
     jz no_selection
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     add rsp, 0x28
     ret
 no_selection:

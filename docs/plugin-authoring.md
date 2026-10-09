@@ -44,8 +44,15 @@ wrappers live in `crates/feature-sdk`.
 
 `init` runs on the loader's startup thread after game modules are present. It
 is appropriate for resolving addresses, reading configuration, registering
-services, and installing hooks. It is **not** a game-thread callback. Game-object
-operations must run in a verified game-thread hook with live object pointers.
+services, and requesting hooks and byte patches. A plugin with a manifest has
+its requests staged: they go live together with the other plugins' when the
+startup group commits (or, for a hot add or reload, right after its own
+`init`). Inside `init`, a function it hooked still runs the original code and
+bytes it patched still read as before. Declare the writes `init` should make
+in an [expected-write contract](plugin-api.md#optional-expected-write-contract-v1)
+so a missing or extra request refuses the plugin. `init` is **not** a
+game-thread callback. Game-object operations must run in a verified game-thread
+hook with live object pointers.
 
 ## Add to an installation
 
@@ -56,7 +63,10 @@ The proxy stays at `<game>/bin/dxgi.dll` beside `trm.exe`.
 On startup, managed settings are materialized in
 `DefianceLoader/config/<group>.ini`, under the plugin's ID. Existing user values
 are preserved. Read them through `config_get` or the typed SDK functions; do
-not add another INI parser. Configuration changes require restarting the game.
+not add another INI parser. Configuration changes take effect at the next
+restart, or sooner with `live_toggle` ([features](features.md)), which loads the
+plugin again with the new values; a plugin with `"hot_reload": false` always
+waits for a restart.
 
 Check the loader log for your plugin's active/blocked/failed state. Missing,
 disabled, incompatible, or failed dependencies block consumers; they are never
@@ -101,15 +111,21 @@ with undocumented lifetimes, or allocator ownership across the DLL boundary.
 
 ## Failure, stopping, and compatibility
 
-There is no supported hot reload or live plugin removal. DLLs and published
-tables must remain mapped for the process lifetime. Consumers stop before
-providers; stop and join your own workers before provider state becomes unusable.
+Development hot reload and live removal are described in
+[development.md](development.md#hot-reload). A cached table can outlive its
+provider's `stop`; the loader retains old provider copies for consumers that
+cannot reload. Keep those callbacks and their storage usable. Consumers stop
+before providers; stop and join your own workers before provider state becomes unusable.
 Removing a registration prevents new discovery; it cannot revoke cached pointers.
 Registration and lookup are allowed only on the thread executing `init`.
 Callback threading is a separate part of each service's contract.
 
-If init fails, the loader calls `stop` when supplied and rolls back owned hooks.
-Be prepared for `stop` after partial initialization. Registration rollback does
+If init fails, the loader calls `stop` when supplied and discards the plugin's
+staged requests (a plugin without a manifest has its installed hooks rolled
+back). Be prepared for `stop` after partial initialization, and also after a
+successful `init`: when the plugin's writes overlap an earlier plugin's, or a
+provider it depends on is refused, the loader stops it before anything of its
+own was written. Registration rollback does
 not undo side effects from arbitrary service calls: providers must document
 whether operations are reversible. No foreign-language exception or Rust panic
 may cross a callback boundary.

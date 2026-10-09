@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "id": "defiance.ammunition",
+  "dll": "defiance_plugin_feature_ammunition.dll",
+  "version": "0.7.1",
+  "abi": 5,
+  "patch_contract": true,
+  "group": "weapons",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Use the in-mission ammo panel to enable or disable weapons/ammo for selected soldiers. Show relevant weapons and selected-user counts, including mixed on/off states. Select the whole squad to apply a toggle to everyone. Ctrl+mouse wheel over a card enables or disables one soldier at a time (step_modifier; step_click adds Ctrl+left and Ctrl+right click); with expanded-ammo-menu all_selected_squads enabled, this spans selected squads. Individual overrides support each squad's first eight ammo slots; later local slots need whole-squad selection. Requires selection. Expanded ammo menu also requires this feature; out-of-mission squad scrolling does not. Restart required."
+    },
+    {
+      "key": "step_modifier",
+      "type": "choice",
+      "default": "ctrl",
+      "choices": [
+        "ctrl",
+        "shift",
+        "alt",
+        "none"
+      ],
+      "description": "Hold this and turn the mouse wheel over an ammo card to enable one more soldier (wheel up) or disable one (wheel down) for that weapon, in roster order. With expanded-ammo-menu all_selected_squads enabled, steps span selected squads in selection order. ctrl, shift, alt, or none for the wheel alone. Individual pins cover each squad's first eight ammo slots. Restart required."
+    },
+    {
+      "key": "step_click",
+      "type": "bool",
+      "default": "false",
+      "description": "Hold step_modifier and left-click an ammo card to enable one more soldier for that weapon, or right-click it to disable one. With step_modifier none, a right-click alone disables one and a left-click keeps its usual toggle. Restart required."
+    }
+  ],
+  "depends": [
+    {
+      "id": "defiance.core",
+      "min": "0.7.0"
+    },
+    {
+      "id": "defiance.selection",
+      "min": "0.6.2"
+    }
+  ],
+  "conflicts": []
+}

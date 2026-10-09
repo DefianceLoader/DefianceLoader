@@ -67,13 +67,15 @@ class VersionTests(unittest.TestCase):
         self.assertIn(f'name = "defiance-loader"\nversion = "{major}.{minor}.{patch + 1}"', lock)
 
         selection = bump.parse(self.version("selection"))
-        bump.bump("minor", ["builtins"], self.root)
+        bump.bump("minor", ["features"], self.root)
         expected = f"{selection[0]}.{selection[1] + 1}.0"
         for name in ("selection", "ammunition", "preview-weapon"):
             component = next(c for c in bump.components(self.root) if c.name == name)
             self.assertEqual(bump.manifest_version(self.root, component), bump.crate_version(component))
+            self.assertEqual(bump.lock_version(component), bump.crate_version(component))
         self.assertEqual(self.version("selection"), expected)
-        self.assertEqual(self.version("core"), core, "builtins leaves core alone")
+        self.assertEqual(self.version("core"), core, "features leaves core alone")
+        self.assertNotEqual(self.version("regroup"), expected, "features leaves standalone plugins alone")
 
         regroup = next(c for c in bump.components(self.root) if c.name == "regroup")
         bump.bump("patch", ["regroup"], self.root)

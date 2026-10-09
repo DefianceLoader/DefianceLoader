@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "id": "defiance.movement",
+  "dll": "defiance_plugin_feature_movement.dll",
+  "version": "0.4.1",
+  "abi": 5,
+  "patch_contract": true,
+  "group": "infantry",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Move only the selected soldiers when part of a squad is selected, leaving unselected squadmates in place. Requires selection and posture. Disable to use the game's normal movement orders while keeping the other enabled controls. Restart required."
+    }
+  ],
+  "depends": [
+    {
+      "id": "defiance.core",
+      "min": "0.7.0"
+    },
+    {
+      "id": "defiance.selection",
+      "min": "0.6.2"
+    },
+    {
+      "id": "defiance.posture",
+      "min": "0.4.2"
+    }
+  ],
+  "conflicts": []
+}

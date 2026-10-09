@@ -141,6 +141,11 @@ threading obligations; wrappers do not validate game objects.
 | `services::original()` | Resolve the loader's original-v1 table; no dependency needed. |
 | `services::selection()` | Resolve the selection-v1 table from `defiance.selection`. |
 | `services::game_access()` | Resolve Core's game-access-v1 table; declare a direct `defiance.core` dependency. |
+| `services::relation()` | Resolve Core's relation-v1 table; declare a direct `defiance.core` dependency. |
+| `services::facets()` | Resolve Core's facets-v1 table; declare a direct `defiance.core` dependency. |
+| `services::selection_snapshot()` | Resolve Core's selection-snapshot-v1 table; declare a direct `defiance.core` dependency. |
+| `services::game_symbols()` | Resolve Core's game-symbols-v1 table; declare a direct `defiance.core` dependency. |
+| `services::game_symbol(name, abi, use_)` | Resolve one catalog name into a `GameSymbol` (module, rva, address, expected bytes, span, `known_build`); the error names the symbol and the refusal. `GameSymbol::entry_patch()` is the contract entry for an entry hook over its span. |
 | `services::members(game, entity)` | Copy the roster pointer array using Core's size/capacity protocol. Returns None on unavailability, malformed/changing data, or allocation failure; entities remain borrowed. |
 
 `defiance_api::leak(Plugin)` is a convenience for allocating the permanent
@@ -231,6 +236,34 @@ returned, and `before_mission()` just before one is constructed, when the
 loader applies pending hot reloads; from then until `mission(1)` the state
 counts as being built, so no reload runs during it. Other plugins have no use
 for it.
+
+## Loader service: mission events v1
+
+Provider: `defiance.loader`. Name: `mission-events`. Table: Rust
+`MissionEventsV1`, C `DefianceMissionEventsV1`. Plugins subscribe here instead
+of hooking mission code themselves, since the loader allows one hook per
+address.
+
+`subscribe(mask, callback, context)` works only inside
+`defiance_plugin_init`. It returns a nonzero ID, or 0 outside init or for an
+empty mask. The mask combines:
+
+- `MISSION_LOADED` (1): a mission was loaded (no mission was loaded before).
+  Game thread.
+- `MISSION_ENDED` (2): the last loaded mission's state was destroyed. Game
+  thread.
+- `MISSION_FRAME` (4): a mission frame is about to run. Render thread, before
+  world2.dll's `SceneViewImpl` slot 3. Only while a mission is loaded.
+
+The callback receives `(context, event, frame)`. For frames, `frame` points to
+`MissionFrameV1 { scene, dt }`, which is valid only during the call; for other
+events it is null. Subscriptions last until the plugin unloads, withdraws or
+fails init. The loader drops them only after every callback in flight has
+returned.
+
+`frames()` returns 1 once Core feeds frame events and 0 otherwise. Without
+Core's feed, frame subscriptions are never called. Core feeds frames through
+`mission-feed` v1 (`MissionFeedV1`), which other plugins have no use for.
 
 ## Loader service: trace v1
 
@@ -342,6 +375,32 @@ it during game input handling. Older selection DLLs may have the same package
 version but no service; regroup explicitly refuses init if the table is absent.
 Upgrade loader, selection, and regroup together.
 
+## Game service: move preview v1
+
+Provider: `defiance.cover-markers`. Name: `move-preview`. Exact service
+version: `1`. Tables: Rust `MovePreviewV1` and `MovePreviewHandlerV1`, C
+`DefianceMovePreviewV1` and `DefianceMovePreviewHandlerV1`.
+
+One plugin can take over the move cursor's preview and order.
+`set_handler(handler)` is init-only and copies the handler; it returns 0, 1 for
+null, 2 when another plugin already set one. Both handler
+calls run on the game thread with the infantry members the cursor would move
+(soldier entities) and the cursor's ground point (`x, y, z`):
+
+- `preview(context, cursor, members, count, points, capacity, assigned)`
+  returns -1 to keep the stock formation preview. Otherwise it writes up to
+  `capacity` points and returns the count: the first `*assigned` are the
+  members' destinations, drawn as arrows; the rest are candidates, drawn as
+  smaller markers. It runs while a move is dragged, with the drag's point,
+  and while the move cursor hovers, with the mouse's ground point and the
+  selection's infantry members; there it draws nothing on -1.
+- `confirm(context, cursor, members, count)` runs when the cursor issues its
+  order. Nonzero means the handler gave the orders and the stock move is
+  skipped.
+
+A plugin can, for example, arm its handler from a hotkey to preview and send
+the selection to cover points.
+
 ## Game service: Core game access v1
 
 Provider `defiance.core`, name `game-access`, exact version `1`; table
@@ -374,6 +433,113 @@ Firing is the first consumer of this service. Its setter/query take snapshots,
 so virtual getters must remain read-only and stable for the duration of a call.
 Public mutations must be coordinated by consumers; the registry does not resolve
 conflicting gameplay policies.
+
+## Game service: Core relation v1
+
+Provider `defiance.core`, name `relation`, exact version `1`; table
+`RelationV1` / `DefianceRelationV1`. Core publishes it only when the loaded
+`logic.dll`'s `LogicUtilsImpl` holds the five native relation queries it
+reproduces, each once and in consecutive slots; otherwise Core logs a warning
+and the other Core services stay up. Calls require a live entity on the owning
+game thread; a null entity, or one without a control or owner, answers no.
+
+| Callback | Contract |
+|---|---|
+| `owned(entity)` | 1 when the entity's owner is the player, else 0. |
+| `relation(entity)` | The owner's relation to the player: `RELATION_ALLY` (1), `RELATION_ENEMY` (2), `RELATION_NEUTRAL` (3) or `RELATION_ABANDONED` (4), asked in that order as the game's unit label asks them, the first true answer winning; `RELATION_NONE` (0) when none holds or the owner is missing. It does not answer for the player's own units: ask `owned` first. |
+
+Unit inspection is the first consumer.
+
+## Game service: Core facets v1
+
+Provider `defiance.core`, name `facets`, exact version `1`; table `FacetsV1` /
+`DefianceFacetsV1`. Each query returns one typed facet of an entity, or null
+when the entity is null, the facet is missing or the live facet is of another
+type, so consumers neither read the facet record's offsets nor compare
+vtables themselves. Core publishes it only when the loaded `logic.dll` holds
+the native accessor each query reproduces; otherwise Core logs a warning and
+the other Core services stay up. Calls require a live entity on the owning
+game thread.
+
+| Callback | Contract |
+|---|---|
+| `squad_ai(entity)` | The entity's `SquadAiFacet`, as the game's own squad-AI accessor answers it: the AI facet when its type is `SquadAiFacet`, else null (a vehicle's plain AI facet, a soldier). |
+
+Regroup is the first consumer.
+
+## Game service: Core selection snapshot v1
+
+Provider `defiance.core`, name `selection-snapshot`, exact version `1`; table
+`SelectionSnapshotV1` / `DefianceSelectionSnapshotV1`. It copies the player's
+selection as the game's own selection gatherer walks it, so consumers neither
+look up the selection manager nor read its vector. Core publishes it only when
+the loaded `logic.dll` holds that gatherer with the gates below; otherwise Core
+logs a warning and the other Core services stay up. Calls require a null or
+live player context (the object whose vtable +0x40 answers the player's team,
+such as a command menu's context) on the owning game thread.
+
+| Callback | Contract |
+|---|---|
+| `copy_selected(player, out, capacity)` | The entities whose selectable facet reports them selected, in the game's selection order. |
+| `copy_command_targets(player, out, capacity)` | Of those, the ones the game would order: the facet record's control facet allows it, or, without one, the entity answers its command flag. This is exactly the native gatherer's list. |
+
+Both return the count, or `SIZE_MAX` when unavailable: a null player, team or
+manager, or a malformed entity vector. Capacity zero queries the count. No
+writes if capacity is too small. A sufficient buffer receives borrowed entity
+pointers; it must not overlap game storage. Each call copies the vector once
+before filtering, so one result is consistent; call again and verify the count
+when using a two-pass allocation. Soldiers and squads both appear as the game
+holds them: collapsing soldiers into their squad, and any per-feature filter,
+stay with the consumer.
+
+The expanded ammo menu is the first consumer.
+
+## Game service: Core game symbols v1
+
+Provider `defiance.core`, name `game-symbols`, exact version `1`; table
+`GameSymbolsV1` / `DefianceGameSymbolsV1`. Requires Core 0.6.0. It resolves a
+game function by catalog name, so plugins share one signature per function
+and a Core update fixes every consumer. Core resolves each name against the
+module's original image at init, so another feature's hook on the entry does
+not hide it, and logs a warning for each name it cannot resolve.
+
+The service only answers addresses. It installs nothing and owns nothing: a
+plugin that hooks or patches a symbol still goes through the loader's exclusive
+hooks and declares the write in its expected-write contract, so conflicts,
+refusals and ownership work as for any other site. `Api::rtti_method` is
+unchanged.
+
+`resolve(name, abi, use_, out)` is thread-safe. It fills `GameSymbolV1` and
+returns `SYMBOL_OK`, or returns a status and leaves `out` untouched:
+
+| Status | Meaning |
+|---|---|
+| `SYMBOL_UNKNOWN_NAME` | The catalog has no such name. |
+| `SYMBOL_UNAVAILABLE` | The signature or the expected bytes are not in this build. |
+| `SYMBOL_AMBIGUOUS` | The signature matches more than one place. |
+| `SYMBOL_ABI_MISMATCH` | `abi` is not the version the catalog publishes for the name. |
+| `SYMBOL_MISUSE` | The name does not allow `use_`, such as an entry hook of a function only meant to be called. |
+| `SYMBOL_INVALID` | A null or non-UTF-8 name, a null `out`, or an unknown use. |
+
+Uses: `SYMBOL_USE_ADDRESS` (read the address and bytes; always allowed),
+`SYMBOL_USE_CALL`, `SYMBOL_USE_ENTRY_HOOK` (hook the entry over `span`, a
+prefix of `expected`) and `SYMBOL_USE_CALL_SITE` (no current name allows it).
+
+`flags` carries `SYMBOL_KNOWN_BUILD` only when the module is a build Core
+knows. Under `allow_unknown_build` Core still answers a name whose signature
+and bytes match, with the flag clear and `build` null: a signature match on an
+unknown build is not proof of the ABI, so a consumer that calls or hooks the
+symbol decides for itself whether to proceed.
+
+Only these names are supported:
+
+| Name | Module | ABI | Uses | Span | Signature (ABI 1) |
+|---|---|---|---|---|---|
+| `ammo menu redraw` | `game.dll` | 1 | address, call, entry hook | 20 | `(menu, entity)`: redraws the vehicle ammunition menu for the entity. |
+| `widget move` | `game.dll` | 1 | address, call | 0 | `(widget, *const [i32; 2] delta)`: moves a widget by the delta. |
+
+The expanded ammo menu, vehicle special fire and ability groups are the
+first consumers.
 
 ## Core services: patch v1 and build v1
 
@@ -420,7 +586,8 @@ contracts. Loader `test_host` helpers are test infrastructure,
 not exports on which a game plugin should depend.
 
 There is currently no public global-variable store, game-thread scheduler,
-event bus, hotkey manager, hot reload, or automatic game-object lifetime tracking.
+general event bus (only `mission-events`), hotkey manager, hot reload, or
+automatic game-object lifetime tracking.
 
 Crash and panic reporting is documented in [crash-reporting.md](crash-reporting.md).
 

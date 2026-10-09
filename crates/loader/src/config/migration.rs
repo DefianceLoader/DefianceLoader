@@ -113,16 +113,19 @@ pub fn check_supported(state: &State) -> Result<(), String> {
 }
 
 /// Plan the move of legacy bootstrap loader keys into `[loader]` of the core
-/// group file. It is idempotent: a key already written explicitly is left
-/// alone, and a key with no legacy value is left to the declared default.
+/// group file, and of the performance plugin's settings out of `[loader]`
+/// into `[defiance.performance]`. It is idempotent: a key already written
+/// explicitly is left alone, and a key with no legacy value is left to the
+/// declared default.
 pub fn plan_loader_keys(bootstrap: &Document, core_path: &Path, core_text: Option<&str>) -> Plan {
     let existing = core_text.unwrap_or("");
     let document = parse::parse(existing);
-    let mut after = existing.to_string();
+    let (existing, moved) = take_moved_loader_keys(existing, &document);
+    let mut changed = !moved.is_empty();
+    let mut after = existing;
     if !after.is_empty() && !after.ends_with('\n') {
         after.push('\n');
     }
-    let mut changed = false;
     for decl in super::builtin::LOADER_SETTINGS {
         if document
             .lookup(super::builtin::LOADER_SECTION, decl.key)
@@ -143,6 +146,28 @@ pub fn plan_loader_keys(bootstrap: &Document, core_path: &Path, core_text: Optio
         );
         changed = true;
     }
+    let performance = super::builtin::PERFORMANCE_ID;
+    for decl in super::builtin::performance_settings() {
+        if document.lookup(performance, decl.key).is_some() {
+            continue;
+        }
+        let value = match moved.iter().find(|(key, _)| key == decl.key) {
+            Some((_, value)) => value.clone(),
+            None => match bootstrap.top(decl.key) {
+                Some((entry, _)) => entry.value.clone(),
+                None => continue,
+            },
+        };
+        after = super::defaults::insert_setting(
+            &after,
+            performance,
+            decl.key,
+            &value,
+            decl.description,
+            decl.default,
+        );
+        changed = true;
+    }
     Plan {
         changes: vec![Change {
             path: core_path.to_path_buf(),
@@ -152,6 +177,50 @@ pub fn plan_loader_keys(bootstrap: &Document, core_path: &Path, core_text: Optio
         refuse: None,
     }
     .normalize(changed)
+}
+
+/// `text` without the performance settings `[loader]` still holds, and the
+/// last value of each, in file order. A removed line takes its generated help
+/// comment with it when that comment is exactly what the loader wrote; any
+/// other comment stays.
+fn take_moved_loader_keys(text: &str, document: &Document) -> (String, Vec<(String, String)>) {
+    let mut drop = std::collections::BTreeSet::new();
+    let mut moved: Vec<(String, String)> = Vec::new();
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    for entry in &document.entries {
+        if entry.section != super::builtin::LOADER_SECTION {
+            continue;
+        }
+        let performance = super::builtin::PERFORMANCE_ID;
+        let Some(key) = super::builtin::moved_from_loader(performance, &entry.key) else {
+            continue;
+        };
+        let decl = super::builtin::performance_settings()
+            .iter()
+            .find(|decl| decl.key == key)
+            .expect("moved keys are declared");
+        drop.insert(entry.line);
+        let help = super::defaults::setting_help(decl.description, decl.default, "\n");
+        let help: Vec<&str> = help.lines().collect();
+        let first = entry.line - 1;
+        if first >= help.len()
+            && lines[first - help.len()..first]
+                .iter()
+                .map(|line| line.trim_end_matches(['\r', '\n']))
+                .eq(help.iter().copied())
+        {
+            drop.extend(first - help.len() + 1..entry.line);
+        }
+        moved.retain(|(name, _)| name != key);
+        moved.push((key.to_string(), entry.value.clone()));
+    }
+    let kept = lines
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !drop.contains(&(index + 1)))
+        .map(|(_, line)| *line)
+        .collect();
+    (kept, moved)
 }
 
 /// Plan removing a legacy `plugins` override that resolves to the default
@@ -371,6 +440,46 @@ mod tests {
         // Replanning against the new text changes nothing.
         let again = plan_loader_keys(&bootstrap, &path, Some(after));
         assert!(again.is_empty(), "not idempotent: {again:?}");
+    }
+
+    #[test]
+    fn performance_settings_move_out_of_loader_with_their_values() {
+        let decl = crate::config::builtin::performance_settings()
+            .iter()
+            .find(|decl| decl.key == "grass_sort")
+            .unwrap();
+        let help = crate::config::defaults::setting_help(decl.description, decl.default, "\n");
+        let core = format!(
+            "[loader]\nwait = 5\n{help}grass_sort = engine\n; mine\nview_sort = engine\n[logging]\nlevel = info\n"
+        );
+        let bootstrap = parse("tree_sway = half\nview_sort = cached\n");
+        let path = PathBuf::from("C:/cfg/core.ini");
+        let plan = plan_loader_keys(&bootstrap, &path, Some(&core));
+        let after = &plan.changes[0].after;
+        let document = parse(after);
+        let value = |section, key| {
+            document
+                .lookup(section, key)
+                .map(|(entry, _)| entry.value.clone())
+        };
+        assert_eq!(value("loader", "grass_sort"), None, "{after}");
+        assert_eq!(value("loader", "view_sort"), None, "{after}");
+        assert_eq!(value("loader", "wait").as_deref(), Some("5"));
+        let performance = "defiance.performance";
+        assert_eq!(value(performance, "grass_sort").as_deref(), Some("engine"));
+        // `[loader]` wins over the bootstrap, as it does when resolving.
+        assert_eq!(value(performance, "view_sort").as_deref(), Some("engine"));
+        assert_eq!(value(performance, "tree_sway").as_deref(), Some("half"));
+        assert_eq!(value(performance, "shadow_fit"), None, "{after}");
+        // The generated help went with its key; the user's comment stayed.
+        assert_eq!(
+            after
+                .matches(decl.description.lines().next().unwrap())
+                .count(),
+            1
+        );
+        assert!(after.contains("; mine\n"), "{after}");
+        assert!(plan_loader_keys(&bootstrap, &path, Some(after)).is_empty());
     }
 
     #[test]

@@ -43,14 +43,12 @@ pub const CREATE_CALL: usize = 21;
 pub const WIRE_CALL: usize = 22;
 pub const TEMPLATES_CALL: usize = 23;
 pub const SPAWN_FALLBACK_CALL: usize = 24;
-/// The SquadAiFacet primary vtable.
-pub const SQUAD_AI: usize = 25;
 /// The HumanAiFacet primary vtable.
-pub const HUMAN_AI: usize = 26;
+pub const HUMAN_AI: usize = 25;
 /// The Gun primary vtable.
-pub const GUN: usize = 27;
+pub const GUN: usize = 26;
 /// The number of logic.dll sites.
-pub const COUNT: usize = 28;
+pub const COUNT: usize = 27;
 
 /// The game.dll input dispatch, hooked.
 pub const INPUT: usize = 0;
@@ -312,11 +310,7 @@ pub fn sites(logic: &Image, game: &Image) -> Result<Sites, String> {
     for (rva, signature) in sites.logic.iter_mut().zip(&LOGIC) {
         *rva = logic.find(signature)?;
     }
-    for (index, class) in [
-        (SQUAD_AI, SQUAD_AI_CLASS),
-        (HUMAN_AI, HUMAN_AI_CLASS),
-        (GUN, GUN_CLASS),
-    ] {
+    for (index, class) in [(HUMAN_AI, HUMAN_AI_CLASS), (GUN, GUN_CLASS)] {
         sites.logic[index] = logic.primary_vtable(class)?.methods_at;
     }
     for (site, callee) in CALLS {
@@ -409,14 +403,14 @@ mod tests {
 
     /// The logic.dll rvas the per-build hash table held before the plugin
     /// resolved them, in [`BUILDS`] order.
-    const LOGIC_TABLE: [(&str, [usize; COUNT]); 6] = [
+    const LOGIC_TABLE: [(&str, [usize; COUNT]); 8] = [
         (
             "gog/2025-12-23",
             [
                 0x5138f0, 0x446140, 0x4463d0, 0x43dc70, 0x43d8c0, 0x55c20, 0x9dcb0, 0x5f4e0,
                 0x5a070, 0x444de0, 0x4476a0, 0x443460, 0x24690, 0x244d0, 0x43d3c0, 0x331420,
                 0x3311c0, 0x332e80, 0x3315b0, 0x110240, 0xcf4a0, 0x443f7d, 0x446260, 0x442a42,
-                0x513c9a, 0x728218, 0x715640, 0x714738,
+                0x513c9a, 0x715640, 0x714738,
             ],
         ),
         (
@@ -425,7 +419,7 @@ mod tests {
                 0x513980, 0x4461d0, 0x446460, 0x43dd00, 0x43d950, 0x55cb0, 0x9dd40, 0x5f570,
                 0x5a100, 0x444e70, 0x447730, 0x4434f0, 0x24690, 0x244d0, 0x43d450, 0x3314b0,
                 0x331250, 0x332f10, 0x331640, 0x1102d0, 0xcf530, 0x44400d, 0x4462f0, 0x442ad2,
-                0x513d2a, 0x728290, 0x715690, 0x714568,
+                0x513d2a, 0x715690, 0x714568,
             ],
         ),
         (
@@ -434,7 +428,7 @@ mod tests {
                 0x526590, 0x459470, 0x4597f0, 0x450fa0, 0x450bf0, 0x56010, 0xa60b0, 0x5f560,
                 0x5a0e0, 0x458110, 0x45a500, 0x456790, 0x24830, 0x24670, 0x4507a0, 0x3400c0,
                 0x33fe60, 0x341b20, 0x340250, 0x118360, 0xd7540, 0x4572ad, 0x459672, 0x455d72,
-                0x52693a, 0x73d860, 0x72a980, 0x729858,
+                0x52693a, 0x72a980, 0x729858,
             ],
         ),
         (
@@ -443,7 +437,7 @@ mod tests {
                 0x526620, 0x459500, 0x459880, 0x451030, 0x450c80, 0x560a0, 0xa6140, 0x5f5f0,
                 0x5a170, 0x4581a0, 0x45a590, 0x456820, 0x24830, 0x24670, 0x450830, 0x340150,
                 0x33fef0, 0x341bb0, 0x3402e0, 0x1183f0, 0xd75d0, 0x45733d, 0x459702, 0x455e02,
-                0x5269ca, 0x73d8b8, 0x72a9c0, 0x729888,
+                0x5269ca, 0x72a9c0, 0x729888,
             ],
         ),
         (
@@ -452,7 +446,7 @@ mod tests {
                 0x526d10, 0x459ab0, 0x459e30, 0x4515e0, 0x451230, 0x56010, 0xa60b0, 0x5f560,
                 0x5a0e0, 0x458750, 0x45ab40, 0x456dd0, 0x24830, 0x24670, 0x450de0, 0x3400c0,
                 0x33fe60, 0x341b20, 0x340250, 0x118360, 0xd7540, 0x4578ed, 0x459cb2, 0x4563b2,
-                0x5270ba, 0x73e8f8, 0x72b980, 0x72a858,
+                0x5270ba, 0x72b980, 0x72a858,
             ],
         ),
         (
@@ -461,26 +455,46 @@ mod tests {
                 0x526da0, 0x459b40, 0x459ec0, 0x451670, 0x4512c0, 0x560a0, 0xa6140, 0x5f5f0,
                 0x5a170, 0x4587e0, 0x45abd0, 0x456e60, 0x24830, 0x24670, 0x450e70, 0x340150,
                 0x33fef0, 0x341bb0, 0x3402e0, 0x1183f0, 0xd75d0, 0x45797d, 0x459d42, 0x456442,
-                0x52714a, 0x73e988, 0x72b9c0, 0x72a888,
+                0x52714a, 0x72b9c0, 0x72a888,
+            ],
+        ),
+        (
+            "gog/2026-10-07",
+            [
+                0x52b2e0, 0x45d4f0, 0x45d870, 0x455030, 0x454c80, 0x56010, 0xa60b0, 0x5f560,
+                0x5a0e0, 0x45c190, 0x45e580, 0x45a810, 0x24830, 0x24670, 0x454830, 0x3433a0,
+                0x343140, 0x344e00, 0x343530, 0x118360, 0xd7540, 0x45b32d, 0x45d6f2, 0x459df2,
+                0x52b68a, 0x730940, 0x72fa48,
+            ],
+        ),
+        (
+            "steam/2026-10-07",
+            [
+                0x52b370, 0x45d580, 0x45d900, 0x4550c0, 0x454d10, 0x560a0, 0xa6140, 0x5f5f0,
+                0x5a170, 0x45c220, 0x45e610, 0x45a8a0, 0x24830, 0x24670, 0x4548c0, 0x343430,
+                0x3431d0, 0x344e90, 0x3435c0, 0x1183f0, 0xd75d0, 0x45b3bd, 0x45d782, 0x459e82,
+                0x52b71a, 0x7309d0, 0x72fac8,
             ],
         ),
     ];
 
     /// The game.dll rvas the per-build hash table held, in [`BUILDS`] order.
-    const GAME_TABLE: [(&str, [usize; GAME_COUNT]); 6] = [
+    const GAME_TABLE: [(&str, [usize; GAME_COUNT]); 8] = [
         ("gog/2025-12-23", [0x2db9a0, 0x2da980, 0x332510, 0x1d0290]),
         ("steam/2025-12-23", [0x2e0cf0, 0x2dfcd0, 0x3389c0, 0x1d4b80]),
         ("gog/2026-09-14", [0x2ddb30, 0x2dcb10, 0x3346f0, 0x1d1b10]),
         ("steam/2026-09-22", [0x2e2eb0, 0x2e1e90, 0x33abd0, 0x1d6430]),
         ("gog/2026-09-25", [0x2ddb30, 0x2dcb10, 0x3346f0, 0x1d1b10]),
         ("steam/2026-09-25", [0x2e2eb0, 0x2e1e90, 0x33abd0, 0x1d6430]),
+        ("gog/2026-10-07", [0x2ec6e0, 0x2eb6c0, 0x342f10, 0x1df2c0]),
+        ("steam/2026-10-07", [0x2f1a30, 0x2f0a10, 0x3493c0, 0x1e3bb0]),
     ];
 
     /// The class offsets each build reads, in [`BUILDS`] order. The roster
     /// slot and the world-manager slot equal the old per-build table. The two
     /// input fields are where every build's own input code reads them; the old
     /// table had 0x870 and 0x890 for the 2026 builds, which no game code uses.
-    const OFFSETS: [(&str, Offsets); 6] = {
+    const OFFSETS: [(&str, Offsets); 8] = {
         const DECEMBER: Offsets = Offsets {
             roster: 0x3b8,
             world_manager: 0x700,
@@ -500,6 +514,8 @@ mod tests {
             ("steam/2026-09-22", SEPTEMBER),
             ("gog/2026-09-25", SEPTEMBER),
             ("steam/2026-09-25", SEPTEMBER),
+            ("gog/2026-10-07", SEPTEMBER),
+            ("steam/2026-10-07", SEPTEMBER),
         ]
     };
 

@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.cover-markers",
   "dll": "defiance_plugin_cover_markers.dll",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "abi": 5,
   "group": "infantry",
   "settings": [

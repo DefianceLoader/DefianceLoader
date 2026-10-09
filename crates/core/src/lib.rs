@@ -1,21 +1,19 @@
 //! The patching machinery that does not need a target process, shared by the
 //! injector and the loader.
 //!
-//! The descriptor types and parser (`descriptor`), the masked signature scan
-//! (`scan`, `pattern`), the signature relocation (`relocate`), the writes into a
-//! module (`apply`), the policy that picks between them (`install`) and the PE
-//! reader (`pe`) live here once, for both. The injector is a
-//! front-end that discovers the process and passes the payloads it embeds; the
-//! loader's core plugin does the same with the game's own modules.
+//! The masked signature scan (`scan`, `pattern`), process memory and module
+//! writes (`apply`), the relocation policy (`install`), instruction decoding
+//! (`decode`), the PE reader (`pe`), RTTI lookup and the unit format live here
+//! once, for both. The injector's descriptor protocol and its install sequence
+//! sit apart in [`compat`], which the loader and plugins do not use.
 
 pub mod apply;
+pub mod compat;
 pub mod decode;
-pub mod descriptor;
 pub mod install;
 pub mod json;
 pub mod pattern;
 pub mod pe;
-pub mod relocate;
 pub mod report;
 pub mod rtti;
 pub mod scan;
@@ -26,11 +24,7 @@ pub mod unit_apply;
 #[cfg(test)]
 mod unit_apply_tests;
 
-pub use apply::{apply, apply_game, module_image, Target};
-pub use descriptor::{GamePatch, Patch};
-pub use install::{
-    game_for_build, install_game, install_logic, logic_for_build, needs_relocation, relocate_game,
-    relocate_logic, Applied, Scan,
-};
+pub use apply::{module_image, Target};
+pub use install::{needs_relocation, Scan};
 pub use pattern::parse as parse_pattern;
 pub use scan::{scan, Moves, Site};

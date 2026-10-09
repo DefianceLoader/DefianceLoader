@@ -1,6 +1,7 @@
 # Primary weapon drops
 
-An experimental, single-player plugin for the GOG and Steam 2026-09 builds. The
+An experimental, single-player plugin for the GOG and Steam 2026-09 and 2026-10-07
+builds. The
 final infantry casualty emits one native ground pickup per compatible occupied
 standard primary slot. Partial casualties do not emit primary pickups. Native
 death bookkeeping and special-weapon drops still run. Collecting a supported

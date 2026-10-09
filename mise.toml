@@ -12,7 +12,7 @@
 #   mise run fmt      format every Rust workspace (default rustfmt); test and
 #                     loader-infra-test fail on unformatted code
 #   mise run bump     list component versions; `mise run bump patch loader`,
-#                     `mise run bump minor builtins`, `mise run bump check`
+#                     `mise run bump minor features`, `mise run bump check`
 #                     (tools/bump.py)
 #   mise run watch    rebuild what the tests build on every save burst, ahead
 #                     of time; results in out/watch/status.json
@@ -100,28 +100,28 @@ run = [
 
 [tasks.fmt-check]
 description = "Fail if any Rust workspace is not rustfmt-formatted (mise run fmt fixes it)"
-run = [
-  "cargo fmt --all --check --manifest-path Cargo.toml",
-  "cargo fmt --all --check --manifest-path plugins/regroup/Cargo.toml",
-  "cargo fmt --all --check --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
-  "cargo fmt --all --check --manifest-path plugins/squad-management-scroll/Cargo.toml",
-  "cargo fmt --all --check --manifest-path plugins/unit-inspection/Cargo.toml",
-  "cargo fmt --all --check --manifest-path plugins/ability-groups/Cargo.toml",
-  "cargo fmt --all --check --manifest-path plugins/legion-vehicle-hacking/Cargo.toml",
-  "cargo fmt --all --check --manifest-path plugins/vehicle-arrival/Cargo.toml",
-  "cargo fmt --all --check --manifest-path plugins/weapon-drops/Cargo.toml",
-  "cargo fmt --all --check --manifest-path plugins/cover-markers/Cargo.toml",
-  "cargo fmt --all --check --manifest-path plugins/moving-actions/Cargo.toml",
-  "cargo fmt --all --check --manifest-path plugins/moving-actions-animation/Cargo.toml",
-  "cargo fmt --all --check --manifest-path plugins/moving-actions-sync/Cargo.toml",
-  "cargo fmt --all --check --manifest-path plugins/moving-actions-render-sync/Cargo.toml",
-  "cargo fmt --all --check --manifest-path plugins/moving-grenades/Cargo.toml",
-  "cargo fmt --all --check --manifest-path examples/services/Cargo.toml",
-  "cargo fmt --all --check --manifest-path tools/crash-plugin/Cargo.toml",
-]
+run = """python tools/parallel.py \
+  "cargo fmt --all --check --manifest-path Cargo.toml" \
+  "cargo fmt --all --check --manifest-path plugins/regroup/Cargo.toml" \
+  "cargo fmt --all --check --manifest-path plugins/expanded-ammo-menu/Cargo.toml" \
+  "cargo fmt --all --check --manifest-path plugins/squad-management-scroll/Cargo.toml" \
+  "cargo fmt --all --check --manifest-path plugins/unit-inspection/Cargo.toml" \
+  "cargo fmt --all --check --manifest-path plugins/ability-groups/Cargo.toml" \
+  "cargo fmt --all --check --manifest-path plugins/legion-vehicle-hacking/Cargo.toml" \
+  "cargo fmt --all --check --manifest-path plugins/vehicle-arrival/Cargo.toml" \
+  "cargo fmt --all --check --manifest-path plugins/weapon-drops/Cargo.toml" \
+  "cargo fmt --all --check --manifest-path plugins/cover-markers/Cargo.toml" \
+  "cargo fmt --all --check --manifest-path plugins/moving-actions/Cargo.toml" \
+  "cargo fmt --all --check --manifest-path plugins/moving-actions-animation/Cargo.toml" \
+  "cargo fmt --all --check --manifest-path plugins/moving-actions-sync/Cargo.toml" \
+  "cargo fmt --all --check --manifest-path plugins/moving-actions-render-sync/Cargo.toml" \
+  "cargo fmt --all --check --manifest-path plugins/moving-grenades/Cargo.toml" \
+  "cargo fmt --all --check --manifest-path examples/services/Cargo.toml" \
+  "cargo fmt --all --check --manifest-path tools/crash-plugin/Cargo.toml"
+"""
 
 # A component's version is in its Cargo.toml, its lockfile and the manifest the
-# loader checks it against (the built-in table or its .plugin.json); this
+# loader checks it against (Core's built-in table or the committed .plugin.json); this
 # changes them together. Arguments pass through: `mise run bump patch loader`.
 [tasks.bump]
 description = "List component versions, or bump them together: mise run bump <major|minor|patch|X.Y.Z> <component...> (see tools/bump.py)"
@@ -176,7 +176,8 @@ run = """python tools/parallel.py \
   "python tools/test_variant.py" \
   "python tools/module_writes.py check" \
   "python tools/test_patch_inventory.py" \
-  "python tools/stamp.py test tools/test_chainlayout.py"
+  "python tools/stamp.py test tools/test_chainlayout.py" \
+  "python tools/stamp.py test tools/test_vtable_slots.py"
 """
 
 [tasks.comment-audit]
@@ -219,65 +220,76 @@ raw = true
 [tasks.test]
 description = "Build everything, then run every native test and the self test (native tests skip when they passed on the same inputs; DEFIANCE_NO_STAMP=1 runs them all)"
 depends = ["fmt-check", "loader", "crash-test"]
+# Two parallel groups (tools/parallel.py). The first holds everything that
+# reads only what the depends wrote: the Python checks, the parity builds (each
+# with its own --target-dir), the moving-actions bindings (each writes its own
+# out/*-sites.json) and the cargo tests (target/debug, which no check reads
+# while target/release exists). The second holds the checks that read the
+# first group's outputs: the parity DLLs and the out/*-sites.json files.
+# patch_inventory.py check starts every plugin's writes per build: no overlaps,
+# the same in either start order. test_moving_actions_animation.py also needs
+# the PAK-derived assets, so it runs by hand.
 run = [
-  "python tools/comment_audit.py --check",
-  "python tools/test_builds.py",
-  "python tools/test_stamp.py",
-  "python tools/test_check_injector.py",
-  "python tools/test_versions.py",
-  "python tools/test_layout.py",
-  "python tools/test_variant.py",
-  "python tools/module_writes.py check",
-  "python tools/test_patch_inventory.py",
-  "python tools/stamp.py test tools/test_chainlayout.py",
-  "python tools/stamp.py test tools/test_chooser.py",
-  "python tools/stamp.py test tools/test_move.py",
-  "cargo build --release --manifest-path plugins/vehicle-arrival/Cargo.toml --features parity-test --target-dir out/vehicle-arrival-parity",
-  "python tools/test_vehicle_arrival.py out/vehicle-arrival-parity/release/defiance_plugin_vehicle_arrival.dll",
-  "cargo test --manifest-path plugins/weapon-drops/Cargo.toml",
-  "cargo build --release --manifest-path plugins/weapon-drops/Cargo.toml --features parity-test --target-dir out/weapon-drops-parity",
-  "python tools/test_weapon_drops.py out/weapon-drops-parity/release/defiance_plugin_weapon_drops.dll",
-  "python tools/test_package_weapon_drops.py",
-  "python tools/stamp.py test tools/test_orders.py",
-  "python tools/stamp.py test tools/test_icon.py",
-  "python tools/stamp.py test tools/test_preview.py",
-  "python tools/stamp.py test tools/test_preview_subset.py",
-  "python tools/stamp.py test tools/test_building_tab.py",
-  "python tools/stamp.py test tools/test_selection.py",
-  "python tools/stamp.py test tools/test_region.py",
-  "python tools/stamp.py test tools/test_trace.py",
-  "python tools/stamp.py test tools/test_pose.py",
-  "python tools/stamp.py test tools/test_posture.py",
-  "python tools/stamp.py test tools/test_firing.py",
-  "python tools/stamp.py test tools/test_vehicle_dynamic.py",
-  "python tools/stamp.py test tools/test_vehicle_lifecycle.py",
-  "python tools/test_vehicle_targeting.py",
-  # moving-actions host tests read out/*-sites.json and the release plugins;
-  # test_moving_actions_animation.py also needs the PAK-derived assets, so it runs by hand
-  "python tools/moving_actions_bindings.py",
-  "python tools/moving_actions_sync_bindings.py",
-  "python tools/moving_actions_render_sync_bindings.py",
-  "python tools/moving_grenades_bindings.py",
-  "python tools/test_moving_actions.py",
-  "python tools/test_moving_actions_sync.py",
-  "python tools/test_moving_actions_render_sync.py",
-  "python tools/test_moving_grenades.py",
-  "cargo build --release --target-dir out/controls-parity -p defiance-plugin-core -p defiance-plugin-firing -p defiance-plugin-selection -p defiance-plugin-pickup --features defiance-plugin-core/parity-test,defiance-plugin-firing/parity-test,defiance-plugin-selection/parity-test,defiance-plugin-pickup/parity-test",
-  "python tools/stamp.py test tools/test_pickup_rust.py out/controls-parity/release/defiance_plugin_feature_pickup.dll",
-  "python tools/stamp.py test tools/test_firing_rust.py out/controls-parity/release",
-  "python tools/stamp.py test tools/test_selection_rust.py out/controls-parity/release",
-  "python tools/stamp.py test tools/test_ammo.py",
-  "python tools/test_package_unit_inspection.py",
-  "python tools/test_stage.py",
-  "python tools/test_config.py",
-  "python tools/test_package.py",
-  "python tools/stamp.py test tools/test_plugins.py",
-  # every plugin's writes, per build: no overlaps, the same in either start order
-  "python tools/patch_inventory.py check",
-  "cargo test --workspace",
-  "cargo test --manifest-path plugins/legion-vehicle-hacking/Cargo.toml",
-  "python tools/sigs.py",
-  "python tools/check_injector.py",
+  """python tools/parallel.py \
+  "python tools/comment_audit.py --check" \
+  "python tools/test_builds.py" \
+  "python tools/test_stamp.py" \
+  "python tools/test_check_injector.py" \
+  "python tools/test_versions.py" \
+  "python tools/test_layout.py" \
+  "python tools/test_variant.py" \
+  "python tools/module_writes.py check" \
+  "python tools/test_patch_inventory.py" \
+  "python tools/stamp.py test tools/test_chainlayout.py" \
+  "python tools/stamp.py test tools/test_vtable_slots.py" \
+  "python tools/stamp.py test tools/test_chooser.py" \
+  "python tools/stamp.py test tools/test_move.py" \
+  "cargo build --release --manifest-path plugins/vehicle-arrival/Cargo.toml --features parity-test --target-dir out/vehicle-arrival-parity" \
+  "cargo test --manifest-path plugins/weapon-drops/Cargo.toml" \
+  "cargo build --release --manifest-path plugins/weapon-drops/Cargo.toml --features parity-test --target-dir out/weapon-drops-parity" \
+  "python tools/test_package_weapon_drops.py" \
+  "python tools/stamp.py test tools/test_orders.py" \
+  "python tools/stamp.py test tools/test_icon.py" \
+  "python tools/stamp.py test tools/test_preview.py" \
+  "python tools/stamp.py test tools/test_preview_subset.py" \
+  "python tools/stamp.py test tools/test_building_tab.py" \
+  "python tools/stamp.py test tools/test_selection.py" \
+  "python tools/stamp.py test tools/test_region.py" \
+  "python tools/stamp.py test tools/test_trace.py" \
+  "python tools/stamp.py test tools/test_pose.py" \
+  "python tools/stamp.py test tools/test_posture.py" \
+  "python tools/stamp.py test tools/test_firing.py" \
+  "python tools/stamp.py test tools/test_vehicle_dynamic.py" \
+  "python tools/stamp.py test tools/test_vehicle_lifecycle.py" \
+  "python tools/stamp.py test tools/test_vehicle_targeting.py" \
+  "python tools/moving_actions_bindings.py" \
+  "python tools/moving_actions_sync_bindings.py" \
+  "python tools/moving_actions_render_sync_bindings.py" \
+  "python tools/moving_grenades_bindings.py" \
+  "cargo build --release --target-dir out/controls-parity -p defiance-plugin-core -p defiance-plugin-firing -p defiance-plugin-selection -p defiance-plugin-pickup --features defiance-plugin-core/parity-test,defiance-plugin-firing/parity-test,defiance-plugin-selection/parity-test,defiance-plugin-pickup/parity-test" \
+  "python tools/stamp.py test tools/test_ammo.py" \
+  "python tools/test_package_unit_inspection.py" \
+  "python tools/test_stage.py" \
+  "python tools/test_config.py" \
+  "python tools/test_package.py" \
+  "python tools/stamp.py test tools/test_plugins.py" \
+  "python tools/stamp.py test tools/patch_inventory.py check" \
+  "cargo test --workspace" \
+  "cargo test --manifest-path plugins/legion-vehicle-hacking/Cargo.toml" \
+  "python tools/sigs.py" \
+  "python tools/check_injector.py"
+""",
+  """python tools/parallel.py \
+  "python tools/test_vehicle_arrival.py out/vehicle-arrival-parity/release/defiance_plugin_vehicle_arrival.dll" \
+  "python tools/test_weapon_drops.py out/weapon-drops-parity/release/defiance_plugin_weapon_drops.dll" \
+  "python tools/test_moving_actions.py" \
+  "python tools/test_moving_actions_sync.py" \
+  "python tools/test_moving_actions_render_sync.py" \
+  "python tools/test_moving_grenades.py" \
+  "python tools/stamp.py test tools/test_pickup_rust.py out/controls-parity/release/defiance_plugin_feature_pickup.dll" \
+  "python tools/stamp.py test tools/test_firing_rust.py out/controls-parity/release" \
+  "python tools/stamp.py test tools/test_selection_rust.py out/controls-parity/release"
+""",
 ]
 
 [tasks.probe]
@@ -317,24 +329,29 @@ run = "python tools/package_weapon_drops.py"
 [tasks.loader]
 description = "Build the loader, built-in plugins and standalone plugins"
 depends = ["assemble"]
+# Each standalone plugin is its own workspace with its own target/, so they
+# build at once (tools/parallel.py) beside the main workspace.
 run = [
-  "cargo build --release",
+  """python tools/parallel.py \
+  "cargo build --release" \
+  "cargo build --release --manifest-path plugins/regroup/Cargo.toml" \
+  "cargo build --release --manifest-path plugins/expanded-ammo-menu/Cargo.toml" \
+  "cargo build --release --manifest-path plugins/squad-management-scroll/Cargo.toml" \
+  "cargo build --release --manifest-path plugins/unit-inspection/Cargo.toml" \
+  "cargo build --release --manifest-path plugins/ability-groups/Cargo.toml" \
+  "cargo build --release --manifest-path plugins/legion-vehicle-hacking/Cargo.toml" \
+  "cargo build --release --manifest-path plugins/vehicle-arrival/Cargo.toml" \
+  "cargo build --release --manifest-path plugins/cover-markers/Cargo.toml" \
+  "cargo build --release --manifest-path plugins/weapon-drops/Cargo.toml" \
+  "cargo build --release --manifest-path plugins/moving-actions/Cargo.toml" \
+  "cargo build --release --manifest-path plugins/moving-actions-animation/Cargo.toml" \
+  "cargo build --release --manifest-path plugins/moving-actions-sync/Cargo.toml" \
+  "cargo build --release --manifest-path plugins/moving-actions-render-sync/Cargo.toml" \
+  "cargo build --release --manifest-path plugins/moving-grenades/Cargo.toml"
+""",
   "python tools/check_injector.py",
-  "cargo build --release --manifest-path plugins/regroup/Cargo.toml",
-  "cargo build --release --manifest-path plugins/expanded-ammo-menu/Cargo.toml",
-  "cargo build --release --manifest-path plugins/squad-management-scroll/Cargo.toml",
-  "cargo build --release --manifest-path plugins/unit-inspection/Cargo.toml",
-  "cargo build --release --manifest-path plugins/ability-groups/Cargo.toml",
-  "cargo build --release --manifest-path plugins/legion-vehicle-hacking/Cargo.toml",
-  "cargo build --release --manifest-path plugins/vehicle-arrival/Cargo.toml",
-  "cargo build --release --manifest-path plugins/cover-markers/Cargo.toml",
-  "cargo build --release --manifest-path plugins/weapon-drops/Cargo.toml",
-  "cargo build --release --manifest-path plugins/moving-actions/Cargo.toml",
-  "cargo build --release --manifest-path plugins/moving-actions-animation/Cargo.toml",
-  "cargo build --release --manifest-path plugins/moving-actions-sync/Cargo.toml",
-  "cargo build --release --manifest-path plugins/moving-actions-render-sync/Cargo.toml",
-  "cargo build --release --manifest-path plugins/moving-grenades/Cargo.toml",
-  # the sidecar manifests come from the loader's authoritative built-in table
+  # Core's sidecar manifest comes from the loader's built-in table; the feature
+  # plugins' are their committed plugins/*/*.plugin.json, checked and copied
   'target\release\manifest-gen.exe --out target\release',
 ]
 
@@ -403,7 +420,7 @@ run = [
 ]
 
 [tasks.loader-stage]
-description = "Build, then copy the loader, plugins and generated companion mods into the game (set DEFIANCE_GAME_DIR)"
+description = "Build, then copy the loader, plugins and generated companion mods into the game (set DEFIANCE_GAME_DIR, plus DEFIANCE_EXTRA_GAME_DIRS for more installs)"
 depends = ["loader"]
 run = "python tools/stage.py"
 
@@ -423,7 +440,7 @@ depends = ["loader"]
 run = "python tools/package.py --startup exe"
 
 [tasks.loader-unstage]
-description = "Remove the loader and its plugins from the game (set DEFIANCE_GAME_DIR)"
+description = "Remove the loader and its plugins from the game (DEFIANCE_GAME_DIR and DEFIANCE_EXTRA_GAME_DIRS)"
 run = "python tools/stage.py --uninstall"
 
 [tasks.moving-actions]

@@ -44,7 +44,7 @@ fn c_string(text: *const core::ffi::c_char) -> String {
 
 /// A warning when the version a DLL exports differs from its manifest's, or
 /// `None` when they agree. The manifest is the authority: dependency ranges,
-/// the built-in table check and the lifecycle all use its version, so a player
+/// Core's built-in table check and the lifecycle all use its version, so a player
 /// can relabel a plugin by editing the manifest alone. The DLL's own version
 /// is only reported.
 fn version_disagreement(exported: &str, declared: crate::manifest::Version) -> Option<String> {

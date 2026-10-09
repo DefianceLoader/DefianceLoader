@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.squad-management-scroll",
   "dll": "defiance_plugin_squad_management_scroll.dll",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "abi": 5,
   "patch_contract": true,
   "group": "weapons",

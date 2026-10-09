@@ -20,7 +20,7 @@ pub use paths::Paths;
 pub use snapshot::{Declared, GroupInput, Snapshot};
 
 use super::manifest;
-use crate::config::schema::{Restart, SettingDecl, ValueType};
+use crate::config::schema::SettingDecl;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -251,7 +251,7 @@ fn manifest_declarations(catalog: &manifest::Catalog) -> (Vec<Declared>, Vec<Str
         let Some(manifest) = &entry.manifest else {
             continue;
         };
-        // Built-ins come from the authoritative table, not the packaged file.
+        // Core declares no settings; its packaged file is checked, not read.
         if builtin::find(&manifest.id).is_some() || !builtin::safe_group(&manifest.group) {
             continue;
         }
@@ -263,29 +263,25 @@ fn manifest_declarations(catalog: &manifest::Catalog) -> (Vec<Declared>, Vec<Str
     (extras, groups.into_iter().collect())
 }
 
+/// The declarations of every shipped feature plugin's committed manifest, as
+/// startup reads them from an installation that has them all.
+#[cfg(test)]
+pub(crate) fn feature_declarations() -> Vec<Declared> {
+    manifest::FEATURE_MANIFESTS
+        .iter()
+        .flat_map(|(dll, _)| {
+            let manifest = manifest::feature_manifest(dll).unwrap();
+            manifest
+                .settings
+                .iter()
+                .map(|setting| leak_setting(&manifest.id, &manifest.group, setting))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 fn leak_setting(owner: &str, group: &str, setting: &manifest::ManifestSetting) -> Declared {
-    let ty = match setting.ty.as_str() {
-        "bool" => ValueType::Bool,
-        "int" => ValueType::Integer {
-            min: i64::MIN,
-            max: i64::MAX,
-        },
-        "number" => ValueType::Number {
-            min: f64::MIN,
-            max: f64::MAX,
-        },
-        // A manifest choice has no static spelling list in core; treat it as
-        // text. The initial schema only ships booleans.
-        _ => ValueType::Text,
-    };
-    let decl = SettingDecl {
-        key: Box::leak(setting.key.clone().into_boxed_str()),
-        ty,
-        default: Box::leak(setting.default.clone().into_boxed_str()),
-        description: Box::leak(setting.description.clone().into_boxed_str()),
-        restart: Restart::Startup,
-        sensitive: setting.sensitive,
-    };
+    let decl = manifest::leak_decl(setting);
     Declared {
         owner: Box::leak(owner.to_string().into_boxed_str()),
         group: Box::leak(group.to_string().into_boxed_str()),
@@ -463,7 +459,7 @@ fn load_once() -> Snapshot {
 }
 
 /// Whether the bootstrap still holds a loader key that has no explicit value
-/// in its group file.
+/// in its group file, or `[loader]` still holds a performance setting.
 fn legacy_pending(bootstrap: &parse::Document, inputs: &[GroupInput]) -> bool {
     let Some(core) = inputs.iter().find(|input| input.group == "core") else {
         return false;
@@ -474,10 +470,17 @@ fn legacy_pending(bootstrap: &parse::Document, inputs: &[GroupInput]) -> bool {
         .and_then(|text| text.as_ref().ok())
         .map(|text| parse::parse(text))
         .unwrap_or_default();
-    builtin::LOADER_SETTINGS.iter().any(|decl| {
+    let loader = builtin::LOADER_SETTINGS.iter().any(|decl| {
         bootstrap.top(decl.key).is_some()
             && document.lookup(builtin::LOADER_SECTION, decl.key).is_none()
-    })
+    });
+    let performance = builtin::PERFORMANCE_ID;
+    loader
+        || builtin::performance_settings().iter().any(|decl| {
+            document.lookup(builtin::LOADER_SECTION, decl.key).is_some()
+                || (bootstrap.top(decl.key).is_some()
+                    && document.lookup(performance, decl.key).is_none())
+        })
 }
 
 /// The loaded snapshot, if `load` has run.
@@ -708,6 +711,17 @@ fn api_setting(snapshot: &Snapshot, section: &str, key: &str, value: String) -> 
 mod tests {
     use super::*;
 
+    /// Install the shipped feature plugins, with their committed manifests,
+    /// under the loader root `root`, as a release does.
+    pub(super) fn install_features(root: &Path) {
+        let plugins = root.join("plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+        for (dll, json) in manifest::FEATURE_MANIFESTS {
+            std::fs::write(plugins.join(dll), b"fixture; never loaded here").unwrap();
+            std::fs::write(plugins.join(manifest::sidecar_name(dll)), json).unwrap();
+        }
+    }
+
     fn unique_dir(tag: &str) -> PathBuf {
         let base = std::env::temp_dir().join(format!(
             "defiance-config-{tag}-{}-{:?}",
@@ -733,6 +747,7 @@ mod tests {
         let base = unique_dir("first-run");
         let exe = base.join("bin");
         std::fs::create_dir_all(&exe).unwrap();
+        install_features(&base.join("DefianceLoader"));
         let discovered = discover(&exe);
         assert!(exe.join(paths::BOOTSTRAP_FILE).is_file());
         // The default root is a sibling of bin.
@@ -744,10 +759,11 @@ mod tests {
             );
         }
         // And the generated files validate against the schema.
-        let snapshot = Snapshot::build(
+        let snapshot = Snapshot::build_with_extras(
             discovered.paths.clone(),
             &discovered.inputs,
             &discovered.bootstrap,
+            &discovered.extras,
         );
         assert!(snapshot.problems.is_empty(), "{:?}", snapshot.problems);
         assert_eq!(snapshot.integer(builtin::LOADER_SECTION, "wait"), Some(60));
@@ -762,6 +778,7 @@ mod tests {
         std::fs::write(exe.join(paths::GAME_EXE), b"").unwrap();
         for root in ["../DefianceLoader", "../custom-loader-root"] {
             std::fs::write(exe.join(paths::BOOTSTRAP_FILE), format!("root = {root}\n")).unwrap();
+            install_features(&paths::resolve_against(&exe, root));
             let config = paths::resolve_against(&exe, root).join("config");
             std::fs::create_dir_all(&config).unwrap();
             std::fs::write(
@@ -1010,6 +1027,7 @@ mod startup_regressions {
                 NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             ));
             std::fs::create_dir_all(path.join("bin")).unwrap();
+            super::tests::install_features(&path.join("DefianceLoader"));
             Self(path)
         }
         fn load(&self) -> (Snapshot, bool) {
@@ -1217,6 +1235,100 @@ mod startup_regressions {
             snapshot.get("loader", "wait").unwrap().provenance,
             snapshot::Provenance::Group { .. }
         ));
+    }
+
+    #[test]
+    fn performance_settings_left_in_loader_keep_applying_until_migrated() {
+        let f = Fixture::new();
+        std::fs::write(f.0.join("bin/defiance-loader.ini"), "tree_sway=half\n").unwrap();
+        let directory = f.0.join("DefianceLoader/config");
+        std::fs::create_dir_all(&directory).unwrap();
+        let core = directory.join("core.ini");
+        std::fs::write(
+            &core,
+            "[loader]\ngrass_sort = engine\nview_sort = engine\n\
+             [defiance.performance]\nview_sort = cached\n",
+        )
+        .unwrap();
+        let performance = builtin::PERFORMANCE_ID;
+        let check = |snapshot: &Snapshot| {
+            assert_eq!(
+                snapshot.text(performance, "grass_sort").as_deref(),
+                Some("engine")
+            );
+            assert_eq!(
+                snapshot.text(performance, "view_sort").as_deref(),
+                Some("cached")
+            );
+            assert_eq!(
+                snapshot.text(performance, "tree_sway").as_deref(),
+                Some("half")
+            );
+            assert_eq!(
+                snapshot.text(performance, "shadow_fit").as_deref(),
+                Some("trimmed")
+            );
+            assert!(snapshot.unknown.is_empty(), "{:?}", snapshot.unknown);
+            assert!(snapshot.problems.is_empty());
+        };
+        for _ in 0..2 {
+            let (snapshot, pending) = f.load();
+            assert!(pending);
+            check(&snapshot);
+            let warnings = snapshot.warnings.join("\n");
+            assert!(
+                warnings.contains("moved from [loader] to [defiance.performance]"),
+                "{warnings}"
+            );
+            assert!(
+                warnings.contains("[defiance.performance] wins"),
+                "{warnings}"
+            );
+            // Generation adds no default that would hide a legacy value.
+            let text = std::fs::read_to_string(&core).unwrap();
+            assert!(
+                parse::parse(&text)
+                    .lookup(performance, "grass_sort")
+                    .is_none(),
+                "{text}"
+            );
+            assert!(
+                parse::parse(&text)
+                    .lookup(performance, "tree_sway")
+                    .is_none(),
+                "{text}"
+            );
+        }
+        let original = std::fs::read_to_string(&core).unwrap();
+        let bootstrap = parse::parse("tree_sway=half\n");
+        migration::apply(&migration::plan_loader_keys(
+            &bootstrap,
+            &core,
+            Some(&original),
+        ))
+        .unwrap();
+        let (snapshot, pending) = f.load();
+        assert!(!pending);
+        check(&snapshot);
+        assert!(
+            !snapshot.warnings.join("\n").contains("[loader]"),
+            "{:?}",
+            snapshot.warnings
+        );
+    }
+
+    #[test]
+    fn performance_tuning_is_not_unloaded_while_the_game_runs() {
+        let manifest = manifest::parse(
+            include_str!(
+                "../../../../plugins/performance/defiance_plugin_feature_performance.plugin.json"
+            ),
+            "defiance_plugin_feature_performance.dll",
+        )
+        .unwrap();
+        assert_eq!(manifest.id, builtin::PERFORMANCE_ID);
+        assert!(!manifest.hot_reload);
+        assert_eq!(manifest.group, "core");
     }
 
     #[test]

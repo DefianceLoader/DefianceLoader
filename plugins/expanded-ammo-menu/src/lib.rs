@@ -3,7 +3,7 @@
 //! combined-step callback is cleared on stop; native layout patches are not hot-unloaded.
 use defiance_api::{
     AmmoStepV1, Api, PatchContractV1, Plugin, ABI_VERSION, LOG_ERROR, LOG_INFO, LOG_WARN,
-    PATCH_KIND_ENTRY,
+    PATCH_KIND_ENTRY, SYMBOL_USE_CALL, SYMBOL_USE_ENTRY_HOOK,
 };
 use defiance_core::sites::{code_ranges, Image};
 mod combined;
@@ -76,7 +76,6 @@ pub struct Offsets {
     pub gunner_count: usize,
     pub gunner_get: usize,
     pub pool_get: usize,
-    pub world_player: usize,
     /// The AI's "set this ammo type" virtual method, used by the union click.
     pub ai_set: usize,
     /// The GUI owner's live ammunition-tooltip controller.
@@ -110,14 +109,28 @@ unsafe fn log(api: &Api, level: u32, text: &str) {
         (api.log)(level, text.as_ptr());
     }
 }
-/// game.dll's base, its size and its resolved sites. The sites are found in
+/// game.dll's base, its size and its resolved sites. The redraw and the
+/// widget move come from Core's game-symbol catalog; the rest are found in
 /// game.dll as it was before any plugin hooked it, since another plugin may
 /// hook a function the combined view only calls (unit inspection hooks
-/// `fillSlot`); the bytes this plugin writes are checked live before writing.
+/// `fillSlot`). The bytes this plugin writes are checked live before writing.
 unsafe fn resolve(api: &Api) -> Result<(*mut u8, usize, sites::Sites), String> {
+    use defiance_feature_sdk::services::game_symbol;
+    let redraw = game_symbol(sites::REDRAW, 1, SYMBOL_USE_ENTRY_HOOK)?;
+    let layout = game_symbol(sites::LAYOUT, 1, SYMBOL_USE_CALL)?;
+    if redraw.span != sites::REDRAW_SPAN {
+        return Err(format!(
+            "Core's ammo menu redraw span is {}, not {}",
+            redraw.span,
+            sites::REDRAW_SPAN
+        ));
+    }
     let base = (api.module_base)(c"game.dll".as_ptr()).cast::<u8>();
     if base.is_null() {
         return Err("game.dll is not loaded".into());
+    }
+    if redraw.module != c"game.dll" || layout.module != c"game.dll" {
+        return Err("Core placed the menu symbols outside game.dll".into());
     }
     let size = (api.module_size)(base.cast());
     let logic = (api.module_base)(c"logic.dll".as_ptr());
@@ -144,7 +157,11 @@ unsafe fn resolve(api: &Api) -> Result<(*mut u8, usize, sites::Sites), String> {
         image: &image,
         base: base as usize,
     };
-    Ok((base, size, sites::sites(&game, &logic)?))
+    Ok((
+        base,
+        size,
+        sites::sites(&game, &logic, redraw.rva, layout.rva)?,
+    ))
 }
 
 /// Whether the live bytes at `rva` are `before`.

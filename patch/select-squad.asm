@@ -6,17 +6,17 @@
 ; [rsp+0x20] for the end, outside the 32-byte outgoing shadow space.
 mov rax, qword ptr [rbx]
 mov rcx, rbx
-call qword ptr [rax + 0xb0]
+call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
 mov rcx, qword ptr [rax + 0x28]
 test rcx, rcx
 jz 0x418da7
 mov rax, qword ptr [rcx]
-call qword ptr [rax + {squad_roster}]
+call qword ptr [rax + {squad_roster}]    ; vt:logic/SquadAiFacet@Leonardo
 test rax, rax
 jz 0x418da7
 mov rdx, qword ptr [rax]
 mov rcx, rax
-call qword ptr [rdx + 0x68]
+call qword ptr [rdx + 0x68]    ; vt:logic/SquadHolderFacet@Leonardo
 mov rbx, qword ptr [rax]
 mov rax, qword ptr [rax + 8]
 mov qword ptr [rsp + 0x20], rax
@@ -28,11 +28,11 @@ add rbx, 8
 test rcx, rcx
 jz next
 mov rax, qword ptr [rcx]
-call qword ptr [rax + 0xb0]
+call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
 mov rcx, qword ptr [rax + 0x50]
 test rcx, rcx
 jz next
 mov rax, qword ptr [rcx]
 mov dl, 1
-call qword ptr [rax + 0x50]
+call qword ptr [rax + 0x50]    ; vt:logic/SelectableFacet@Leonardo
 jmp next

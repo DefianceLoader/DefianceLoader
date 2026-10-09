@@ -20,6 +20,12 @@ defiance-feature-sdk = { path = "../../crates/feature-sdk" }
 [build-dependencies]
 defiance-build-support = { path = "../../crates/build-support" }
 
+# Tests build with this profile. The site tests scan every build's game DLLs,
+# which unoptimized takes about a minute per workspace; optimized, a few seconds.
+# Debug assertions and overflow checks stay on.
+[profile.dev]
+opt-level = 2
+
 [profile.release]
 panic = "abort"
 debug = 2

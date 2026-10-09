@@ -42,9 +42,10 @@ and restart. No installed game file is patched on disk.
 
 ## Supported builds
 
-The sites test resolves every `logic.dll` site on GOG 2026-09-14 / 2026-09-25
-and Steam 2026-09-22 / 2026-09-25, and the `world2.dll` render-node callbacks
-on the one `world2.dll` snapshot in `bin/` (GOG 2026-09-25). Unverified:
+The sites test resolves every `logic.dll` site on GOG 2026-09-14 / 2026-09-25 /
+2026-10-07 and Steam 2026-09-22 / 2026-09-25 / 2026-10-07, and the `world2.dll` render-node
+callbacks on the two `world2.dll` snapshots in `bin/` (GOG 2026-09-25 and
+2026-10-07). Unverified:
 
 - the `world2.dll` of GOG 2026-09-14 and Steam 2026-09-22 (no snapshot);
 - the December 2025 builds: their `logic.dll` sites resolve, but no

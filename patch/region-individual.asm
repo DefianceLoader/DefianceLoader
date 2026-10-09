@@ -43,7 +43,7 @@ marquee_squads:
     mov rcx, rbx
     mov rax, qword ptr [rcx]
     mov edx, 0x20
-    call qword ptr [rax + 0x98]
+    call qword ptr [rax + 0x98]    ; vt:essence/EntityImpl@Essence@Galileo
     test al, al
     jnz marquee_reject                 ; a soldier: his squad counts instead
     mov rcx, rbx
@@ -55,26 +55,26 @@ marquee_squads:
     mov rcx, rbx
     mov rax, qword ptr [rcx]
     mov edx, 0x10
-    call qword ptr [rax + 0x98]
+    call qword ptr [rax + 0x98]    ; vt:essence/EntityImpl@Essence@Galileo
     test al, al
     jz marquee_reject                  ; not a squad, and the stock test refused
     ; any soldier the stock test takes: squad entity vt+0xb0 -> facets +0x28
     ; -> its roster -> vt+0x68, the members' vector, as patch/select-squad.asm
     mov rcx, rbx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz marquee_reject
     mov rcx, qword ptr [rax + 0x28]
     test rcx, rcx
     jz marquee_reject
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + {squad_roster}]
+    call qword ptr [rax + {squad_roster}]    ; vt:logic/SquadAiFacet@Leonardo
     test rax, rax
     jz marquee_reject
     mov rcx, rax
     mov rdx, qword ptr [rax]
-    call qword ptr [rdx + 0x68]
+    call qword ptr [rdx + 0x68]    ; vt:logic/SquadHolderFacet@Leonardo
     mov rbx, qword ptr [rax]
     mov r12, qword ptr [rax + 8]
 marquee_member:
@@ -91,7 +91,7 @@ marquee_member:
     ; the move order and dismount.
     mov qword ptr [rsp + 0x20], rcx
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     mov rax, qword ptr [rax + 0x50]
     test rax, rax
     jz marquee_member
@@ -110,7 +110,7 @@ marquee_soldiers:
     mov rcx, rbx
     mov rax, qword ptr [rcx]
     mov edx, 0x10
-    call qword ptr [rax + 0x98]
+    call qword ptr [rax + 0x98]    ; vt:essence/EntityImpl@Essence@Galileo
     test al, al
     jnz marquee_reject                 ; a squad container
     mov rcx, rbx
@@ -141,7 +141,7 @@ marquee_select:
     mov rcx, qword ptr [rbx]
     mov rax, qword ptr [rcx]
     mov edx, 0x10
-    call qword ptr [rax + 0x98]
+    call qword ptr [rax + 0x98]    ; vt:essence/EntityImpl@Essence@Galileo
     test al, al
     jz marquee_select_stock
     mov rdx, qword ptr [rbx]
@@ -151,13 +151,13 @@ marquee_select:
 marquee_select_stock:
     mov rcx, qword ptr [rbx]
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     mov rcx, qword ptr [rax + 0x50]
     test rcx, rcx
     jz marquee_select_done
     mov rax, qword ptr [rcx]
     mov dl, 1
-    call qword ptr [rax + 0x50]
+    call qword ptr [rax + 0x50]    ; vt:logic/SelectableFacet@Leonardo
 marquee_select_done:
     add rsp, 0x28
     ret
@@ -187,7 +187,7 @@ region_icon_gate:
     mov rcx, rdi
     mov rax, qword ptr [rcx]
     mov edx, 0x20
-    call qword ptr [rax + 0x98]
+    call qword ptr [rax + 0x98]    ; vt:essence/EntityImpl@Essence@Galileo
     add rsp, 0x20
     test al, al
     jnz region_position_only

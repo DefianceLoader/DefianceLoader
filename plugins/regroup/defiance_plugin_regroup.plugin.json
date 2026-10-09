@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.regroup",
   "dll": "defiance_plugin_regroup.dll",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "abi": 5,
   "patch_contract": true,
   "group": "infantry",
@@ -45,7 +45,7 @@
   "depends": [
     {
       "id": "defiance.core",
-      "min": "0.1.0"
+      "min": "0.5.0"
     },
     {
       "id": "defiance.selection",

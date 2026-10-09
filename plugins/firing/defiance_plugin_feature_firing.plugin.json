@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "id": "defiance.firing",
+  "dll": "defiance_plugin_feature_firing.dll",
+  "version": "0.4.1",
+  "abi": 5,
+  "patch_contract": true,
+  "group": "weapons",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Change firing mode for selected soldiers without changing their unselected squadmates. Select the whole squad to change everyone. Requires selection. Disabling this restores normal squad firing-mode controls; ammunition toggles are a separate setting. Restart required."
+    }
+  ],
+  "depends": [
+    {
+      "id": "defiance.core",
+      "min": "0.7.0"
+    },
+    {
+      "id": "defiance.selection",
+      "min": "0.6.2"
+    }
+  ],
+  "conflicts": []
+}

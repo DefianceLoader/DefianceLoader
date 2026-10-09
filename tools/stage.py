@@ -28,8 +28,13 @@ already started it.
     python tools/stage.py --game "C:\\Games\\...\\bin"
     python tools/stage.py --game "..." --dry-run
     python tools/stage.py --game "..." --uninstall
+    python tools/stage.py --plugins-only --extra plugins/some-plugin:some_plugin_dll_stem
 
-`--game` may be left out if DEFIANCE_GAME_DIR is set.
+`--game` may be left out if DEFIANCE_GAME_DIR is set; it may be repeated to
+stage into several installs. Without `--game`, every directory in
+DEFIANCE_EXTRA_GAME_DIRS (separated by `os.pathsep`) is staged after
+DEFIANCE_GAME_DIR, so one run keeps a GOG and a Steam install in step. Other
+tools read only DEFIANCE_GAME_DIR.
 """
 import argparse
 import hashlib
@@ -135,6 +140,27 @@ def standalone_pairs():
         manifest = ROOT / workspace / (stem + ".plugin.json")
         if dll.is_file() and manifest.is_file():
             pairs.append((dll, manifest))
+    return pairs
+
+
+def extra_pairs(specs):
+    """The (DLL, manifest) pairs for `--extra WORKSPACE:STEM` plugins.
+
+    These are plugins outside `STANDALONE`, such as private test plugins. The
+    workspace is relative to the repository root. Both the built DLL and the
+    manifest beside the workspace must exist.
+    """
+    pairs = []
+    for spec in specs:
+        workspace, _, stem = spec.rpartition(":")
+        if not workspace or not stem:
+            raise SystemExit(f"--extra {spec!r}: expected WORKSPACE:STEM")
+        dll = ROOT / workspace / "target/release" / (stem + ".dll")
+        manifest = ROOT / workspace / (stem + ".plugin.json")
+        for path in (dll, manifest):
+            if not path.is_file():
+                raise SystemExit(f"--extra {spec!r}: {path} is missing; build it first")
+        pairs.append((dll, manifest))
     return pairs
 
 
@@ -366,8 +392,13 @@ class Staging:
             self.act("restore", self.backup, f" -> {self.real}")
             if not self.dry:
                 os.replace(self.backup, self.target)
-        for plugin in sorted(self.plugin_dir.glob(PLUGIN_GLOB)):
-            if looks_ours(plugin) or self.force:
+        # Extra plugins may be named outside PLUGIN_GLOB; they are ours by name.
+        extra = {dll.name.lower() for dll, _ in self.extra_plugins}
+        installed = set(self.plugin_dir.glob(PLUGIN_GLOB))
+        installed |= {self.plugin_dir / dll.name for dll, _ in self.extra_plugins
+                      if (self.plugin_dir / dll.name).is_file()}
+        for plugin in sorted(installed):
+            if plugin.name.lower() in extra or looks_ours(plugin) or self.force:
                 self.act("remove", plugin)
                 if not self.dry:
                     plugin.unlink()
@@ -388,10 +419,18 @@ class Staging:
         print(f"done. {self.game / 'defiance-loader.log'} and the .ini are left in place")
 
 
+def game_dirs_from_env():
+    """DEFIANCE_GAME_DIR, then each entry of DEFIANCE_EXTRA_GAME_DIRS."""
+    dirs = [os.environ.get("DEFIANCE_GAME_DIR", "")]
+    dirs += os.environ.get("DEFIANCE_EXTRA_GAME_DIRS", "").split(os.pathsep)
+    return [d for d in (d.strip() for d in dirs) if d]
+
+
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--game", default=os.environ.get("DEFIANCE_GAME_DIR"),
-                        help="the game's bin directory (or set DEFIANCE_GAME_DIR)")
+    parser.add_argument("--game", action="append", default=[],
+                        help="the game's bin directory (repeatable; or set DEFIANCE_GAME_DIR "
+                             "and DEFIANCE_EXTRA_GAME_DIRS)")
     parser.add_argument("--source", default=str(DEFAULT_SOURCE),
                         help=f"where the built files are (default {DEFAULT_SOURCE})")
     parser.add_argument("--uninstall", action="store_true", help="remove instead of install")
@@ -400,22 +439,32 @@ def main(argv):
     parser.add_argument("--dry-run", action="store_true", help="print the plan and change nothing")
     parser.add_argument("--plugins-only", action="store_true",
                         help="copy only the plugin DLLs and manifests (while the game runs, for hot reload)")
+    parser.add_argument("--extra", action="append", default=[], metavar="WORKSPACE:STEM",
+                        help="also stage WORKSPACE/target/release/STEM.dll and WORKSPACE/STEM.plugin.json "
+                             "(repeatable; for plugins outside the standalone list)")
     args = parser.parse_args(argv)
 
-    if not args.game:
+    games = args.game or game_dirs_from_env()
+    if not games:
         parser.error("give --game DIR or set DEFIANCE_GAME_DIR")
-    game = bin_directory(args.game)
-    if not game.is_dir():
-        parser.error(f"{game} is not a directory")
-    staging = Staging(game, pathlib.Path(args.source), args.force, args.dry_run,
-                      extra_plugins=standalone_pairs(), expect_standalone=True,
-                      companion=not args.plugins_only)
-    if args.uninstall:
-        staging.uninstall()
-    elif args.plugins_only:
-        staging.install_plugins()
-    else:
-        staging.install()
+    for path in games:
+        game = bin_directory(path)
+        if not game.is_dir():
+            parser.error(f"{game} is not a directory")
+    for path in games:
+        game = bin_directory(path)
+        if len(games) > 1:
+            print(f"== {game}")
+        staging = Staging(game, pathlib.Path(args.source), args.force, args.dry_run,
+                          extra_plugins=standalone_pairs() + extra_pairs(args.extra),
+                          expect_standalone=True,
+                          companion=not args.plugins_only)
+        if args.uninstall:
+            staging.uninstall()
+        elif args.plugins_only:
+            staging.install_plugins()
+        else:
+            staging.install()
     return 0
 
 

@@ -37,7 +37,8 @@ running battle, hot reload it, or unload its patches while menus exist: it
 changes the game's in-memory menu object layout. To disable, exit the game,
 set `enabled = false`, and restart.
 
-The GOG and Steam December 2025 and September 2026 builds are supported. The
+The GOG and Steam December 2025, September 2026 and 2026-10-07 builds are
+supported. The
 plugin finds its code by signature at startup; a build where any site is
 missing, ambiguous or changed, or where the live patch bytes differ, is
 refused before any write. The normal

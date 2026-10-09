@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "id": "defiance.selection",
+  "dll": "defiance_plugin_feature_selection.dll",
+  "version": "0.6.2",
+  "abi": 5,
+  "patch_contract": true,
+  "group": "infantry",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Select individual soldiers within a squad and show which soldiers are selected. Disabling this also prevents posture, movement, attack, garrison, firing, ammunition, expanded ammo menu and regroup from loading. Pickup and squad-management scrolling can remain enabled. Restart required."
+    },
+    {
+      "key": "squad_tab_modifier",
+      "type": "choice",
+      "default": "ctrl",
+      "choices": [
+        "ctrl",
+        "shift",
+        "off"
+      ],
+      "description": "Hold this with TAB on a selected building to select one squad's occupants at a time; plain TAB selects all occupants. ctrl, shift or off. Restart required."
+    },
+    {
+      "key": "marquee",
+      "type": "choice",
+      "default": "squads",
+      "choices": [
+        "squads",
+        "soldiers"
+      ],
+      "description": "What dragging a box selects. squads: every squad with a soldier or its icon inside, as in the base game; hold Ctrl to select the soldiers inside instead. soldiers: only the soldiers inside. Restart required."
+    }
+  ],
+  "depends": [
+    {
+      "id": "defiance.core",
+      "min": "0.7.0"
+    }
+  ],
+  "conflicts": []
+}

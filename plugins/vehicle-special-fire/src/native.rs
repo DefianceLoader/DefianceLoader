@@ -52,8 +52,19 @@ unsafe fn original_image(api: &Api, module: &CStr) -> Result<(usize, Vec<u8>), S
 }
 
 /// Every site in the loaded logic.dll and game.dll, or why this build is not
-/// supported. Nothing is written.
+/// supported. The ammo-menu redraw comes from Core's game-symbol catalog.
+/// Nothing is written.
 pub(super) unsafe fn resolve(api: &Api) -> Result<Resolved, String> {
+    let redraw = unsafe {
+        defiance_feature_sdk::services::game_symbol(
+            sites::REDRAW,
+            1,
+            defiance_api::SYMBOL_USE_ADDRESS,
+        )
+    }?;
+    if redraw.module != c"game.dll" {
+        return Err("Core placed the ammo menu redraw outside game.dll".into());
+    }
     let (logic, logic_image) = unsafe { original_image(api, c"logic.dll") }?;
     let (game, game_image) = unsafe { original_image(api, c"game.dll") }?;
     let sites = sites::sites(
@@ -65,6 +76,7 @@ pub(super) unsafe fn resolve(api: &Api) -> Result<Resolved, String> {
             image: &game_image,
             base: game,
         },
+        redraw.rva,
     )?;
     Ok(Resolved { logic, game, sites })
 }

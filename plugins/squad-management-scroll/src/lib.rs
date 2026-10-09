@@ -14,6 +14,8 @@ mod sites;
 mod viewport;
 use sites::Sites;
 
+defiance_feature_sdk::service_handshake!();
+
 static ENGINE: OnceLock<native::Engine> = OnceLock::new();
 static ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ORIGINAL_VEHICLE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());

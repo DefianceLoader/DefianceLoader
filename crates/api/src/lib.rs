@@ -268,6 +268,57 @@ pub struct SessionV1 {
     pub before_mission: unsafe extern "C" fn(),
 }
 
+/// [`MissionEventFn`]'s `event`: a mission has loaded (its state is
+/// constructed). Game thread.
+pub const MISSION_LOADED: u32 = 1;
+/// [`MissionEventFn`]'s `event`: the mission has ended (its state is
+/// destroyed). Game thread.
+pub const MISSION_ENDED: u32 = 2;
+/// [`MissionEventFn`]'s `event`: one mission frame is about to run, with
+/// `frame` set. Render thread, before world2.dll's `SceneViewImpl` slot 3.
+pub const MISSION_FRAME: u32 = 4;
+
+/// What a [`MISSION_FRAME`] event carries. Valid only during the callback.
+#[repr(C)]
+pub struct MissionFrameV1 {
+    /// world2.dll's `SceneViewImpl` running the frame.
+    pub scene: *mut c_void,
+    /// The frame's time step in seconds.
+    pub dt: f32,
+}
+
+/// A mission event callback: `event` is one `MISSION_*` value from the
+/// subscribed mask; `frame` is set for [`MISSION_FRAME`] and null otherwise.
+pub type MissionEventFn =
+    unsafe extern "C" fn(context: *mut c_void, event: u32, frame: *const MissionFrameV1);
+
+/// `defiance.loader` / `mission-events`, service version 1. Mission load, end
+/// and frame callbacks, so plugins share one hook on each instead of
+/// installing their own (the loader allows one hook per address).
+#[repr(C)]
+pub struct MissionEventsV1 {
+    /// Init thread only (inside `defiance_plugin_init`). Calls `callback` with
+    /// `context` for each event in `mask` until the plugin unloads, withdraws
+    /// or fails init. Returns a nonzero subscription ID; 0 outside init or for
+    /// an empty mask.
+    pub subscribe:
+        unsafe extern "C" fn(mask: u32, callback: MissionEventFn, context: *mut c_void) -> u64,
+    /// Any thread. 1 when Core feeds [`MISSION_FRAME`] events, else 0: without
+    /// it, frame subscriptions are never called.
+    pub frames: unsafe extern "C" fn() -> i32,
+}
+
+/// `defiance.loader` / `mission-feed`, service version 1. For Core: the hook
+/// that drives [`MissionEventsV1`]'s frame events.
+#[repr(C)]
+pub struct MissionFeedV1 {
+    /// Core hooks the mission frame; [`MissionEventsV1::frames`] reports 1.
+    pub frames: unsafe extern "C" fn(),
+    /// A mission frame is about to run. Dispatched only while a mission is
+    /// loaded.
+    pub frame: unsafe extern "C" fn(scene: *mut c_void, dt: f32),
+}
+
 /// `defiance.loader` / `original`, service version 1. Memory as it was before
 /// any plugin hooked or patched it through the loader, so checking bytes a
 /// plugin only reads or calls does not depend on which plugin started first.
@@ -287,6 +338,46 @@ pub struct OriginalV1 {
 #[repr(C)]
 pub struct SelectionV1 {
     pub is_selected: unsafe extern "C" fn(selectable: *mut c_void) -> u8,
+}
+
+/// A plugin's override of the move cursor, given to [`MovePreviewV1`]. Both
+/// calls run on the game thread with the infantry members the cursor would
+/// move (soldier entities, as `GameAccessV1::copy_members` returns them) and
+/// the cursor's ground point (`x, y, z`). No pointer is retained after a call.
+#[repr(C)]
+pub struct MovePreviewHandlerV1 {
+    pub context: *mut c_void,
+    /// While the cursor is shown. Returns -1 when the handler is inactive, so
+    /// the stock formation preview stays. Otherwise writes up to `capacity`
+    /// points and returns how many it wrote: the first `*assigned` are the
+    /// members' destinations, drawn as arrows; the rest are candidates, drawn
+    /// as smaller markers.
+    pub preview: unsafe extern "C" fn(
+        context: *mut c_void,
+        cursor: *const f32,
+        members: *const *mut c_void,
+        count: usize,
+        points: *mut f32,
+        capacity: usize,
+        assigned: *mut usize,
+    ) -> i32,
+    /// When the cursor issues its move order. Nonzero means the handler gave
+    /// the orders itself and the stock move is skipped.
+    pub confirm: unsafe extern "C" fn(
+        context: *mut c_void,
+        cursor: *const f32,
+        members: *const *mut c_void,
+        count: usize,
+    ) -> u8,
+}
+
+/// `defiance.cover-markers` / `move-preview`, service version 1. Lets one
+/// plugin take over the move cursor's preview and order.
+#[repr(C)]
+pub struct MovePreviewV1 {
+    /// Init thread only. Copies `handler`; returns 0, 1 for null, 2 when
+    /// another plugin already set one.
+    pub set_handler: unsafe extern "C" fn(handler: *const MovePreviewHandlerV1) -> i32,
 }
 
 /// A copied view, not ownership of a game object. All fields describe the same
@@ -331,6 +422,126 @@ pub struct GameAccessV1 {
         unsafe extern "C" fn(selectable: *mut c_void, value: u8, has_pin: u8) -> i32,
     pub squad_firing: unsafe extern "C" fn(ai: *mut c_void) -> u8,
     pub set_squad_firing: unsafe extern "C" fn(ai: *mut c_void, value: u8) -> i32,
+}
+
+/// [`RelationV1::relation`]'s answers. None also covers an entity without a
+/// control or owner.
+pub const RELATION_NONE: u32 = 0;
+pub const RELATION_ALLY: u32 = 1;
+pub const RELATION_ENEMY: u32 = 2;
+pub const RELATION_NEUTRAL: u32 = 3;
+pub const RELATION_ABANDONED: u32 = 4;
+
+/// `defiance.core` / `relation`, version 1. Read-only, game thread only. An
+/// argument must be null or a live entity; arbitrary non-null pointers are not
+/// validated. Nothing is retained.
+#[repr(C)]
+pub struct RelationV1 {
+    /// 1 if the player owns the entity, else 0 (also for null, or an entity
+    /// without a control or owner).
+    pub owned: unsafe extern "C" fn(entity: *mut c_void) -> u8,
+    /// How the player stands towards the entity's owner, one of the
+    /// `RELATION_*` values: the first of ally, enemy, neutral and abandoned
+    /// that holds, as the native unit label asks them.
+    pub relation: unsafe extern "C" fn(entity: *mut c_void) -> u32,
+}
+
+/// `defiance.core` / `facets`, version 1. Read-only, game thread only. An
+/// argument must be null or a live entity; arbitrary non-null pointers are not
+/// validated. Each query returns null for a missing facet or a facet of
+/// another live type. Nothing is retained.
+#[repr(C)]
+pub struct FacetsV1 {
+    /// The entity's `SquadAiFacet`, as logic.dll's own accessor answers it.
+    pub squad_ai: unsafe extern "C" fn(entity: *mut c_void) -> *mut c_void,
+}
+
+/// `defiance.core` / `selection-snapshot`, version 1. Read-only, game thread
+/// only. `player` must be null or the live player context the game's own
+/// selection gatherer takes (its team getter at vtable +0x40). Each copy
+/// returns the count, or `usize::MAX` when unavailable (null player, team or
+/// manager, or a malformed entity vector). Capacity zero queries the count; a
+/// too-small buffer receives no writes; a sufficient one receives borrowed
+/// entity pointers in the game's selection order. Nothing is retained.
+#[repr(C)]
+pub struct SelectionSnapshotV1 {
+    /// The selected entities: those whose selectable facet says so.
+    pub copy_selected:
+        unsafe extern "C" fn(player: *mut c_void, out: *mut *mut c_void, capacity: usize) -> usize,
+    /// The selected entities the game would give an order to, as its own
+    /// gatherer picks them.
+    pub copy_command_targets:
+        unsafe extern "C" fn(player: *mut c_void, out: *mut *mut c_void, capacity: usize) -> usize,
+}
+
+/// Read the symbol's address and expected bytes; never call or patch it.
+pub const SYMBOL_USE_ADDRESS: u32 = 0;
+/// Call the symbol as a function of its named ABI.
+pub const SYMBOL_USE_CALL: u32 = 1;
+/// Hook the symbol's entry over its published span.
+pub const SYMBOL_USE_ENTRY_HOOK: u32 = 2;
+/// Patch the call instruction the symbol names.
+pub const SYMBOL_USE_CALL_SITE: u32 = 3;
+
+/// Resolved; `out` is filled.
+pub const SYMBOL_OK: u32 = 0;
+/// The catalog has no symbol of that name.
+pub const SYMBOL_UNKNOWN_NAME: u32 = 1;
+/// The symbol's signature or expected bytes are not in this build.
+pub const SYMBOL_UNAVAILABLE: u32 = 2;
+/// The signature matches more than one place in this build.
+pub const SYMBOL_AMBIGUOUS: u32 = 3;
+/// The caller asked for an ABI version the catalog does not publish.
+pub const SYMBOL_ABI_MISMATCH: u32 = 4;
+/// The symbol does not allow that use (an entry hook of a call site, say).
+pub const SYMBOL_MISUSE: u32 = 5;
+/// A null or non-UTF-8 argument, or an unknown use.
+pub const SYMBOL_INVALID: u32 = 6;
+
+/// [`GameSymbolV1::flags`]: the module is one of the builds Core knows, so
+/// the symbol's ABI was checked for it. Clear when Core runs an unknown build
+/// under `allow_unknown_build`: the signature matched, but a signature match
+/// is not proof of the ABI.
+pub const SYMBOL_KNOWN_BUILD: u32 = 1;
+
+/// One resolved game symbol. Every pointer is Core's and lives for the
+/// process.
+#[repr(C)]
+pub struct GameSymbolV1 {
+    /// The module the symbol is in, such as `game.dll`.
+    pub module: *const c_char,
+    /// The build's name, such as `gog/2025-12-23`, or null on an unknown build.
+    pub build: *const c_char,
+    /// The symbol's RVA in `module`.
+    pub rva: usize,
+    /// `module`'s base plus `rva`.
+    pub address: usize,
+    /// The bytes Core checked at `rva` in the original image.
+    pub expected: *const u8,
+    pub expected_len: usize,
+    /// For an entry hook, the instruction-aligned span the hook may cover,
+    /// a prefix of `expected`; 0 when the symbol allows no entry hook.
+    pub span: u32,
+    /// `SYMBOL_KNOWN_BUILD` or 0.
+    pub flags: u32,
+}
+
+/// `defiance.core` / `game-symbols`, version 1. Thread-safe. Resolves a game
+/// function by catalog name against the module's original image, so another
+/// feature's hook on the entry does not hide it. Resolution only: a feature
+/// still patches through the loader's exclusive hooks and declares the patch
+/// in its contract, so ownership and conflicts work as for any other site.
+#[repr(C)]
+pub struct GameSymbolsV1 {
+    /// Resolves `name` for ABI version `abi` and use `use_` (a
+    /// `SYMBOL_USE_*`), writing `out` and returning `SYMBOL_OK`, or another
+    /// `SYMBOL_*` status with `out` untouched.
+    pub resolve: unsafe extern "C" fn(
+        name: *const c_char,
+        abi: u32,
+        use_: u32,
+        out: *mut GameSymbolV1,
+    ) -> u32,
 }
 
 /// A function a patch unit names in its `natives`, replaced outright by
@@ -626,8 +837,25 @@ mod tests {
             8 + 2 * size_of::<*const c_void>()
         );
         assert_eq!(size_of::<SelectionV1>(), size_of::<*const c_void>());
+        assert_eq!(
+            size_of::<MovePreviewHandlerV1>(),
+            3 * size_of::<*const c_void>()
+        );
+        assert_eq!(size_of::<MovePreviewV1>(), size_of::<*const c_void>());
         assert_eq!(size_of::<AmmoMenuV1>(), 2 * size_of::<*const c_void>());
         assert_eq!(size_of::<GameAccessV1>(), 7 * size_of::<*const c_void>());
+        assert_eq!(size_of::<RelationV1>(), 2 * size_of::<*const c_void>());
+        assert_eq!(size_of::<FacetsV1>(), size_of::<*const c_void>());
+        assert_eq!(
+            size_of::<SelectionSnapshotV1>(),
+            2 * size_of::<*const c_void>()
+        );
+        assert_eq!(size_of::<GameSymbolsV1>(), size_of::<*const c_void>());
+        assert_eq!(size_of::<GameSymbolV1>(), 7 * size_of::<*const c_void>());
+        assert_eq!(
+            core::mem::offset_of!(GameSymbolV1, span),
+            6 * size_of::<*const c_void>()
+        );
         assert_eq!(size_of::<PatchUnitV1>(), 4 * size_of::<*const c_void>());
         assert_eq!(size_of::<PatchV1>(), 4 * size_of::<*const c_void>());
         assert_eq!(size_of::<BuildV1>(), size_of::<*const c_void>());

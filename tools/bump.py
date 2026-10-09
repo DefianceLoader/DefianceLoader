@@ -3,22 +3,23 @@
 A component's version lives in several places that must agree: its
 `Cargo.toml` (the source of its binary's version info and, for a plugin, the
 version it exports), its entry in the lockfile, and the manifest the loader
-checks a plugin against, which is the built-in table
-(`crates/loader/src/config/builtin.rs`) or a standalone plugin's committed
+checks a plugin against, which is Core's built-in table
+(`crates/loader/src/config/builtin.rs`) or every other plugin's committed
 `.plugin.json`. This tool changes all of them together.
 
     python tools/bump.py                        list the components and versions
     python tools/bump.py check                  fail if any copy disagrees
     python tools/bump.py patch loader           0.1.0 -> 0.1.1
-    python tools/bump.py minor builtins         every built-in gameplay plugin
+    python tools/bump.py minor features         every shipped feature plugin
     python tools/bump.py 1.0.0 core selection   an explicit, higher version
 
 Components: `loader` (the proxy DLL, crash helper and tools), `core`, each
-built-in feature by its short name (`selection`, `posture`, ...), and each
-standalone plugin (`regroup`, `expanded-ammo-menu`, `squad-management-scroll`,
+feature plugin shipped with the loader by its short name (`selection`,
+`posture`, ...), and each standalone plugin (`regroup`, `expanded-ammo-menu`, `squad-management-scroll`,
 `unit-inspection`, `ability-groups`, `legion-vehicle-hacking`,
 `vehicle-arrival`).
-Groups: `builtins` (the built-in gameplay plugins, not core) and `all`.
+Groups: `features` (the feature plugins shipped with the loader, not core)
+and `all`.
 A bump is refused, before anything is written, if it would move a version
 backwards or out of a dependant's declared range.
 """
@@ -30,6 +31,8 @@ from dataclasses import dataclass
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 BUILTIN_TABLE = "crates/loader/src/config/builtin.rs"
+# The sidecar prefix of the feature plugins packaged with the loader.
+FEATURE_PREFIX = "defiance_plugin_feature_"
 VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 # A literal version a plugin exports instead of its Cargo version.
 LITERAL = re.compile(r'b"\d+\.\d+\.\d+\\0"')
@@ -43,6 +46,7 @@ class Component:
     plugin_id: str | None = None      # the id the loader knows it by
     builtin: bool = False             # its manifest is the built-in table
     sidecar: pathlib.Path | None = None
+    feature: bool = False             # it ships in the loader package
 
 
 def parse(version):
@@ -65,11 +69,11 @@ def crate_name(component):
 def builtin_blocks(root):
     """{plugin id: (block start, block end)} in the built-in table's text."""
     text = (root / BUILTIN_TABLE).read_text(encoding="utf-8")
-    core = re.search(r'pub const CORE_ID: &str = "([^"]+)";', text).group(1)
+    ids = dict(re.findall(r'pub const (\w+_ID): &str = "([^"]+)";', text))
     blocks = {}
     for match in re.finditer(r"Builtin \{(.*?)\n    \}", text, re.S):
-        found = re.search(r'id: (CORE_ID|"([^"]+)"),', match.group(1))
-        blocks[core if found.group(1) == "CORE_ID" else found.group(2)] = match.span(1)
+        found = re.search(r'id: (\w+_ID|"([^"]+)"),', match.group(1))
+        blocks[found.group(2) or ids[found.group(1)]] = match.span(1)
     return text, blocks
 
 
@@ -82,7 +86,10 @@ def components(root=ROOT):
     for sidecar in sorted(root.glob("plugins/*/*.plugin.json")):
         crate_dir = sidecar.parent
         plugin_id = json.loads(sidecar.read_text(encoding="utf-8"))["id"]
-        out.append(Component(crate_dir.name, crate_dir, crate_dir / "Cargo.lock", plugin_id, sidecar=sidecar))
+        feature = sidecar.name.startswith(FEATURE_PREFIX)
+        # Feature crates are workspace members; standalone plugins lock alone.
+        lockfile = root / "Cargo.lock" if feature else crate_dir / "Cargo.lock"
+        out.append(Component(crate_dir.name, crate_dir, lockfile, plugin_id, sidecar=sidecar, feature=feature))
     return out
 
 
@@ -145,12 +152,12 @@ def select(names, all_components):
     for name in names:
         if name == "all":
             chosen += all_components
-        elif name == "builtins":
-            chosen += [c for c in all_components if c.builtin and c.name != "core"]
+        elif name == "features":
+            chosen += [c for c in all_components if c.feature]
         elif name in by_name:
             chosen.append(by_name[name])
         else:
-            raise SystemExit(f"unknown component {name!r}; known: {', '.join(by_name)}, builtins, all")
+            raise SystemExit(f"unknown component {name!r}; known: {', '.join(by_name)}, features, all")
     return list({c.name: c for c in chosen}.values())
 
 

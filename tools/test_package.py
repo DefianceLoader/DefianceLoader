@@ -51,7 +51,8 @@ class PackageTests(unittest.TestCase):
         self.loader = self.proxy
         (self.source / "defiance_plugin_feature_selection.dll").write_bytes(b"defiance.selection")
         self.sidecar = self.source / "defiance_plugin_feature_selection.plugin.json"
-        self.sidecar.write_text('{"id": "defiance.selection"}')
+        self.sidecar.write_bytes(
+            (package.ROOT / "plugins/selection" / self.sidecar.name).read_bytes())
         (self.source / "defiance_plugin_pickup.dll").write_bytes(b"obsolete pilot")
         # An obsolete copy in the main build directory must not shadow the
         # current plugin from its independent workspace or produce duplicate ZIP entries.
@@ -279,17 +280,25 @@ class PackageTests(unittest.TestCase):
         self.assertIn("private test plugin", result.stderr)
         self.assertFalse(self.out.exists())
 
-    def test_off_by_default_builtin_must_ship_disabled(self):
+    def test_feature_plugins_ship_their_committed_manifest(self):
         plugin = self.source / "defiance_plugin_feature_vehicle_special_fire.dll"
         plugin.write_bytes(b"defiance.vehicle-special-fire")
         plugin.with_suffix(".pdb").write_bytes(b"symbols")
         manifest = plugin.with_suffix(".plugin.json")
+        committed = json.loads(
+            (package.ROOT / "plugins/vehicle-special-fire" / manifest.name).read_text(encoding="utf-8"))
+        # The committed manifest is what keeps this plugin off for new players.
+        enabled = next(s for s in committed["settings"] if s["key"] == "enabled")
+        self.assertEqual(enabled["default"], "false")
         for default, ok in (("true", False), ("false", True)):
             with self.subTest(default=default):
-                manifest.write_text(json.dumps({"id": "defiance.vehicle-special-fire", "settings": [
-                    {"key": "enabled", "type": "bool", "default": default}]}))
+                staged = json.loads(json.dumps(committed))
+                next(s for s in staged["settings"] if s["key"] == "enabled")["default"] = default
+                manifest.write_text(json.dumps(staged))
                 result = self.build()
                 self.assertEqual(result.returncode == 0, ok, result.stderr)
+                if not ok:
+                    self.assertIn("differs from", result.stderr)
 
     def test_missing_required_files_refuse_an_incomplete_package(self):
         for missing in (self.proxy, self.sidecar, self.regroup, self.expanded, self.scroll,

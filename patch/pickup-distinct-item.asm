@@ -59,7 +59,7 @@ p1_loop:
     mov rdi, qword ptr [rcx + rsi*8]
     mov rax, qword ptr [rdi]
     mov rcx, rdi
-    call qword ptr [rax + 0x180]
+    call qword ptr [rax + 0x180]    ; vt:logic/HumanGunner@Leonardo
     test eax, eax
     jne p1_next
     jmp take
@@ -82,7 +82,7 @@ p2_loop:
     mov rdi, qword ptr [rcx + rsi*8]
     mov rax, qword ptr [rdi]
     mov rcx, rdi
-    call qword ptr [rax + 0x180]
+    call qword ptr [rax + 0x180]    ; vt:logic/HumanGunner@Leonardo
     cmp eax, r14d
     jne p2_next
 
@@ -91,14 +91,14 @@ p2_loop:
     jne p2_item
     mov rax, qword ptr [rdi]
     mov rcx, rdi
-    call qword ptr [rax + 0xc8]
+    call qword ptr [rax + 0xc8]    ; vt:logic/HumanGunner@Leonardo
     mov rbp, rax
 p2_item:
     mov rcx, qword ptr [rdi + 0x28]
     test rcx, rcx
     je take
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x160]
+    call qword ptr [rax + 0x160]    ; vt:logic/Gun@Leonardo
     cmp rax, r12
     je p2_next
     jmp take
@@ -113,7 +113,7 @@ p2_fallback:
 take:
     mov rax, qword ptr [rdi]
     mov rcx, rdi
-    call qword ptr [rax + 0xc8]
+    call qword ptr [rax + 0xc8]    ; vt:logic/HumanGunner@Leonardo
     jmp done
 
 none:

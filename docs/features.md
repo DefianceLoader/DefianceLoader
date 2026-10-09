@@ -10,11 +10,11 @@ To switch features without restarting, set `live_toggle = true` under
 `[loader]` in `core.ini` and restart once. From then on, saving a changed
 `enabled`, or any other setting of a feature, takes effect at the main menu,
 or as the next mission starts or save loads: the feature is switched, or
-loaded again with its new values. Core, the expanded ammo menu, squad scrolling,
-unit inspection, vehicle arrival braking and primary weapon drops still need a
-restart, and a feature
-that was off at startup comes on only
-after a restart.
+loaded again with its new values. Core, the performance tuning, the expanded
+ammo menu, squad scrolling, unit inspection, vehicle arrival braking, primary weapon drops, moving grenades
+and the movement animation overlay still need a restart. A feature built into
+Core that was off at startup comes on only after a restart; a separate plugin
+DLL can be switched on.
 
 The gameplay features are single-player only: they change the game's simulation
 and send nothing to other players. While any of them is active the game will not
@@ -60,8 +60,8 @@ the game's materials, which the squad scrolling companion mod carries.
 
 ## Soldier move markers
 
-Plugin: `defiance.cover-markers` (on by default; GOG 2026-09-14 and
-2026-09-25, and Steam 2026-09-22 and 2026-09-25). While you aim a move order,
+Plugin: `defiance.cover-markers` (on by default; GOG 2026-09-14,
+2026-09-25 and 2026-10-07, and Steam 2026-09-22, 2026-09-25 and 2026-10-07). While you aim a move order,
 each selected soldier gets a small arrow at the position the game's formation
 gives them, in place of the large squad arrow; dragging to set facing rotates
 them. After the order, each arrow marks that soldier's destination and clears
@@ -144,8 +144,8 @@ preferred, and repeated pickups rotate between the eligible soldiers.
 Plugins: `defiance.moving-actions`, `defiance.moving-actions-animation`,
 `defiance.moving-actions-sync`, `defiance.moving-actions-render-sync`, and
 `defiance.moving-grenades` (experimental, off by default; each is enabled in
-its own section of `infantry.ini`; supported on GOG 2026-09-14 and
-2026-09-25, and Steam 2026-09-22 and 2026-09-25). The movement plugin preserves
+its own section of `infantry.ini`; supported on GOG 2026-09-14,
+2026-09-25 and 2026-10-07, and Steam 2026-09-22, 2026-09-25 and 2026-10-07). The movement plugin preserves
 movement speed through grenade throws and weapon changes. Companion plugins
 repair missed weapon handoffs and model/attachment mismatches; the animation
 plugin overlays locomotion leg poses during standing throws and weapon changes.
@@ -162,7 +162,7 @@ companion UI download and restart the game after changes. See
 ## Primary weapon drops
 
 Plugin: `defiance.weapon-drops` (experimental, off by default; GOG and
-Steam 2026-09 builds only). A wiped infantry squad drops its primary
+Steam 2026-09 and 2026-10-07 builds only). A wiped infantry squad drops its primary
 weapons, and collecting a primary re-equips the whole squad with it. To try
 it, set `enabled = true` in `[defiance.weapon-drops]` in `infantry.ini` and
 restart the game; on other game builds it stays inactive. The `ammo_policy` and
@@ -224,41 +224,45 @@ Single-player only, outside buildings and vehicles. Details and limits:
 
 ## Performance
 
-Core. The game runs its rendering and simulation on one thread and keeps it on
-the first CPU, which often also handles the graphics card's interrupts. Core
-lets that thread use every CPU instead, which gives it more of its time on
-CPU-bound scenes. Under `[loader]` in `DefianceLoader/config/core.ini`,
-`main_thread_cpus = engine` restores the game's own choice; `spread` (every CPU
+Plugin: `defiance.performance`, under `[defiance.performance]` in
+`DefianceLoader/config/core.ini`; `enabled = false` there leaves every one of
+these to the game, and changes here take effect after a restart. Settings
+written under `[loader]` by an earlier version still apply until the loader
+moves them, and the log says so.
+
+The game runs its rendering and simulation on one thread and keeps it on
+the first CPU, which often also handles the graphics card's interrupts. The
+plugin lets that thread use every CPU instead, which gives it more of its time
+on CPU-bound scenes. `main_thread_cpus = engine` restores the game's own choice; `spread` (every CPU
 but the first core) is experimental and caused long stutters in testing.
 
-Core also sorts grass by distance with each distance worked out once per
+It also sorts grass by distance with each distance worked out once per
 frame, where the game works each out many times, in about half the time; the
-order is the same as the game's. `grass_sort = engine` under `[loader]` uses
-the game's own sort.
+order is the same as the game's. `grass_sort = engine` uses the game's own
+sort.
 
-Core redraws the shadow map one of its distance bands a frame, in turn,
+It redraws the shadow map one of its distance bands a frame, in turn,
 instead of all of them every frame, and the farthest band, which costs the
 most, half as often as the others. On a busy scene with high shadows this took
 the frame rate from about 31 to over 50 fps in testing. Each band is drawn with
 the view it keeps until its next turn, so shadows stay in place; in a band not
 redrawn this frame, a moving unit's shadow can trail it by a few frames.
-Under `[loader]`, `shadow_cascades = rotate` redraws every band equally often,
+`shadow_cascades = rotate` redraws every band equally often,
 `near` redraws the nearest band every frame and the others in turn, and `all`
 is the game's own.
 Fitting each band to what it covers, the game also walks every shadow caster
-in view and then throws the result away; Core skips that walk, which leaves
+in view and then throws the result away; the plugin skips that walk, which leaves
 the shadows the same (`shadow_fit = engine` keeps it).
 
 With shadows rotated, the main thread's biggest cost is preparing the objects
-in view each frame. Core puts those objects, and the meshes it groups for
+in view each frame. The plugin puts those objects, and the meshes it groups for
 drawing, in order with what the order depends on read once per item, and
 inverts the matrices of moving objects with the game's own arithmetic without
 its many small calls; together that took about 3 ms off each frame in testing
 (51 to 58 fps). All give exactly the game's results. `view_sort = engine`,
-`mesh_sort = engine` and `matrix_inverse = engine` under `[loader]` use the
-game’s own.
+`mesh_sort = engine` and `matrix_inverse = engine` use the game’s own.
 
-On the six supported game builds, `tree_sway = half` under `[loader]` updates
+On the six supported game builds, `tree_sway = half` updates
 living-tree wind sway every other tree-manager update while leaving the rest of
 the tree callback at its usual rate. The next sway update receives the sum of
 the skipped and current manager time steps. Trees keep moving, but skipped
@@ -274,7 +278,7 @@ about 83 gameplay-view calls/s versus about 80 before and after, and visible
 trees looked normal. That gain is provisional; deferred provider updates may
 have effects beyond tree motion. This is an opt-in setting, checked in game
 only on Steam 2026-09-25.
-`tree_sway = engine` is the default. Core finds the tree functions by signature
+`tree_sway = engine` is the default. The plugin finds the tree functions by signature
 and checks their entry bytes; a game build where any of them is not found keeps
 the engine rate and is not patched. Changing this setting requires a restart.
 The other five supported builds resolve the same functions but have not yet

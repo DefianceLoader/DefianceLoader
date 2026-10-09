@@ -417,11 +417,11 @@ const HOOK_NAMES: [&str; 16] = [
 #[cfg(test)]
 mod tests {
     use super::*;
-    use defiance_core::sites::{reference, BUILDS, SEPTEMBER_BUILDS};
+    use defiance_core::sites::{reference, BUILDS, BUILDS_2026};
 
     /// The rvas the per-build hash table held before the plugin resolved them,
-    /// in [`SEPTEMBER_BUILDS`] order.
-    const TABLE: [(&str, Sites); 4] = [
+    /// in [`BUILDS_2026`] order.
+    const TABLE: [(&str, Sites); 6] = [
         (
             "gog/2026-09-14",
             Sites {
@@ -602,12 +602,102 @@ mod tests {
                 gunner_client_vt: 0x72ced0,
             },
         ),
+        (
+            "gog/2026-10-07",
+            Sites {
+                stop: 0x2cb440,
+                turn_point: 0x2cd270,
+                turn_direction: 0x2cd380,
+                queue: 0x2c31a0,
+                order: 0xd93e0,
+                order_attack_move: 0x9e8d0,
+                select: 0x2d8d00,
+                weapon_eligible: 0x299ae0,
+                weapon_requires_idle: 0x299e90,
+                steer: 0x2cd470,
+                candidate: 0x2d9ff0,
+                chassis_can_move: 0x2cd220,
+                cancel_trace: 0x336489,
+                submit: 0x2bb850,
+                stop_order_init: 0x1031c0,
+                ai_update: 0x2bccb0,
+                copy_ref: 0x123f0,
+                release_ref: 0x24070,
+                bind_junction: 0x240c0,
+                attack_move_order_factory: 0x8a030,
+                move_order_factory: 0x114f20,
+                set_flags: 0x76260,
+                flare_target_slot: 0x116cf0,
+                target_getter: 0x46dc60,
+                native_resume: 0x2cc030,
+                gunner_slot: 0x2da770,
+                turn_return: 0x2c9b6c,
+                move_return: 0x2ca98c,
+                release_order_return: 0x2d9aea,
+                aim_return: 0x2d4230,
+                candidate_gate_return: 0x2da0f4,
+                attack_order_vt: 0x70ace0,
+                attack_state_vt: 0x70ad98,
+                move_order_vt: 0x710fe8,
+                stop_order_vt: 0x713550,
+                flare_target_vt: 0x7143b0,
+                animation_vt: 0x731090,
+                chassis_vt: 0x731320,
+                gunner_vt: 0x731c70,
+                gunner_client_vt: 0x731e28,
+            },
+        ),
+        (
+            "steam/2026-10-07",
+            Sites {
+                stop: 0x2cb4d0,
+                turn_point: 0x2cd300,
+                turn_direction: 0x2cd410,
+                queue: 0x2c3230,
+                order: 0xd9470,
+                order_attack_move: 0x9e960,
+                select: 0x2d8d90,
+                weapon_eligible: 0x299b70,
+                weapon_requires_idle: 0x299f20,
+                steer: 0x2cd500,
+                candidate: 0x2da080,
+                chassis_can_move: 0x2cd2b0,
+                cancel_trace: 0x336519,
+                submit: 0x2bb8e0,
+                stop_order_init: 0x103250,
+                ai_update: 0x2bcd40,
+                copy_ref: 0x123f0,
+                release_ref: 0x24070,
+                bind_junction: 0x240c0,
+                attack_move_order_factory: 0x8a0c0,
+                move_order_factory: 0x114fb0,
+                set_flags: 0x762f0,
+                flare_target_slot: 0x116d80,
+                target_getter: 0x46dcf0,
+                native_resume: 0x2cc0c0,
+                gunner_slot: 0x2da800,
+                turn_return: 0x2c9bfc,
+                move_return: 0x2caa1c,
+                release_order_return: 0x2d9b7a,
+                aim_return: 0x2d42c0,
+                candidate_gate_return: 0x2da184,
+                attack_order_vt: 0x70ad40,
+                attack_state_vt: 0x70aef8,
+                move_order_vt: 0x711058,
+                stop_order_vt: 0x7135c8,
+                flare_target_vt: 0x714420,
+                animation_vt: 0x731128,
+                chassis_vt: 0x7313c8,
+                gunner_vt: 0x731d10,
+                gunner_client_vt: 0x731ec8,
+            },
+        ),
     ];
 
     #[test]
     fn sites_resolve_where_the_build_table_had_them() {
         for (build, expected) in TABLE {
-            assert!(SEPTEMBER_BUILDS.contains(&build), "{build}");
+            assert!(BUILDS_2026.contains(&build), "{build}");
             let Some(mapped) = reference(build, "logic.dll") else {
                 eprintln!("skipping {build}: no bin/{build}/logic.dll");
                 continue;
@@ -618,7 +708,7 @@ mod tests {
 
     #[test]
     fn sites_resolve_on_every_september_build() {
-        for build in SEPTEMBER_BUILDS {
+        for build in BUILDS_2026 {
             if let Some(mapped) = reference(build, "logic.dll") {
                 assert!(sites(&Image::mapped(&mapped)).is_ok(), "{build}");
             }
@@ -629,7 +719,7 @@ mod tests {
     /// relies on, so they are not supported.
     #[test]
     fn the_december_builds_are_refused() {
-        for build in BUILDS.into_iter().filter(|b| !SEPTEMBER_BUILDS.contains(b)) {
+        for build in BUILDS.into_iter().filter(|b| !BUILDS_2026.contains(b)) {
             if let Some(mapped) = reference(build, "logic.dll") {
                 assert!(sites(&Image::mapped(&mapped)).is_err(), "{build}");
             }

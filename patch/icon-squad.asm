@@ -53,12 +53,12 @@ squad_of:
     jz squad_done
     mov rax, qword ptr [rcx]
     mov edx, 0x200
-    call qword ptr [rax + 0x98]
+    call qword ptr [rax + 0x98]    ; vt:essence/EntityImpl@Essence@Galileo
     test al, al
     jnz squad_fallback                ; BuildingSelectableFacet+28 is a manager
     mov rcx, rsi
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]        ; the member's facets
+    call qword ptr [rax + 0xb0]        ; vt:essence/EntityImpl@Essence@Galileo the member's facets
     mov qword ptr [rbx + 0x08], rax    ; +0x08
     test rax, rax
     jz squad_fallback
@@ -134,7 +134,7 @@ single_ctrl:
     mov rcx, rdx
     mov rax, qword ptr [rcx]
     mov edx, 0x10
-    call qword ptr [rax + 0x98]
+    call qword ptr [rax + 0x98]    ; vt:essence/EntityImpl@Essence@Galileo
     add rsp, 0x20
     pop r8
     pop rdx
@@ -218,7 +218,7 @@ ws_ready:
     pop rax                            ; the manager's vtable
     pop r11                            ; the old entity, discarded
     pop rcx                            ; the manager
-    call qword ptr [rax + 0x60]        ; the displaced call, redone
+    call qword ptr [rax + 0x60]        ; vt:logic/SelectableMgrFacet@Leonardo the displaced call, redone
     mov rbx, qword ptr [rsp + 0x30]    ; the displaced mov, redone
     mov r11, 0xaaaaaaaaaaaaaaa4        ; fixup: resume game.dll+0x3325e4
     jmp r11
@@ -291,7 +291,7 @@ ctrl_select:
     sub rsp, 0x20
     mov rax, qword ptr [rcx]
     mov edx, 0x10
-    call qword ptr [rax + 0x98]
+    call qword ptr [rax + 0x98]    ; vt:essence/EntityImpl@Essence@Galileo
     add rsp, 0x20
     test al, al
     jz cs_select
@@ -322,7 +322,7 @@ world_double:
     lea rdx, [rsp + 0x20]
     mov rcx, r14
     mov rax, qword ptr [r14]
-    call qword ptr [rax + 0x80]
+    call qword ptr [rax + 0x80]    ; vt:logic/SelectableMgrFacet@Leonardo
     ; Preserve the enclosing function's nonvolatile registers. Selection does
     ; not change the registry; retain its bounds outside outgoing shadow space.
     push rbx
@@ -338,12 +338,12 @@ wd_next:
     add rbx, 8
     mov rcx, rsi
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     mov rcx, qword ptr [rax + 0x50]
     test rcx, rcx
     jz wd_next
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jz wd_next
     mov rcx, rsi
@@ -353,7 +353,7 @@ wd_next:
     mov rdx, rax
     mov rcx, r14
     mov rax, qword ptr [r14]
-    call qword ptr [rax + 0x60]        ; mark the complete accepted squad
+    call qword ptr [rax + 0x60]        ; vt:logic/SelectableMgrFacet@Leonardo mark the complete accepted squad
     jmp wd_next
 wd_done:
     add rsp, 0x30

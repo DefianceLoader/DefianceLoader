@@ -25,7 +25,7 @@ impl Limits {
             weapon_types: weapon_types as usize,
         })
     }
-    /// Command dispatch still has Entity*[20] locals. Keep larger configured
+    /// Command dispatch still has `Entity*[20]` locals. Keep larger configured
     /// values readable for compatibility, but never create such squads.
     pub fn supported(self) -> Self {
         Self {

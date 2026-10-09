@@ -1,5 +1,5 @@
 //! Setting declarations and value validation. Core owns both: a plugin says
-//! *what* a setting is (through its manifest, or the built-in table here) and
+//! *what* a setting is (through its manifest, or Core's built-in table) and
 //! core parses and validates it. No plugin ships its own INI parser.
 //!
 //! A declaration carries the key, its type and constraints, its default, a

@@ -9,7 +9,7 @@
 //! snapshot and returns a plan. The host does the loading, checking exported
 //! identity against the manifest before calling `init`.
 
-use super::config::builtin::{self, Builtin};
+use super::config::builtin;
 use super::config::Snapshot;
 use super::manifest::{self, Dependency, Manifest};
 use std::collections::{BTreeMap, BTreeSet};
@@ -39,7 +39,6 @@ pub struct Planned {
     pub dll: String,
     pub path: PathBuf,
     pub manifest: Option<Manifest>,
-    pub builtin: Option<&'static Builtin>,
     pub legacy: bool,
     pub decision: Decision,
     /// Effective dependency IDs, for post-init failure propagation.
@@ -94,7 +93,6 @@ pub(crate) fn plan_with_loaded_versions(
                 dll: node.dll,
                 path: node.path,
                 manifest,
-                builtin: node.builtin,
                 legacy,
                 decision,
                 depends,
@@ -483,27 +481,33 @@ mod tests {
 
     #[test]
     fn core_loads_in_place_and_features_from_copies() {
-        // The feature plugins find Core's module by its file name.
-        for builtin in builtin::BUILTINS {
-            let manifest =
-                manifest::parse(&manifest::render_builtin(builtin), builtin.dll).unwrap();
+        // The feature plugins find Core's module by its file name; a plugin
+        // that is never reloaded has no reason to load from a copy either.
+        let core = node("defiance_plugin_core.dll");
+        let features = manifest::FEATURE_MANIFESTS.iter().map(|(dll, _)| node(dll));
+        for discovered in std::iter::once(core).chain(features) {
+            let manifest = discovered.manifest.clone().unwrap();
+            let expected = discovered.builtin.is_none() && manifest.hot_reload;
             let node = Planned {
-                id: builtin.id.into(),
-                dll: builtin.dll.into(),
-                path: PathBuf::from(builtin.dll),
+                id: manifest.id.clone(),
+                dll: discovered.dll.clone(),
+                path: discovered.path.clone(),
                 manifest: Some(manifest),
-                builtin: Some(builtin),
                 legacy: false,
                 decision: Decision::Initialize,
                 depends: Vec::new(),
             };
             assert_eq!(
                 crate::plugin::loads_from_copy(&node),
-                builtin.id != builtin::CORE_ID,
+                expected,
                 "{}",
-                builtin.id
+                node.id
             );
         }
+        let performance = node("defiance_plugin_feature_performance.dll");
+        assert!(!performance.manifest.unwrap().hot_reload);
+        let selection = node("defiance_plugin_feature_selection.dll");
+        assert!(selection.manifest.unwrap().hot_reload);
     }
     use crate::config::builtin;
     use crate::config::parse::parse;
@@ -526,13 +530,21 @@ mod tests {
             GroupInput::present("diagnostics", PathBuf::from("diagnostics.ini"), ""),
         ];
         let paths = Paths::resolve(&PathBuf::from("C:/Game/bin"), &parse("")).0;
-        Snapshot::build(paths, &inputs, &parse(""))
+        Snapshot::build_with_extras(
+            paths,
+            &inputs,
+            &parse(""),
+            &crate::config::feature_declarations(),
+        )
     }
 
+    /// A discovered DLL, with Core's generated manifest or a shipped feature's
+    /// committed one when `dll` names either.
     fn node(dll: &str) -> Discovered {
         let builtin = builtin::by_dll(dll);
         let manifest = builtin
-            .map(|builtin| manifest::parse(&manifest::render_builtin(builtin), dll).unwrap());
+            .map(|builtin| manifest::parse(&manifest::render_builtin(builtin), dll).unwrap())
+            .or_else(|| manifest::feature_manifest(dll));
         Discovered {
             dll: dll.into(),
             path: PathBuf::from(dll),
@@ -554,11 +566,6 @@ mod tests {
             error: None,
             ignored: None,
         }
-    }
-
-    fn builtin_json(id: &str) -> String {
-        let builtin = builtin::find(id).unwrap();
-        manifest::render_builtin(builtin)
     }
 
     /// A manifest with the real `ABI_VERSION`, so a version bump cannot make a
@@ -681,10 +688,7 @@ mod tests {
 
     #[test]
     fn duplicate_ids_block_both_sides() {
-        let first = with_manifest(
-            "defiance_plugin_feature_selection.dll",
-            &builtin_json("defiance.selection"),
-        );
+        let first = node("defiance_plugin_feature_selection.dll");
         let mut second = first.clone();
         second.dll = "other.dll".into();
         second.path = PathBuf::from("other.dll");
@@ -888,7 +892,7 @@ mod tests {
     }
 
     #[test]
-    fn discovery_blocks_a_managed_builtin_without_a_manifest() {
+    fn discovery_blocks_core_without_a_manifest() {
         let base = std::env::temp_dir().join(format!(
             "defiance-plan-missing-{}-{:?}",
             std::process::id(),
@@ -896,7 +900,7 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
-        std::fs::write(base.join("defiance_plugin_feature_selection.dll"), b"x").unwrap();
+        std::fs::write(base.join("defiance_plugin_core.dll"), b"x").unwrap();
         let (nodes, _) = discover(&base);
         assert!(nodes[0].error.is_some());
         let plan = plan(nodes, &snapshot(&[]));

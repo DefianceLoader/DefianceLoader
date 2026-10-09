@@ -39,7 +39,9 @@ fn quoted(text: &str) -> String {
 fn main() {
     let exe = std::env::current_exe().unwrap();
     let dir = exe.parent().unwrap();
-    if std::env::args().nth(1).as_deref() == Some("reverse") {
+    let args: Vec<_> = std::env::args().collect();
+    let reload_vehicle = args.iter().any(|arg| arg == "reload-vehicle");
+    if args.iter().any(|arg| arg == "reverse") {
         defiance_loader::test_host::reverse_ties(true);
     }
     let mut modules = Vec::new();
@@ -66,6 +68,74 @@ fn main() {
         modules.push((name, base as usize, size_of_image as usize));
     }
     let states = defiance_loader::test_host::load_plugins(dir);
+    if reload_vehicle {
+        const PLUGIN: &str = "defiance.vehicle-special-fire";
+        assert!(
+            states.iter().any(|(id, state)| {
+                id.eq_ignore_ascii_case(PLUGIN) && state.starts_with("Active")
+            }),
+            "{PLUGIN} must be active before the reload: {states:?}"
+        );
+        let before_loaded = defiance_loader::test_host::loaded_plugins();
+        let before_owner = before_loaded
+            .iter()
+            .find(|(id, _)| id.eq_ignore_ascii_case(PLUGIN))
+            .map(|(_, owner)| *owner)
+            .expect("the passenger plugin has a live owner");
+        let mut before_spans = defiance_loader::test_host::installed();
+        before_spans.sort();
+        let before_target_spans: Vec<_> = before_spans
+            .iter()
+            .filter(|(owner, _, _, _)| owner.eq_ignore_ascii_case(PLUGIN))
+            .cloned()
+            .collect();
+        assert!(
+            !before_target_spans.is_empty(),
+            "the passenger plugin owns hooks"
+        );
+
+        defiance_loader::test_host::reload_plugin(PLUGIN)
+            .unwrap_or_else(|error| panic!("{PLUGIN} reload failed: {error}"));
+
+        let after_loaded = defiance_loader::test_host::loaded_plugins();
+        let after_owner = after_loaded
+            .iter()
+            .find(|(id, _)| id.eq_ignore_ascii_case(PLUGIN))
+            .map(|(_, owner)| *owner)
+            .expect("the passenger plugin remains loaded after reload");
+        assert_ne!(
+            before_owner, after_owner,
+            "reload creates a new plugin owner"
+        );
+        let mut after_spans = defiance_loader::test_host::installed();
+        after_spans.sort();
+        assert_eq!(
+            after_spans, before_spans,
+            "reload removes the old hook spans and installs the same new spans"
+        );
+        let after_target_spans: Vec<_> = after_spans
+            .iter()
+            .filter(|(owner, _, _, _)| owner.eq_ignore_ascii_case(PLUGIN))
+            .cloned()
+            .collect();
+        assert_eq!(
+            after_target_spans, before_target_spans,
+            "reload restores each old hook before reinstalling it without leaking spans"
+        );
+        assert_eq!(
+            after_target_spans
+                .iter()
+                .map(|(_, target, _, _)| *target)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            after_target_spans.len(),
+            "reload leaves one owned span per passenger hook site"
+        );
+        println!(
+            "{PLUGIN}: reload restored and reinstalled {} spans",
+            after_target_spans.len()
+        );
+    }
     let order = defiance_loader::test_host::planned_order();
     let mut spans = defiance_loader::test_host::installed();
     spans.sort_by_key(|span| span.1);

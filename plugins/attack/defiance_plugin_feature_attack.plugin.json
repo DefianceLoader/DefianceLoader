@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "id": "defiance.attack",
+  "dll": "defiance_plugin_feature_attack.dll",
+  "version": "0.5.1",
+  "abi": 5,
+  "patch_contract": true,
+  "group": "infantry",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Direct an attack order to the selected soldiers instead of every member of their squad. Requires selection. Disabling this restores normal squad attack orders; it does not disable combat or the firing-mode setting. Restart required."
+    }
+  ],
+  "depends": [
+    {
+      "id": "defiance.core",
+      "min": "0.7.0"
+    },
+    {
+      "id": "defiance.selection",
+      "min": "0.6.2"
+    }
+  ],
+  "conflicts": []
+}

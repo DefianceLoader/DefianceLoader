@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "id": "defiance.vehicle-special-fire",
+  "dll": "defiance_plugin_feature_vehicle_special_fire.dll",
+  "version": "0.5.0",
+  "abi": 5,
+  "patch_contract": true,
+  "group": "weapons",
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "false",
+      "description": "Prefer special weapons for passenger firing mounts. Mounted weapons acquire targets independently; select the vehicle and use Attack to order its passengers against an enemy. Move special weapons to useful firing mounts as targets change. Applies to vehicles with passenger firing mounts. Reboard passengers after enabling."
+    }
+  ],
+  "depends": [
+    {
+      "id": "defiance.core",
+      "min": "0.7.0"
+    }
+  ],
+  "conflicts": []
+}

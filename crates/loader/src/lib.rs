@@ -32,6 +32,7 @@ use defiance_core::json;
 mod lifecycle;
 mod log;
 mod manifest;
+mod mission_events;
 mod multiplayer;
 mod near;
 mod original;
@@ -63,6 +64,13 @@ pub mod test_host {
     pub fn service_api() -> &'static defiance_api::ServiceApiV1 {
         &crate::services::API
     }
+    /// The dependency IDs the committed manifest of the shipped feature
+    /// plugin `dll` declares; empty for any other DLL.
+    pub fn feature_depends(dll: &str) -> Vec<String> {
+        crate::manifest::feature_manifest(dll)
+            .map(|manifest| manifest.depends.into_iter().map(|d| d.id).collect())
+            .unwrap_or_default()
+    }
     /// Actual discovery, configuration, planner and DLL initialization, without
     /// waiting for game modules. Used by the game-independent author examples.
     pub fn run_plugins(exe_dir: &std::path::Path) -> Vec<(String, String)> {
@@ -89,6 +97,18 @@ pub mod test_host {
     /// Apply simultaneous settled DLL and config changes through the watcher queue.
     pub fn apply_reload_and_config(file_id: &str, config_id: &str) -> Result<(), String> {
         crate::host::test_reload_and_config(file_id, config_id)
+    }
+    /// Poll failed startup plugins for settled replacement DLLs.
+    pub fn poll_startup_retries() -> Vec<String> {
+        crate::reload::test_poll_startup_retries()
+    }
+    /// Drain the production queue at a simulated mission/save boundary.
+    pub fn apply_pending_changes() {
+        crate::host::test_apply_pending();
+    }
+    /// Counts from the current plan and actual loaded plugins.
+    pub fn plugin_summary() -> String {
+        crate::host::plugin_summary()
     }
     /// Load a plugin added to the plugins directory after startup.
     pub fn add_plugin(id: &str) -> Result<(), String> {
@@ -124,11 +144,18 @@ pub mod test_host {
     }
 }
 
-/// Tooling surface: the built-in manifests, generated from the single
-/// authoritative table in `config::builtin`. Used by `tools/manifest-gen` so
-/// the packaged manifests and the runtime registry cannot drift apart.
+/// Tooling surface: Core's manifest, generated from the single authoritative
+/// table in `config::builtin`. Used by `manifest-gen` so the packaged
+/// manifest and the runtime registry cannot drift apart.
 pub fn builtin_manifests() -> Vec<(String, String)> {
     manifest::builtin_manifests()
+}
+
+/// Parse `text` as the sidecar manifest of the DLL basename `dll`, as
+/// discovery does. Used by `manifest-gen` to reject a committed manifest the
+/// loader would refuse.
+pub fn check_manifest(text: &str, dll: &str) -> Result<(), String> {
+    manifest::parse(text, dll).map(drop)
 }
 
 /// The sidecar filename for a DLL basename, from the single filename

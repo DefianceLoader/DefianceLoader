@@ -63,6 +63,14 @@ fn loader_table(name: &str, version: u32) -> Option<(usize, usize)> {
             &crate::session::API as *const _ as usize,
             core::mem::size_of::<defiance_api::SessionV1>(),
         )),
+        ("mission-events", 1) => Some((
+            &crate::mission_events::API as *const _ as usize,
+            core::mem::size_of::<defiance_api::MissionEventsV1>(),
+        )),
+        ("mission-feed", 1) => Some((
+            &crate::mission_events::FEED as *const _ as usize,
+            core::mem::size_of::<defiance_api::MissionFeedV1>(),
+        )),
         ("multiplayer", 1) => Some((
             &crate::multiplayer::API as *const _ as usize,
             core::mem::size_of::<defiance_api::MultiplayerV1>(),
@@ -184,6 +192,7 @@ pub fn finish(owner: usize, success: bool) {
     registry().lock().unwrap().finish(owner, success);
     if !success {
         crate::trace::capture::close_owner(owner);
+        crate::mission_events::close_owner(owner);
     }
 }
 /// Drop every table a plugin registered, when it is unloaded
@@ -191,6 +200,7 @@ pub fn finish(owner: usize, success: bool) {
 pub fn remove(owner: usize) {
     registry().lock().unwrap().finish(owner, false);
     crate::trace::capture::close_owner(owner);
+    crate::mission_events::close_owner(owner);
 }
 
 /// Drop a plugin's tables but keep its record of the tables it holds while an
@@ -202,6 +212,7 @@ pub fn withdraw(owner: usize) {
         .tables
         .retain(|_, s| s.owner != owner);
     crate::trace::capture::close_owner(owner);
+    crate::mission_events::close_owner(owner);
 }
 
 unsafe fn name(ptr: *const c_char) -> Option<String> {

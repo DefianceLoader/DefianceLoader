@@ -24,7 +24,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-plugin-squad-management-scroll"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "defiance-api",
  "defiance-build-support",

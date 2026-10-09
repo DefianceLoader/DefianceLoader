@@ -73,11 +73,9 @@ const UI: Signature = sig(
         ),
     ],
 );
-/// game.dll's ammo-menu redraw, which counts and fetches a vehicle's Gunners.
-const REDRAW: Signature = sig(
-    "ammo menu redraw",
-    &[("488954241048894c24085741544881ece8000000488b02488bf9", 0)],
-);
+/// Core's name for game.dll's ammo-menu redraw, which counts and fetches a
+/// vehicle's Gunners; [`sites`] reads their vtable offsets from its body.
+pub(crate) const REDRAW: &std::ffi::CStr = c"ammo menu redraw";
 
 const SAVE_RBX_10: &[u8] = &[0x48, 0x89, 0x5c, 0x24, 0x10];
 const SAVE_RBX_18: &[u8] = &[0x48, 0x89, 0x5c, 0x24, 0x18];
@@ -144,8 +142,9 @@ fn site(image: &Image, what: &str, rva: usize, before: &'static [u8]) -> Result<
     Ok(Site { rva, before })
 }
 
-/// The resolved sites, or why this build is not supported.
-pub(crate) fn sites(logic: &Image, game: &Image) -> Result<Sites, String> {
+/// The resolved sites, or why this build is not supported. `redraw` is the
+/// rva Core resolved for [`REDRAW`].
+pub(crate) fn sites(logic: &Image, game: &Image, redraw: usize) -> Result<Sites, String> {
     let gunner = logic.primary_vtable(GUNNER)?;
     let gun = logic.primary_vtable(GUN)?;
     let method = |class: &str, methods: &[usize], slot: usize| {
@@ -162,7 +161,6 @@ pub(crate) fn sites(logic: &Image, game: &Image) -> Result<Sites, String> {
     let ui = game.find(&UI)?;
     // Each offset is the disp32 of `call [rax+disp32]` or
     // `mov r8, [rcx+disp32]` at a fixed place in the redraw.
-    let redraw = game.find(&REDRAW)?;
     let field = |what: &str, rva: usize, opcode: &[u8]| -> Result<usize, String> {
         game.expect(what, rva, opcode)?;
         game.u32(rva + opcode.len())
@@ -198,7 +196,7 @@ mod tests {
     /// resolved them, in [`BUILDS`] order: tick, deployment, query, choose,
     /// command, setter, range, shared refresh, move acquire, candidate query,
     /// capable, ui, gunner count, gunner get.
-    const TABLE: [[usize; 14]; 6] = [
+    const TABLE: [[usize; 14]; 7] = [
         [
             0x2999c0, 0x2989a0, 0x2980d0, 0x2982b0, 0x297740, 0x28a030, 0x28f860, 0x297c20,
             0xe0350, 0x10a2c0, 0x10b2f0, 0x23f7df, 0x130, 0x120,
@@ -223,6 +221,15 @@ mod tests {
             0x2a7e80, 0x2a6e60, 0x2a6590, 0x2a6770, 0x2a5c00, 0x298620, 0x29de50, 0x2a60e0,
             0xe8330, 0x1110a0, 0x112690, 0x24541f, 0x140, 0x130,
         ],
+        [
+            0x2a8630, 0x2a7610, 0x2a6d40, 0x2a6f20, 0x2a63b0, 0x298dd0, 0x29e600, 0x2a6890,
+            0xe82a0, 0x111010, 0x112600, 0x24ddbf, 0x140, 0x130,
+        ],
+    ];
+
+    /// Core's "ammo menu redraw" rva per build, in [`BUILDS`] order.
+    const REDRAW_RVAS: [usize; 8] = [
+        0x3ed10, 0x3ed10, 0x3eeb0, 0x3eeb0, 0x3eeb0, 0x3eeb0, 0x3efc0, 0x3efc0,
     ];
 
     fn table(sites: &Sites) -> [usize; 14] {
@@ -246,14 +253,14 @@ mod tests {
 
     #[test]
     fn sites_resolve_where_the_build_table_had_them() {
-        for (build, expected) in BUILDS.iter().zip(TABLE) {
+        for ((build, expected), redraw) in BUILDS.iter().zip(TABLE).zip(REDRAW_RVAS) {
             let (Some(logic), Some(game)) =
                 (reference(build, "logic.dll"), reference(build, "game.dll"))
             else {
                 eprintln!("skipping {build}: no bin/{build} DLLs");
                 continue;
             };
-            let resolved = sites(&Image::mapped(&logic), &Image::mapped(&game))
+            let resolved = sites(&Image::mapped(&logic), &Image::mapped(&game), redraw)
                 .unwrap_or_else(|error| panic!("{build}: {error}"));
             assert_eq!(table(&resolved), expected, "{build}");
         }
@@ -268,7 +275,7 @@ mod tests {
             return;
         };
         let game = Image::mapped(&game);
-        let resolved = sites(&Image::mapped(&logic), &game).unwrap();
+        let resolved = sites(&Image::mapped(&logic), &game, REDRAW_RVAS[0]).unwrap();
         // A hooked Gunner method's prologue, then a byte inside a signature.
         for at in [resolved.tick.rva + 1, resolved.capable.rva + 0x18] {
             let mut changed = logic.image.clone();
@@ -277,7 +284,7 @@ mod tests {
                 image: &changed,
                 base: logic.base,
             };
-            assert!(sites(&image, &game).is_err(), "{at:#x}");
+            assert!(sites(&image, &game, REDRAW_RVAS[0]).is_err(), "{at:#x}");
         }
     }
 
@@ -287,6 +294,6 @@ mod tests {
             image: &[],
             base: 0x180000000,
         };
-        assert!(sites(&empty, &empty).is_err());
+        assert!(sites(&empty, &empty, 0).is_err());
     }
 }

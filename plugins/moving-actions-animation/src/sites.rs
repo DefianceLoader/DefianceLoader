@@ -90,11 +90,11 @@ pub(crate) fn sites(image: &Image) -> Result<Sites, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use defiance_core::sites::{reference, BUILDS, SEPTEMBER_BUILDS};
+    use defiance_core::sites::{reference, BUILDS, BUILDS_2026};
 
     /// The rvas the plugin's per-build table held before it resolved them, in
-    /// [`SEPTEMBER_BUILDS`] order.
-    const TABLE: [(&str, Sites); 4] = [
+    /// [`BUILDS_2026`] order.
+    const TABLE: [(&str, Sites); 6] = [
         (
             "gog/2026-09-14",
             Sites {
@@ -139,12 +139,34 @@ mod tests {
                 human_chassis_vt: 0x72c3b0,
             },
         ),
+        (
+            "gog/2026-10-07",
+            Sites {
+                update: 0x2c4240,
+                position: 0x43a2f0,
+                rotation: 0x43a4f0,
+                slerp: 0x136880,
+                human_animation_vt: 0x731090,
+                human_chassis_vt: 0x731320,
+            },
+        ),
+        (
+            "steam/2026-10-07",
+            Sites {
+                update: 0x2c42d0,
+                position: 0x43a380,
+                rotation: 0x43a580,
+                slerp: 0x136910,
+                human_animation_vt: 0x731128,
+                human_chassis_vt: 0x7313c8,
+            },
+        ),
     ];
 
     #[test]
     fn sites_resolve_where_the_build_table_had_them() {
         for (build, expected) in TABLE {
-            assert!(SEPTEMBER_BUILDS.contains(&build), "{build}");
+            assert!(BUILDS_2026.contains(&build), "{build}");
             let Some(mapped) = reference(build, "logic.dll") else {
                 eprintln!("skipping {build}: no bin/{build}/logic.dll");
                 continue;
@@ -155,7 +177,7 @@ mod tests {
 
     #[test]
     fn sites_resolve_on_every_september_build() {
-        for build in SEPTEMBER_BUILDS {
+        for build in BUILDS_2026 {
             if let Some(mapped) = reference(build, "logic.dll") {
                 assert!(sites(&Image::mapped(&mapped)).is_ok(), "{build}");
             }
@@ -166,7 +188,7 @@ mod tests {
     /// they are not supported.
     #[test]
     fn the_december_builds_are_refused() {
-        for build in BUILDS.into_iter().filter(|b| !SEPTEMBER_BUILDS.contains(b)) {
+        for build in BUILDS.into_iter().filter(|b| !BUILDS_2026.contains(b)) {
             if let Some(mapped) = reference(build, "logic.dll") {
                 let error = sites(&Image::mapped(&mapped)).unwrap_err();
                 assert!(

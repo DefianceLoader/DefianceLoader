@@ -66,7 +66,8 @@ directory (normally `Game/DefianceLoader/plugins/`):
 
 Update Core along with regroup; keep selection and the other feature DLLs.
 This add-on requires the current ABI 5 loader and individual-selection plugin.
-It supports the GOG and Steam releases of 2025-12-23 and of September 2026; on
+It supports the GOG and Steam releases of 2025-12-23, of September 2026 and
+of 2026-10-07; on
 a build where its code does not match, it logs a warning and installs nothing.
 It adds ten owned hooks and does not modify game files on disk.
 
@@ -139,7 +140,7 @@ gameplay or save/load testing.
 
 Preserved empty originals now hide their world hover icon. Restoring soldiers
 resumes the native icon update, including its normal visibility rules. The
-startup log includes `dormant icon fix 6`. This UI fix needs in-game verification.
+startup log includes `dormant icon fix 6`. Confirmed in game.
 
 ## Configurable hotkeys (iteration 7)
 

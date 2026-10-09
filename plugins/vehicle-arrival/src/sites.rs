@@ -52,7 +52,9 @@ mod tests {
 
     /// The rvas the per-build hash table held before the plugin resolved its
     /// site, in [`BUILDS`] order.
-    const TABLE: [usize; 6] = [0x124be0, 0x124c70, 0x12fd30, 0x12fdc0, 0x12fd30, 0x12fdc0];
+    const TABLE: [usize; 7] = [
+        0x124be0, 0x124c70, 0x12fd30, 0x12fdc0, 0x12fd30, 0x12fdc0, 0x12fd30,
+    ];
 
     #[test]
     fn the_callback_resolves_where_the_build_table_had_it() {

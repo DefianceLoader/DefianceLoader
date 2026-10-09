@@ -49,6 +49,7 @@ def main():
     log_filter_cases()
     reload()
     patch_v1_case()
+    startup_retry_case()
 
 
 def log_filter_cases():
@@ -371,6 +372,78 @@ def reload_case(fixed):
             print("PASS reload: provider reloaded; its startup-only consumer stayed", flush=True)
         else:
             print("PASS reload: provider and consumer unloaded and loaded again", flush=True)
+
+
+def startup_retry_case():
+    """A replaced startup-failed provider retries at a stable safe boundary."""
+    for command in [
+        "startup-retry",
+        "startup-retry-repeat",
+        "startup-retry-moved",
+        "startup-retry-disabled",
+        "startup-retry-revoked",
+        "startup-retry-legacy",
+        "startup-retry-superseded",
+    ]:
+        with tempfile.TemporaryDirectory(prefix="defiance-services-") as tmp:
+            root = pathlib.Path(tmp)
+            exe = host_with(
+                root,
+                {
+                    "defiance_example_counter": {"hot_reload": True},
+                    "defiance_example_counter_user": {},
+                },
+            )
+            cfg = root / "DefianceLoader/config/examples.ini"
+            cfg.parent.mkdir()
+            cfg.write_text("")
+            result = subprocess.run(
+                [str(exe), command], capture_output=True, text=True
+            )
+            lines = result.stdout.splitlines()
+            assert result.returncode == 0, (command, result.returncode, lines, result.stderr)
+            assert any(line.startswith("startup: ") for line in lines), (command, lines)
+            summaries = [
+                line
+                for line in lines
+                if "summary after apply: " in line or "summary after current apply: " in line
+            ]
+            assert summaries, (command, lines, result.stderr)
+            if command == "startup-retry-repeat":
+                assert len(summaries) >= 2 and "1 failed" in summaries[0], (command, lines)
+                assert "0 failed" in summaries[-1], (command, lines)
+            elif command == "startup-retry-moved":
+                assert any(
+                    line.startswith("ordinary enable after move: Err") for line in lines
+                ), (command, lines)
+                assert "0 failed" in summaries[-1], (command, lines, result.stderr)
+            elif command == "startup-retry-superseded":
+                stale = [line for line in lines if line.startswith("summary after stale apply: ")]
+                assert stale and "1 failed" in stale[-1], (command, lines)
+                assert "0 failed" in summaries[-1], (command, lines)
+            elif command.startswith("startup-retry-") and command not in {
+                "startup-retry-repeat",
+                "startup-retry-moved",
+                "startup-retry-superseded",
+            }:
+                refused = [line for line in lines if "loaded after apply:" in line]
+                assert refused and '"example.counter",' not in refused[-1], (command, lines)
+                assert "0 active" in summaries[-1], (command, lines)
+                if command == "startup-retry-disabled":
+                    assert "1 disabled" in summaries[-1], (command, lines)
+            else:
+                assert "0 failed" in summaries[-1], (command, lines, result.stderr)
+            loaded = [
+                line
+                for line in lines
+                if "loaded after apply:" in line or "loaded after current apply:" in line
+            ]
+            assert loaded, (command, lines, result.stderr)
+            if command in {"startup-retry-disabled", "startup-retry-revoked", "startup-retry-legacy"}:
+                assert '"example.counter",' not in loaded[-1], (command, lines)
+            else:
+                assert '"example.counter",' in loaded[-1], (command, lines, result.stderr)
+            print(f"PASS {command}: {summaries[-1]}", flush=True)
 
 
 if __name__ == "__main__":

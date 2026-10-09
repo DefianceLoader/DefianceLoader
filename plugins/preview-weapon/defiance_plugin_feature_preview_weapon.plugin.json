@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "id": "defiance.preview-weapon",
+  "dll": "defiance_plugin_feature_preview_weapon.dll",
+  "version": "0.2.1",
+  "abi": 5,
+  "patch_contract": true,
+  "group": "infantry",
+  "multiplayer_safe": true,
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Show the first matching weapon instead of the last matching weapon in squad previews, including in-mission unit info and out-of-mission squad management. Does not track later changes to the weapon a soldier is holding. Disable to restore the game's original preview choice. Works independently of selection and does not change combat. Restart required."
+    }
+  ],
+  "depends": [
+    {
+      "id": "defiance.core",
+      "min": "0.7.0"
+    }
+  ],
+  "conflicts": []
+}

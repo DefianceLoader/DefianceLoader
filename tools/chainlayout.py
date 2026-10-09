@@ -35,6 +35,9 @@ from build import SIMPLE_OPERAND, source
 from units import UNITS
 
 PATCH = builds.ROOT / "patch"
+# Logic patches assembled outside the unit table (tools/units.py): the file
+# patch's core and legacy logic routines.
+EXTRA_LOGIC_PATCHES = ("select-squad.asm", "selection-filter.asm", "pickup-distinct-item.asm")
 
 
 def payload_keys(which=None):
@@ -53,8 +56,7 @@ def payload_keys(which=None):
                 for sources, _, _ in routines:
                     paths.update(builds.ROOT / path for path in sources)
     if which in (None, "logic"):
-        paths.update(PATCH / name for name in
-                     ("select-squad.asm", "selection-filter.asm", "pickup-distinct-item.asm"))
+        paths.update(PATCH / name for name in EXTRA_LOGIC_PATCHES)
     keys = set()
     for raw in source(*sorted(paths)):
         code = raw.split(";")[0].strip()

@@ -426,15 +426,18 @@ def active_profile():
     return path.stem, json.loads(path.read_text(encoding="utf-8"))
 
 
+def class_offsets(table):
+    """A layout table without its stack-frame entries. Stack frames never move
+    in the payload, so those entries are dead and would make the layout audit
+    all noise."""
+    return {k: v for k, v in table.items() if k.split("|")[1] not in ("rsp", "rbp")}
+
+
 def load_layout(profile):
     """Adopt a build profile's layout tables (tools/layouts/*.json). The
     selection edits are re-assembled, because their replacement bytes embed
     class offsets too."""
     global LAYOUT, GAME_LAYOUT, SYMBOLS, GAME_SYMBOLS
-    # Stack frames never move in the payload; drop their dead entries so the
-    # layout audit is not all noise.
-    class_offsets = lambda table: {k: v for k, v in table.items()
-                                   if k.split("|")[1] not in ("rsp", "rbp")}
     LAYOUT = class_offsets(profile.get("logic_layout", {}))
     GAME_LAYOUT = class_offsets(profile.get("game_layout", {}))
     SYMBOLS = {**REFERENCE_SYMBOLS, **profile.get("logic_symbols", {})}

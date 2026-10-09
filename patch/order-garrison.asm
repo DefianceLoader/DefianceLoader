@@ -149,7 +149,7 @@ capacity_state_owner:
     test rcx, rcx
     jz no_owner_capacity
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x50]
+    call qword ptr [rax + 0x50]    ; vt:logic/AiStateMachine@Leonardo|logic/AiSubstateMachine@Leonardo
     test rax, rax
     jz no_owner_capacity
     mov qword ptr [rsi], rax         ; same singleton for native failure cleanup
@@ -196,7 +196,7 @@ vehicle_owner_only:
     test rcx, rcx
     jz vehicle_owner_done
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x50]
+    call qword ptr [rax + 0x50]    ; vt:logic/AiStateMachine@Leonardo|logic/AiSubstateMachine@Leonardo
     test rax, rax
     jz vehicle_owner_done
     mov qword ptr [rsi], rax
@@ -219,14 +219,14 @@ vehicle_capacity_enter:
     mov r10, r14
     call vehicle_owner_only
     mov r15, r8
-    jmp qword ptr [rax + 0xe8]
+    jmp qword ptr [rax + 0xe8]    ; vt:logic/TransportHelper@Leonardo
 
 ; Boarding phase (fn_fee10), when the soldier reaches the vehicle: a pass
 ; admits him (vt+a8) and a failure ends his order. rbp = state.
 vehicle_capacity_arrive:
     mov r10, rbp
     call vehicle_owner_only
-    jmp qword ptr [rax + 0xe8]
+    jmp qword ptr [rax + 0xe8]    ; vt:logic/TransportHelper@Leonardo
 
 ; Cursor (fn_c6440, may this squad board): ask whether one of its soldiers
 ; fits, so the order is offered while a seat is free. rax = helper vtable,
@@ -236,7 +236,7 @@ vehicle_capacity_cursor:
     jz vehicle_cursor_native
     mov r8d, 1
 vehicle_cursor_native:
-    jmp qword ptr [rax + 0xe8]
+    jmp qword ptr [rax + 0xe8]    ; vt:logic/TransportHelper@Leonardo
 
 ; Order (fn_47740) hands each transport's free seats (esi) to the ordered
 ; squads in turn: a squad passes the places check and takes its size (edi) from
@@ -249,7 +249,7 @@ vehicle_capacity_command:
     mov r8d, 1
 vehicle_command_check:
     sub rsp, 0x28
-    call qword ptr [rax + 0xe8]
+    call qword ptr [rax + 0xe8]    ; vt:logic/TransportHelper@Leonardo
     add rsp, 0x28
     test al, al
     jz vehicle_command_skip
@@ -308,7 +308,7 @@ vehicle_exit_point:
     jne vehicle_exit_members
 vehicle_exit_native:
     sub rsp, 0x28
-    call qword ptr [rax + 0x80]
+    call qword ptr [rax + 0x80]    ; vt:essence/EntityImpl@Essence@Galileo
     add rsp, 0x28
     ret
 vehicle_exit_members:
@@ -326,7 +326,7 @@ vehicle_exit_next:
     jz vehicle_exit_skip
     mov rax, qword ptr [rbx]
     mov rcx, rbx
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     mov rcx, qword ptr [rax + 0x20]
     test rcx, rcx
     jz vehicle_exit_skip
@@ -363,7 +363,7 @@ building_reserve_occupant:
     mov rcx, qword ptr [rbx + 0x10]
     mov rcx, qword ptr [rcx + 0x10]
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x60]
+    call qword ptr [rax + 0x60]    ; vt:logic/AiEnterBuildingOrder@Leonardo
     cmp rax, rsi
     lea rsp, [rsp + 0x28]
     jne reserve_other_occupant

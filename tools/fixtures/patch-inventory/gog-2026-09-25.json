@@ -46,26 +46,19 @@
     ["game", 1787664, 5, "function"],
     ["game", 3447216, 5, "function"],
     ["game", 3448192, 5, "function"],
-    ["world2", 896688, 7, "function"],
-    ["world2", 1109074, 5, "call site"],
-    ["world2", 1628641, 5, "call site"],
-    ["world2", 1637659, 5, "call site"],
-    ["world2", 1639157, 5, "call site"],
-    ["world2", 1645018, 7, "function"],
-    ["world2", 1649197, 7, "function"],
-    ["world2", 1658450, 2, "byte patch"]
+    ["world2", 1628064, 7, "function"]
   ]},
    "defiance.cover-markers": {"state": "Active", "spans": [
     ["game", 3306256, 9, "function"],
     ["game", 3355152, 10, "function"],
     ["game", 3356416, 5, "function"],
+    ["game", 3368864, 5, "function"],
     ["game", 3448128, 10, "function"],
     ["logic", 1110397, 5, "call site"],
     ["logic", 4510751, 5, "call site"],
     ["logic", 4513509, 5, "call site"],
     ["logic", 4516032, 11, "function"],
-    ["logic", 4522266, 5, "call site"],
-    ["world2", 1628064, 7, "function"]
+    ["logic", 4522266, 5, "call site"]
   ]},
    "defiance.diagnostics": {"state": "Active", "spans": []},
    "defiance.expanded-ammo-menu": {"state": "Active", "spans": [
@@ -192,6 +185,16 @@
     ["logic", 2982592, 8, "function"],
     ["logic", 2987440, 5, "function"],
     ["logic", 3355049, 5, "function"]
+  ]},
+   "defiance.performance": {"state": "Active", "spans": [
+    ["world2", 896688, 7, "function"],
+    ["world2", 1109074, 5, "call site"],
+    ["world2", 1628641, 5, "call site"],
+    ["world2", 1637659, 5, "call site"],
+    ["world2", 1639157, 5, "call site"],
+    ["world2", 1645018, 7, "function"],
+    ["world2", 1649197, 7, "function"],
+    ["world2", 1658450, 2, "byte patch"]
   ]},
    "defiance.pickup": {"state": "Active", "spans": [
     ["logic", 4518164, 5, "call site"]

@@ -146,11 +146,11 @@ pub(crate) fn world(image: &Image) -> Result<World, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use defiance_core::sites::{reference, reference_world2, SEPTEMBER_BUILDS};
+    use defiance_core::sites::{reference, reference_world2, BUILDS_2026};
 
     /// The rvas the per-build hash table held before the plugin resolved its
-    /// sites, in [`SEPTEMBER_BUILDS`] order.
-    const TABLE: [Logic; 4] = [
+    /// sites, in [`BUILDS_2026`] order.
+    const TABLE: [Logic; 5] = [
         Logic {
             shot: 0x29ad80,
             primary_shot: 0x29a600,
@@ -195,18 +195,42 @@ mod tests {
             gunner_vt: 0x72cd00,
             gunner_client_vt: 0x72ced0,
         },
+        Logic {
+            shot: 0x29b5c0,
+            primary_shot: 0x29ae40,
+            gunner_tick: 0x2d84b0,
+            client_tick: 0x2dd430,
+            rebind: 0x436170,
+            handoff: 0x2d8f40,
+            animation_vt: 0x731090,
+            gunner_vt: 0x731c70,
+            gunner_client_vt: 0x731e28,
+        },
     ];
 
-    /// The world2.dll rvas the plugin held before it resolved them, for the
-    /// one world2.dll in `bin/` (shared by both 2026-09-25 builds).
-    const WORLD: World = World {
-        attach: 0x154d40,
-        detach: 0x1551a0,
-    };
+    /// The world2.dll rvas per build that has a world2.dll in `bin/`: the
+    /// 2026-09-25 file the plugin's old table held (Steam ships the same one),
+    /// then GOG 2026-10-07.
+    const WORLDS: [(&str, World); 2] = [
+        (
+            "gog/2026-09-25",
+            World {
+                attach: 0x154d40,
+                detach: 0x1551a0,
+            },
+        ),
+        (
+            "gog/2026-10-07",
+            World {
+                attach: 0x1591e0,
+                detach: 0x159640,
+            },
+        ),
+    ];
 
     #[test]
     fn logic_sites_resolve_where_the_build_table_had_them() {
-        for (build, expected) in SEPTEMBER_BUILDS.iter().zip(TABLE) {
+        for (build, expected) in BUILDS_2026.iter().zip(TABLE) {
             let Some(mapped) = reference(build, "logic.dll") else {
                 eprintln!("skipping {build}: no bin/{build}/logic.dll");
                 continue;
@@ -218,7 +242,11 @@ mod tests {
     #[test]
     fn world_sites_resolve_on_every_world2_in_bin() {
         for (build, mapped) in reference_world2() {
-            assert_eq!(world(&Image::mapped(&mapped)), Ok(WORLD), "{build}");
+            let (_, expected) = WORLDS
+                .iter()
+                .find(|(b, _)| *b == build)
+                .unwrap_or_else(|| panic!("{build}: no expected world2 sites"));
+            assert_eq!(world(&Image::mapped(&mapped)), Ok(*expected), "{build}");
         }
     }
 
@@ -235,7 +263,7 @@ mod tests {
 
     #[test]
     fn a_changed_entry_is_refused() {
-        let Some(mapped) = reference(SEPTEMBER_BUILDS[0], "logic.dll") else {
+        let Some(mapped) = reference(BUILDS_2026[0], "logic.dll") else {
             return;
         };
         let mut changed = mapped.image.clone();

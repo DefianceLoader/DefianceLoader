@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.expanded-ammo-menu",
   "dll": "defiance_plugin_expanded_ammo_menu.dll",
-  "version": "0.5.0",
+  "version": "0.7.0",
   "abi": 5,
   "patch_contract": true,
   "group": "weapons",
@@ -35,7 +35,7 @@
     },
     {
       "id": "defiance.core",
-      "min": "0.1.0"
+      "min": "0.6.0"
     },
     {
       "id": "defiance.selection",

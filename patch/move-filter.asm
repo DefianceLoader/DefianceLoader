@@ -56,14 +56,14 @@ count_next:
     jz count_next
     inc r13
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz count_next
     mov rcx, qword ptr [rax + 0x50]
     test rcx, rcx
     jz count_next
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     test al, al
     jz count_next
     inc r12
@@ -85,7 +85,7 @@ count_done:
     jz run_known
     mov rax, qword ptr [rcx]
     mov edx, 0x200
-    call qword ptr [rax + 0x70]
+    call qword ptr [rax + 0x70]    ; vt:logic/AiMoveOrder@Leonardo
     movzx r12d, al
 run_known:
     xor r13d, r13d
@@ -107,7 +107,7 @@ pack_next:
     jz pack_next
     mov qword ptr [rsp + 0x20], rcx    ; the entity, across the two calls
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz pack_next
     mov rcx, qword ptr [rax + 0x50]
@@ -115,7 +115,7 @@ pack_next:
     jz pack_next
     mov qword ptr [rsp + 0x28], rcx    ; his facet, across the call
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0x58]
+    call qword ptr [rax + 0x58]    ; vt:logic/SelectableFacet@Leonardo
     mov rcx, qword ptr [rsp + 0x28]
     test al, al
     jz left_behind
@@ -158,7 +158,7 @@ tail:
     jz unpinned
     mov rax, qword ptr [rcx]
     mov edx, 0x200
-    call qword ptr [rax + 0x70]
+    call qword ptr [rax + 0x70]    ; vt:logic/AiMoveOrder@Leonardo
     test al, al
     jz unpinned                        ; a walk
     mov rbx, rsi
@@ -170,7 +170,7 @@ unpin_next:
     test rcx, rcx
     jz unpin_next
     mov rax, qword ptr [rcx]
-    call qword ptr [rax + 0xb0]
+    call qword ptr [rax + 0xb0]    ; vt:essence/EntityImpl@Essence@Galileo
     test rax, rax
     jz unpin_next
     mov rcx, qword ptr [rax + 0x50]

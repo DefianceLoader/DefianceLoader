@@ -168,6 +168,7 @@
     ["logic", 2987440, 5, "function"],
     ["logic", 3355049, 5, "function"]
   ]},
+   "defiance.performance": {"state": "Active", "spans": []},
    "defiance.pickup": {"state": "Active", "spans": [
     ["logic", 4516564, 5, "call site"]
   ]},
