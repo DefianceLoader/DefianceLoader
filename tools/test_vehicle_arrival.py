@@ -69,7 +69,7 @@ def method(img):
     return rva, code, relocations
 
 
-PLUGIN_PATH = pathlib.Path(sys.argv.pop(1)).resolve() if len(sys.argv) > 1 else None
+PLUGIN_PATH = None
 
 
 class Plugin:
@@ -223,4 +223,6 @@ class VehicleArrivalTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
+        PLUGIN_PATH = pathlib.Path(sys.argv.pop(1)).resolve()
     unittest.main()

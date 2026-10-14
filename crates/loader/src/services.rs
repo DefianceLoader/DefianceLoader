@@ -71,6 +71,14 @@ fn loader_table(name: &str, version: u32) -> Option<(usize, usize)> {
             &crate::mission_events::FEED as *const _ as usize,
             core::mem::size_of::<defiance_api::MissionFeedV1>(),
         )),
+        ("squad-panel-observers", 1) => Some((
+            &crate::squad_panel::API as *const _ as usize,
+            core::mem::size_of::<defiance_api::SquadPanelRefreshV1>(),
+        )),
+        ("squad-panel-feed", 1) => Some((
+            &crate::squad_panel::FEED as *const _ as usize,
+            core::mem::size_of::<defiance_api::SquadPanelFeedV1>(),
+        )),
         ("multiplayer", 1) => Some((
             &crate::multiplayer::API as *const _ as usize,
             core::mem::size_of::<defiance_api::MultiplayerV1>(),
@@ -122,6 +130,11 @@ impl Registry {
             return 0;
         }
         if provider == loader_id() {
+            if matches!(name, "squad-panel-observers" | "squad-panel-feed")
+                && context.id != "defiance.core"
+            {
+                return 0;
+            }
             return loader_table(name, version)
                 .filter(|&(_, table_size)| table_size >= size)
                 .map_or(0, |(address, _)| address);
@@ -171,6 +184,7 @@ fn registry() -> &'static Mutex<Registry> {
 }
 
 pub fn begin(owner: usize, id: &str, dependencies: Vec<String>) {
+    crate::squad_panel::begin(owner, id);
     CURRENT.with(|slot| {
         *slot.borrow_mut() = Some(Context {
             owner,
@@ -187,9 +201,25 @@ pub fn begin(owner: usize, id: &str, dependencies: Vec<String>) {
 pub fn current_owner() -> Option<usize> {
     CURRENT.with(|slot| slot.borrow().as_ref().map(|context| context.owner))
 }
+/// Whether the current init already acquired a table from `provider`.
+pub(crate) fn current_has_use(provider: &str) -> bool {
+    let provider = provider.to_ascii_lowercase();
+    CURRENT.with(|slot| {
+        let current = slot.borrow();
+        let Some(context) = current.as_ref() else {
+            return false;
+        };
+        registry()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .uses
+            .contains(&(context.owner, provider))
+    })
+}
 pub fn finish(owner: usize, success: bool) {
     CURRENT.with(|slot| *slot.borrow_mut() = None);
     registry().lock().unwrap().finish(owner, success);
+    crate::squad_panel::finish(owner, success);
     if !success {
         crate::trace::capture::close_owner(owner);
         crate::mission_events::close_owner(owner);
@@ -199,6 +229,7 @@ pub fn finish(owner: usize, success: bool) {
 /// (`lifecycle::unload`). Consumers that cached a table are unloaded first.
 pub fn remove(owner: usize) {
     registry().lock().unwrap().finish(owner, false);
+    crate::squad_panel::retire_owner(owner);
     crate::trace::capture::close_owner(owner);
     crate::mission_events::close_owner(owner);
 }
@@ -211,6 +242,7 @@ pub fn withdraw(owner: usize) {
         .unwrap()
         .tables
         .retain(|_, s| s.owner != owner);
+    crate::squad_panel::retire_owner(owner);
     crate::trace::capture::close_owner(owner);
     crate::mission_events::close_owner(owner);
 }

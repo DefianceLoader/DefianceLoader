@@ -17,6 +17,7 @@ tools/                analysis, build, packaging and test tooling
 tools/variants/       assembled patch units per supported game build
 injector/             an external injector that patches a running game
 examples/services/    cross-plugin service examples
+examples/vehicle-braking/ paired Rust and C++ native plugin examples
 ```
 
 Everything builds from a checkout. The game's own DLLs are needed only to
@@ -139,6 +140,13 @@ mise run test                # everything, including native tests (needs bin/)
 Plugin-specific suites have their own tasks (`mise tasks` lists them), for
 example `mise run squad-scroll-test`. CI runs the tests that need no game files
 on every code change.
+
+The vehicle braking walkthrough builds and installs one standalone plugin at a
+time. Its `mise run examples-build` and `mise run examples-test` commands build
+the Rust and C++ DLLs and exercise them in the game-free mock host;
+`mise run examples-native-test` checks the native behavior with local game
+fixtures. These source examples are not included in the default game bundle or
+release ZIP.
 
 `mise run test` skips a native test that already passed on the same inputs:
 its script and the tool modules it uses, the built DLLs, payloads and game DLLs

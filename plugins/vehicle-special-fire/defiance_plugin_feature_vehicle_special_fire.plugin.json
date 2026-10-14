@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.vehicle-special-fire",
   "dll": "defiance_plugin_feature_vehicle_special_fire.dll",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "abi": 5,
   "patch_contract": true,
   "group": "weapons",

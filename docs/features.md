@@ -11,7 +11,7 @@ To switch features without restarting, set `live_toggle = true` under
 `enabled`, or any other setting of a feature, takes effect at the main menu,
 or as the next mission starts or save loads: the feature is switched, or
 loaded again with its new values. Core, the performance tuning, the expanded
-ammo menu, squad scrolling, unit inspection, vehicle arrival braking, primary weapon drops, moving grenades
+ammo menu, squad scrolling, experience levels, unit inspection, vehicle arrival braking, primary weapon drops, moving grenades
 and the movement animation overlay still need a restart. A feature built into
 Core that was off at startup comes on only after a restart; a separate plugin
 DLL can be switched on.
@@ -134,6 +134,65 @@ land on. It needs the separate `defiance-squad-scroll-ui` download, enabled in
 the game's mod menu. Details:
 [plugins/squad-management-scroll](../plugins/squad-management-scroll/README.md).
 
+## Experience levels
+
+Plugin: `defiance.experience-levels` (experimental, off by default). Lets a
+mod define more than the stock six experience levels, with a separate count
+for each squad type. The mod supplies the extra XP thresholds and per-level
+bonuses. Requires loader 0.10.0 and Core 0.8.0 or later; the current plugin
+supports the verified 2026 GOG and Steam builds. Unsupported builds log a
+warning and skip the feature.
+
+Enable it in `DefianceLoader/config/gameplay.ini` and restart the game:
+
+```ini
+[defiance.experience-levels]
+enabled = true
+max_levels = 32
+```
+
+`max_levels` counts level 0, accepts 6 to 64, and defaults to 32. For example,
+eight levels means `level_0` through `level_7`.
+
+To use it in a mod:
+
+1. Extend the header of `scripts/species/exp_levels.txt` with consecutive
+   columns `level_6`, `level_7`, and so on, preserving the table's existing
+   format and sections.
+2. Add increasing total-XP thresholds to the relevant rows in `#levels`.
+   Point each squad type's `exp_levels` field at its chosen row's `sysname`.
+   Types sharing a row share its progression; use separate rows for different
+   level counts.
+3. Extend that type's other per-level rows, such as health, movement speed and
+   aim deviation, using each row's existing cell syntax. A shorter stat row
+   uses its last value at higher levels. Repeat that value in extra columns
+   when a bonus should stay unchanged within a longer row.
+4. Supply rank textures `ui/pictures/Main/exp_level_6`, `exp_level_7`, and so
+   on, plus matching `exp_level_6`, `exp_level_7`, ... rank-name keys in the
+   mod's `strres.xml`. Missing assets leave the extra ranks' badges or names
+   blank.
+
+For example, these illustrative `#levels` rows give one type six levels and
+another eight; the last two cells of `mod_regular` are empty:
+
+| sysname | level_0 | level_1 | level_2 | level_3 | level_4 | level_5 | level_6 | level_7 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| mod_regular | 0 | 100 | 300 | 600 | 1000 | 1500 | | |
+| mod_veteran | 0 | 100 | 300 | 600 | 1000 | 1500 | 2100 | 2800 |
+
+Each row stops at its first missing or empty extra cell, or at `max_levels`.
+An empty `level_6` followed by a filled `level_7` still leaves that row at six
+levels. Rows without extra cells keep their stock six levels. Ammunition
+damage profiles remain limited to their six stock entries: level 6 and above
+use the level-5 profile.
+
+The infantry info panel creates and spaces experience-meter separators for
+the selected squad's level count, including when squad types differ. No
+experience-meter UI script changes are needed. This feature is single-player
+only and requires a restart after configuration changes. Save/load behavior
+after changing the level tables or disabling the plugin has not been verified.
+Details: [plugins/experience-levels](../plugins/experience-levels/README.md).
+
 ## Weapon pickup
 
 Plugin: `defiance.pickup`. When picking up a weapon, the selected soldiers are
@@ -215,6 +274,14 @@ destination. To try it, set `enabled = true` in
 In-game stopping accuracy still needs testing. Details:
 [plugins/vehicle-arrival](../plugins/vehicle-arrival/README.md).
 
+## Deployed repair
+
+Plugin: `defiance.deployed-repair` (off by default). Allows crews to repair
+vehicles, turrets and platforms while they remain deployed. Native crew, damage
+and repair-resource requirements still apply. To enable it, set
+`enabled = true` in `[defiance.deployed-repair]` in `vehicles.ini` and restart
+the game. Details: [plugins/deployed-repair](../plugins/deployed-repair/README.md).
+
 ## Regroup
 
 Plugin: `defiance.regroup` (experimental, off by default). Form a new infantry
@@ -231,10 +298,11 @@ written under `[loader]` by an earlier version still apply until the loader
 moves them, and the log says so.
 
 The game runs its rendering and simulation on one thread and keeps it on
-the first CPU, which often also handles the graphics card's interrupts. The
-plugin lets that thread use every CPU instead, which gives it more of its time
-on CPU-bound scenes. `main_thread_cpus = engine` restores the game's own choice; `spread` (every CPU
-but the first core) is experimental and caused long stutters in testing.
+the first CPU, which often also handles the graphics card's interrupts. By
+default the plugin leaves that choice alone (`main_thread_cpus = engine`).
+`main_thread_cpus = all` lets the thread use every CPU, which can give it more
+of its time on CPU-bound scenes; `spread` (every CPU but the first core) is
+experimental and caused long stutters in testing.
 
 It also sorts grass by distance with each distance worked out once per
 frame, where the game works each out many times, in about half the time; the
@@ -250,9 +318,24 @@ redrawn this frame, a moving unit's shadow can trail it by a few frames.
 `shadow_cascades = rotate` redraws every band equally often,
 `near` redraws the nearest band every frame and the others in turn, and `all`
 is the game's own.
+A band that is not due is redrawn anyway once the view leaves what its old map
+was drawn for, so shadows don't blink or drop out at its edges. To keep that
+rare while the camera moves, those bands are drawn a little larger than needed
+(`shadow_margin`: `none`, `small`, `medium` or `large`, the default);
+larger lasts longer between redraws, at slightly softer shadows.
+`shadow_stable = stable` (experimental) makes each band larger than the game
+does, moves it in whole pixels and keeps its size while the camera turns, so
+fine shadow edges shimmer less, but shadows are softer and end nearer the
+camera; the default, `engine`, places the bands as the game does.
 Fitting each band to what it covers, the game also walks every shadow caster
 in view and then throws the result away; the plugin skips that walk, which leaves
 the shadows the same (`shadow_fit = engine` keeps it).
+`shadow_small_casters = tiny`, `small`, `medium` or `large` (experimental, off
+by default) leaves objects under about 2, 4, 8 or 16 shadow-map pixels across
+out of every band but the nearest, which makes the far bands cheaper to draw.
+At `tiny` and `small` those shadows are specks; `medium` is the largest that
+kept infantry shadows acceptable in testing, and `large` also drops them, and
+mid-sized props', at a short distance.
 
 With shadows rotated, the main thread's biggest cost is preparing the objects
 in view each frame. The plugin puts those objects, and the meshes it groups for
@@ -278,6 +361,16 @@ about 83 gameplay-view calls/s versus about 80 before and after, and visible
 trees looked normal. That gain is provisional; deferred provider updates may
 have effects beyond tree motion. This is an opt-in setting, checked in game
 only on Steam 2026-09-25.
+`tree_sway` also takes a number from 2 to 16 (experimental): each tree updates
+its sway and position every that many tree-manager updates, with the time in
+between added up, and trees are spread across those updates so the work is
+even. Distances and rates (experimental), such as `100:2, 200:4, 400:8, 16`,
+update trees nearer than 100 every second update, nearer than 200 every fourth,
+nearer than 400 every eighth and the rest every sixteenth; this needs
+`view_sort = cached`, which supplies the camera position, and without it every
+tree uses the first rate. A tree that comes back into view updates at once.
+That schedule looked acceptable in game on GOG 2026-10-07; it runs about one
+tree update in seven.
 `tree_sway = engine` is the default. The plugin finds the tree functions by signature
 and checks their entry bytes; a game build where any of them is not found keeps
 the engine rate and is not patched. Changing this setting requires a restart.

@@ -94,6 +94,8 @@ STANDALONE = [
     ("plugins/ability-groups", "defiance_plugin_ability_groups"),
     ("plugins/legion-vehicle-hacking", "defiance_plugin_legion_vehicle_hacking"),
     ("plugins/vehicle-arrival", "defiance_plugin_vehicle_arrival"),
+    ("plugins/experience-levels", "defiance_plugin_experience_levels"),
+    ("plugins/deployed-repair", "defiance_plugin_deployed_repair"),
     ("plugins/cover-markers", "defiance_plugin_cover_markers"),
     ("plugins/weapon-drops", "defiance_plugin_weapon_drops"),
     *MOVING_ACTIONS,

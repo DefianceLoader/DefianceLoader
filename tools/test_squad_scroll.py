@@ -30,17 +30,17 @@ PATHS = {i: builds.build(n).game for i, n in enumerate(BUILDS)}
 
 # Per panel kind: the unit member on the panel, the four widget-array bases
 # (weapons, ammunition, upgrades, perks; 0 when the panel has no such row), the
-# vtable/refresh/preflight names, and whether the squad-only rows apply.
+# vtable and preflight names, and whether the squad-only rows apply.
 PANELS = {
     'squad': dict(unit=0x288, root=0x120, bases=[0x160, 0x190, 0x1e8, 0x1c0],
-                  vtable='panel_vtable', refresh='refresh', perks=True),
+                  vtable='panel_vtable', perks=True),
     'vehicle': dict(unit=0x278, root=0x128, bases=[0x150, 0x180, 0x1b0, 0],
-                    vtable='vehicle_vtable', refresh='vehicle_refresh', perks=False),
+                    vtable='vehicle_vtable', perks=False),
     # The training chooser shares the native event dispatcher, but has its own
     # window layout and show hook. Its focused fixture branches before the
     # inventory-panel assertions below.
     'training': dict(unit=0x288, root=0x128, bases=[0x160, 0x190, 0x1e8, 0x1c0],
-                     vtable='training_vtable', refresh='refresh', perks=False),
+                     vtable='training_vtable', perks=False),
 }
 
 
@@ -55,8 +55,8 @@ SITES = (
     dict(training_show=0x2a05e0, training_layout=0x2a10f0, dispatch=0x2ca1e0, destroy=0x2a38c0, ammo=0x3cca0, weapon=0x36fdb0, script=0x70c00, listen=0x2da7c0, thumb=0x2cd5c0, slider_dispatch=0x2cc710, perk=0x2d7480, upgrade=0x36e040, training_destroy=0x2a0320, vehicle_destroy=0x2a9a00, vehicle_refresh=0x2ab080, refresh=0x2a5c60, training_key=0x29fbd0, squad_chooser=0x2a4020, vehicle_chooser=0x2aa310, training_vtable=0x521bb0, panel_vtable=0x522018, vehicle_vtable=0x522368, slider_vtable=0x523a20, slider_ctrl_vtable=0x5239f0, upgrade_key=0x613848, context_service=0x138, perk_limit=0x880, squad_fit_name=0x860),
 )
 
-# The entry bytes each hook relocates, from sites.rs's Sites::hooks.
-BEFORE = dict(refresh=21, vehicle_refresh=21, training_show=22, thumb=24,
+# The entry bytes each consumer hook relocates, from sites.rs's Sites::hooks.
+BEFORE = dict(training_show=22, vehicle_refresh=21, thumb=24,
               squad_chooser=21, vehicle_chooser=22)
 
 
@@ -144,9 +144,8 @@ def case(build, mode, kind='squad'):
             layout(window, capacity, second)
         for card in cards:
             byte(card+0x5b, 1)
-    stocks = {'refresh': stock_squad, 'vehicle_refresh': stock_vehicle, 'thumb': stock_thumb,
-              'squad_chooser': stock_squad_chooser, 'vehicle_chooser': stock_vehicle_chooser,
-              'training_show': stock_training_show}
+    stocks = {'vehicle_refresh': stock_vehicle, 'thumb': stock_thumb, 'squad_chooser': stock_squad_chooser,
+              'vehicle_chooser': stock_vehicle_chooser, 'training_show': stock_training_show}
 
     @cb(C.c_int, C.c_void_p, C.c_void_p, C.c_size_t, C.c_void_p)
     def hook(at, detour, n, out):
@@ -161,6 +160,37 @@ def case(build, mode, kind='squad'):
         detours[name] = detour
         stub(at, detour)
         return 0
+    refresh_callback = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p)
+    subscribers, subscription_tokens, subscribe_calls = [], [], []
+    @cb(C.c_uint64, C.c_void_p, C.c_void_p)
+    def subscribe(callback, context):
+        subscribe_calls.append((callback, context))
+        if mode == 'refuse_subscription': return 0
+        token = 0x5343524f4c4c
+        subscribers.append((C.cast(callback, refresh_callback), context))
+        subscription_tokens.append(token)
+        return token
+    @cb(C.c_int, C.c_uint64)
+    def unsubscribe_service(token):
+        if token not in subscription_tokens: return 1
+        subscribers.clear(); subscription_tokens.remove(token); return 0
+    class SquadPanelRefreshV1(C.Structure):
+        _fields_ = [('subscribe', C.c_void_p), ('unsubscribe', C.c_void_p)]
+    refresh_table = SquadPanelRefreshV1(subscribe, unsubscribe_service)
+    unsubscribe = C.CFUNCTYPE(C.c_int, C.c_uint64)(refresh_table.unsubscribe)
+    @cb(C.c_int, C.c_char_p, C.c_uint32, C.c_void_p, C.c_size_t)
+    def register_service(_name, _version, _table, _size): return 0
+    @cb(C.c_void_p, C.c_char_p, C.c_char_p, C.c_uint32, C.c_size_t)
+    def query_service(provider, name, version, min_size):
+        if mode == 'no_service': return None
+        if (provider == b'defiance.core' and name == b'squad-panel-refresh'
+                and version == 1 and min_size <= C.sizeof(refresh_table)):
+            return C.addressof(refresh_table)
+        return None
+    class ServiceApiV1(C.Structure):
+        _fields_ = [('version', C.c_uint32), ('size', C.c_uint32),
+                    ('register', C.c_void_p), ('query', C.c_void_p)]
+    service_api = ServiceApiV1(1, C.sizeof(ServiceApiV1), register_service, query_service)
     # The loader materializes every declared setting (defaults included) and
     # validates it before init, so the harness supplies them all: a perk cap of
     # nine so scrolling past five can be exercised, and per mode the
@@ -187,16 +217,28 @@ def case(build, mode, kind='squad'):
         _fields_ = [('abi',C.c_uint32),('name',C.c_char_p),('version',C.c_char_p),('init',C.c_void_p),('stop',C.c_void_p)]
     api = Api(5, 0, log, module_base, module_size, 0, 0, 0, hook, 0, unhook, 0, 0, config_get, patch)
     lib = C.CDLL(str(DLL)); lib.defiance_plugin.restype = C.POINTER(Plugin)
+    lib.defiance_plugin_services.argtypes = [C.POINTER(ServiceApiV1)]
+    lib.defiance_plugin_services.restype = C.c_int
+    assert lib.defiance_plugin_services(C.byref(service_api)) == 0
     init = C.CFUNCTYPE(C.c_int, C.POINTER(Api))(lib.defiance_plugin().contents.init)
     if mode == 'code': put(addr('thumb'), bytes([C.c_ubyte.from_address(addr('thumb')).value ^ 1]))
     if mode == 'vtable': put(addr(panel_kind['vtable']) + 8, struct.pack('<Q', addr('dispatch') + 1))
     result = init(C.byref(api))
     if mode not in ('ok', 'noupgrades', 'novehicles', 'upslots5', 'nofit'):
         assert result != 0 and not owned, (mode, result, messages)
+        if subscription_tokens:
+            # The loader retires subscriptions when plugin init fails.
+            for token in subscription_tokens[:]:
+                assert unsubscribe(token) == 0
         if mode.startswith('fail'): assert C.string_at(base, size) == original
+        elif mode in ('no_service', 'refuse_subscription'):
+            assert calls == 0 and C.string_at(base, size) == original
+            assert not subscribers
+            assert len(subscribe_calls) == (mode == 'refuse_subscription')
         else: assert calls == 0
         print(f'PASS build={build} {kind} {mode}: refusal/rollback', flush=True)
         return
+    assert len(subscribe_calls) == 1 and len(subscribers) == 1, subscribe_calls
     # Seven vtable slots plus every declared hook, including the training
     # chooser's post-show hook.
     expected_owned = 7 + len(stocks)
@@ -416,7 +458,13 @@ def case(build, mode, kind='squad'):
         for i, w in enumerate(perk_cards): pq(panel+panel_kind['bases'][3]+i*8, w)
     perk_records = alloc(32*0x20)
     pq(unit+0x2c8, perk_records); pq(unit+0x2d0, perk_records+7*0x20)
-    refresh = C.CFUNCTYPE(None,C.c_void_p)(detours[panel_kind['refresh']])
+    def refresh(panel):
+        if kind == 'vehicle':
+            C.CFUNCTYPE(None, C.c_void_p)(detours['vehicle_refresh'])(panel)
+        else:
+            C.CFUNCTYPE(None, C.c_void_p)(stock_squad)(panel)
+            callback, context = subscribers[0]
+            callback(panel, context)
     event_call = C.CFUNCTYPE(None,C.c_void_p,C.c_void_p,C.c_void_p,C.c_void_p)
     dispatch = event_call(q(addr(panel_kind['vtable'])+8))
     ctrl_dispatch = event_call(q(addr('slider_ctrl_vtable')+8))
@@ -887,13 +935,23 @@ def case(build, mode, kind='squad'):
 
 
 if __name__ == '__main__':
-    if len(sys.argv)>2: case(int(sys.argv[1]),sys.argv[2],sys.argv[3] if len(sys.argv)>3 else 'squad')
+    if len(sys.argv)>2 and sys.argv[1] != '--service-failures':
+        case(int(sys.argv[1]),sys.argv[2],sys.argv[3] if len(sys.argv)>3 else 'squad')
+    elif len(sys.argv)>1 and sys.argv[1] == '--service-failures':
+        for build in (0, len(BUILDS)-2, len(BUILDS)-1):
+            if not (ROOT / PATHS[build]).exists():
+                continue
+            for kind in ('squad', 'vehicle'):
+                for mode in ('no_service', 'refuse_subscription'):
+                    subprocess.run([sys.executable,__file__,str(build),mode,kind],check=True,timeout=90)
     else:
         for build in range(len(BUILDS)):
             if not (ROOT / PATHS[build]).exists():
                 continue
             for kind in ['squad','vehicle']:
-                modes = ['code','vtable','fail1','fail2','fail3','fail4','fail5','fail6','fail7','fail8','fail9','fail10','noconfig','ok','noupgrades','upslots5','nofit']
+                modes = ['code','vtable','fail1','fail2','fail3','fail4','fail5','fail6','fail7','fail8','fail9','fail10','fail11','fail12','noconfig','ok','noupgrades','upslots5','nofit']
+                if build in (0, len(BUILDS)-2, len(BUILDS)-1):
+                    modes.extend(('no_service','refuse_subscription'))
                 if kind == 'vehicle':
                     modes.append('novehicles')
                 for mode in modes:

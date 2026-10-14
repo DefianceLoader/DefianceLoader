@@ -34,7 +34,7 @@ members = [
     "plugins/performance",
     "tools/plugin-host",
 ]
-exclude = ["plugins/vehicle-arrival"]
+exclude = ["plugins/vehicle-arrival", "plugins/experience-levels", "plugins/deployed-repair"]
 
 # Tests build with this profile. The site tests scan every build's game DLLs,
 # which unoptimized takes about a minute per workspace; optimized, a few seconds.

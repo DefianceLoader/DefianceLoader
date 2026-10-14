@@ -12,9 +12,15 @@ A managed plugin ships `<dll-stem>.plugin.json` beside its DLL (see
 the legacy path, with no declarative enablement or dependency guarantees and its
 own `defiance-loader.ini` sections readable through `config_get`.
 
+For a complete native gameplay plugin, start with the paired [vehicle braking
+examples](../../examples/vehicle-braking/README.md), available in Rust and C++.
+The [service examples](../../examples/services/README.md) demonstrate managed
+cross-plugin state and dependencies. This directory remains the minimal ABI 5
+reference for the legacy entry point.
+
 This crate is the Rust template. The C contract is
-[`crates/api/include/defiance.h`](../api/include/defiance.h); the Rust types are
-[`crates/api/src/lib.rs`](../api/src/lib.rs). Both must agree, and both carry the
+[`crates/api/include/defiance.h`](../../crates/api/include/defiance.h); the Rust types are
+[`crates/api/src/lib.rs`](../../crates/api/src/lib.rs). Both must agree, and both carry the
 ABI version.
 
 ## The contract

@@ -24,7 +24,9 @@ mod plan;
 #[cfg(feature = "render-profile")]
 mod render_profile;
 mod shadow;
+mod shadow_cull;
 mod shadow_fit;
+mod shadow_snap;
 mod sites;
 mod tree_sway;
 mod view_sort;
@@ -92,8 +94,14 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
     inverse::install(api, &setting(api, "matrix_inverse"));
     view_sort::install(api, &setting(api, "view_sort"));
     mesh_sort::install(api, &setting(api, "mesh_sort"));
-    shadow::install(api, &setting(api, "shadow_cascades"));
+    shadow::install(
+        api,
+        &setting(api, "shadow_cascades"),
+        &setting(api, "shadow_margin"),
+    );
     shadow_fit::install(api, &setting(api, "shadow_fit"));
+    shadow_snap::install(api, &setting(api, "shadow_stable"));
+    shadow_cull::install(api, &setting(api, "shadow_small_casters"));
     tree_sway::install(api, &setting(api, "tree_sway"));
     #[cfg(feature = "render-profile")]
     render_profile::install(api);
@@ -114,7 +122,13 @@ fn collect_contract(api: &Api) -> Result<Vec<defiance_feature_sdk::contract::Pat
         view_sort::plan(api, &setting(api, "view_sort")),
         mesh_sort::plan(api, &setting(api, "mesh_sort")),
         shadow_fit::plan(api, &setting(api, "shadow_fit")),
-        shadow::plan(api, &setting(api, "shadow_cascades")),
+        shadow_snap::plan(api, &setting(api, "shadow_stable")),
+        shadow_cull::plan(api, &setting(api, "shadow_small_casters")),
+        shadow::plan(
+            api,
+            &setting(api, "shadow_cascades"),
+            &setting(api, "shadow_margin"),
+        ),
         tree_sway::plan(api, &setting(api, "tree_sway")),
     ];
     #[cfg(feature = "render-profile")]

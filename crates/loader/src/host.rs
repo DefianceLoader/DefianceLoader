@@ -419,6 +419,7 @@ fn run_plan(
     mut initialize: impl FnMut(&Planned, usize) -> Result<(), LoadFailure>,
     guarded: impl Fn() -> bool,
 ) -> StartupResult {
+    crate::squad_panel::set_plan_order(&plan.nodes, &plan.order);
     let _patch_plan = crate::hooks::PatchPlanGuard::begin();
     let mut result = StartupResult {
         states: plan

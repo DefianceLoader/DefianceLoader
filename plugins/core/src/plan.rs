@@ -115,7 +115,8 @@ fn entry(api: &Api, write: &Write) -> Result<Patch, String> {
     let rva = at - base;
     let (kind, before, after) = match &write.kind {
         Kind::Entry(displaced) => {
-            let window = original(at, (size - rva).min(16))
+            let window_len = displaced.unwrap_or(16).min(size - rva);
+            let window = original(at, window_len)
                 .ok_or_else(|| format!("{module:?}+{rva:#x} is unreadable"))?;
             let len = match displaced {
                 Some(len) => *len,
@@ -231,6 +232,7 @@ mod tests {
         image[33] = 0x90;
         image
     };
+    static mut LONG_MODULE: [u8; 48] = [0x90; 48];
     static WRITES: AtomicUsize = AtomicUsize::new(0);
     static UNHOOKS: AtomicUsize = AtomicUsize::new(0);
     static REFUSE_CALL: AtomicBool = AtomicBool::new(false);
@@ -239,6 +241,10 @@ mod tests {
 
     fn base() -> usize {
         (&raw const MODULE) as usize
+    }
+
+    fn long_base() -> usize {
+        (&raw const LONG_MODULE) as usize
     }
 
     unsafe extern "C" fn log(_: u32, _: *const c_char) {}
@@ -251,6 +257,13 @@ mod tests {
     }
     unsafe extern "C" fn module_size(_: *mut c_void) -> usize {
         48
+    }
+    unsafe extern "C" fn long_module_base(name: *const c_char) -> *mut c_void {
+        if unsafe { core::ffi::CStr::from_ptr(name) } == c"game.dll" {
+            long_base() as *mut c_void
+        } else {
+            core::ptr::null_mut()
+        }
     }
     unsafe extern "C" fn find_pattern(_: *mut c_void, _: usize, _: *const c_char) -> *mut c_void {
         core::ptr::null_mut()
@@ -324,6 +337,23 @@ mod tests {
         config_get,
         patch_bytes,
     };
+    static LONG_API: Api = Api {
+        abi_version: defiance_api::ABI_VERSION,
+        reserved: 0,
+        log,
+        module_base: long_module_base,
+        module_size,
+        find_pattern,
+        find_pattern_at,
+        hook,
+        hook_exact,
+        hook_call,
+        unhook,
+        rtti_method,
+        vtable_slot,
+        config_get,
+        patch_bytes,
+    };
 
     fn plan() -> Plan {
         let detour = 0x3000 as *mut c_void;
@@ -359,6 +389,22 @@ mod tests {
             .iter()
             .map(|p| (p.rva, p.kind, p.before.clone(), p.after.clone()))
             .collect()
+    }
+
+    #[test]
+    fn contract_reads_the_full_explicit_entry_span() {
+        let plan = Plan {
+            writes: vec![Write {
+                target: long_base(),
+                kind: Kind::Entry(Some(21)),
+                detour: core::ptr::null_mut(),
+                original: None,
+            }],
+        };
+
+        let patches = contract(&LONG_API, &plan).unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].before.len(), 21);
     }
 
     /// Reading a contract writes nothing and binds nothing, so repeated

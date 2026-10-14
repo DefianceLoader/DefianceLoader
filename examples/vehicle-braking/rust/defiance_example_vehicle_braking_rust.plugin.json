@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "id": "example.vehicle-braking.rust",
+  "dll": "defiance_example_vehicle_braking_rust.dll",
+  "version": "0.1.0",
+  "abi": 5,
+  "group": "examples",
+  "hot_reload": false,
+  "multiplayer_safe": false,
+  "patch_contract": true,
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Rust tutorial: shorten vehicle destination slowdown. Single-player only; restart required."
+    },
+    {
+      "key": "braking_window_percent",
+      "type": "int",
+      "default": "50",
+      "description": "Slowdown window as a percentage of stock (50 to 100). 100 installs no hook. Restart required."
+    }
+  ],
+  "depends": [],
+  "conflicts": ["example.vehicle-braking.cpp", "defiance.vehicle-arrival"]
+}
+

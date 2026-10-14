@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.performance",
   "dll": "defiance_plugin_feature_performance.dll",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "abi": 5,
   "patch_contract": true,
   "group": "core",
@@ -18,13 +18,13 @@
     {
       "key": "main_thread_cpus",
       "type": "choice",
-      "default": "all",
+      "default": "engine",
       "choices": [
         "all",
         "spread",
         "engine"
       ],
-      "description": "Which CPUs the game's main thread may run on. all: every CPU. spread: every CPU except the first core (experimental: it caused long stutters in testing). engine: the game's own choice, the first CPU only. Restart required."
+      "description": "Which CPUs the game's main thread may run on. engine: the game's own choice, the first CPU only. all: every CPU (may help CPU-bound scenes). spread: every CPU except the first core (experimental: it caused long stutters in testing). Restart required."
     },
     {
       "key": "grass_sort",
@@ -89,15 +89,45 @@
       "description": "Which parts of the shadow map are redrawn each frame. far_half: one of its distance bands a frame, in turn, the farthest (which costs the most) half as often as the others; on busy scenes with high shadows this can take the frame rate from about 31 to 55 fps. rotate: one band a frame, each equally often. near: the nearest band every frame and one of the others in turn. all: every part every frame, as the game does. Restart required."
     },
     {
-      "key": "tree_sway",
+      "key": "shadow_margin",
+      "type": "choice",
+      "default": "large",
+      "choices": [
+        "none",
+        "small",
+        "medium",
+        "large"
+      ],
+      "description": "With shadow_cascades other than all: how much larger than needed the parts of the shadow map that are not redrawn every frame are drawn, so they last longer while the camera moves before they must be redrawn. Larger keeps the frame rate up while moving, at slightly softer shadows in those parts. none: drawn as the game sizes them. Restart required."
+    },
+    {
+      "key": "shadow_stable",
+      "type": "choice",
+      "default": "engine",
+      "choices": [
+        "stable",
+        "engine"
+      ],
+      "description": "How each band of the shadow map is placed. engine: as the game places them. stable (experimental): larger than the game makes them, moved in whole pixels and resized in fixed steps, so fine shadow edges shimmer less as the camera moves, but shadows are softer and end nearer the camera. Restart required."
+    },
+    {
+      "key": "shadow_small_casters",
       "type": "choice",
       "default": "engine",
       "choices": [
         "engine",
-        "half",
-        "half_facet"
+        "tiny",
+        "small",
+        "medium",
+        "large"
       ],
-      "description": "How often living trees sample their wind sway. engine: every update, as the game does. half: every other manager update with accumulated elapsed time. half_facet: also skip the active tree facet's provider/transform refresh on omitted ticks; completion still runs, but refresh is delayed. Both reduced modes are approximate and may look less smooth. Guarded on six supported game builds; half_facet has only been checked in game on Steam 2026-09-25. Unknown builds keep the engine rate. Restart required."
+      "description": "Which objects cast shadows in the farther shadow bands. engine: every object, as the game does. tiny (experimental): not objects under about 2 pixels of the shadow map across, whose shadows are specks; small (experimental): not those under about 4; medium (experimental): 8, the largest that kept infantry shadows in testing; large (experimental): 16, which also takes infantry and mid-sized props' shadows from a short distance. Fewer objects make those bands cheaper to draw; the nearest band keeps every object. Restart required."
+    },
+    {
+      "key": "tree_sway",
+      "type": "text",
+      "default": "engine",
+      "description": "How often living trees update their wind sway and position. engine: every update, as the game does. A number from 2 to 16 (experimental): each tree every that many updates, trees spread across them, with the time in between added up so they sway at the same speed. Distances and rates (experimental), such as 100:2, 200:4, 400:8, 16: trees nearer than 100 every second update, nearer than 200 every fourth, nearer than 400 every eighth, farther ones every sixteenth; needs view_sort = cached to know where the camera is. half and half_facet: the older whole-forest halving, for comparison. Fewer updates look less smooth up close. Unknown builds keep the engine rate. Restart required."
     }
   ],
   "depends": [

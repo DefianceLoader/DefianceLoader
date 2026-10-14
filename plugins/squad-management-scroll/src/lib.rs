@@ -17,7 +17,6 @@ use sites::Sites;
 defiance_feature_sdk::service_handshake!();
 
 static ENGINE: OnceLock<native::Engine> = OnceLock::new();
-static ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ORIGINAL_VEHICLE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ORIGINAL_THUMB: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ORIGINAL_SQUAD_CHOOSER: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
@@ -213,6 +212,12 @@ unsafe fn install(api: &Api) -> Result<(), InstallError> {
             vehicles,
         ))
         .map_err(|_| "already initialized")?;
+    let Some(refresh) = defiance_feature_sdk::services::squad_panel_refresh() else {
+        return Err("Core squad panel refresh service is unavailable".into());
+    };
+    if (refresh.subscribe)(Some(native::panel_refresh), core::ptr::null_mut()) == 0 {
+        return Err("Core refused squad panel refresh subscription".into());
+    }
     let mut applied = Vec::new();
     for (at, before, after) in patches {
         if (api.patch_bytes)(
@@ -229,11 +234,10 @@ unsafe fn install(api: &Api) -> Result<(), InstallError> {
         }
         applied.push(at as *mut c_void);
     }
-    // The loader publishes each ORIGINAL before opening its detour to other
-    // threads. Both panels have their own refresh and share one detour body.
+    // Core owns the infantry refresh hook and publishes callbacks after the
+    // native refresh returns. The vehicle refresh remains exclusive here.
     let detours = [
         native::training_show as *mut c_void,
-        native::refresh as *mut _,
         native::refresh_vehicle as *mut _,
         // The slider thumb layout, for the vertical upgrade sliders.
         native::thumb_layout as *mut _,
@@ -243,7 +247,6 @@ unsafe fn install(api: &Api) -> Result<(), InstallError> {
     ];
     let originals = [
         ORIGINAL_TRAINING_SHOW.as_ptr(),
-        ORIGINAL.as_ptr(),
         ORIGINAL_VEHICLE.as_ptr(),
         ORIGINAL_THUMB.as_ptr(),
         ORIGINAL_SQUAD_CHOOSER.as_ptr(),

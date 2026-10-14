@@ -866,6 +866,46 @@ mod tests {
     }
 
     #[test]
+    fn vehicle_braking_examples_are_valid_managed_plugins() {
+        let examples = [
+            (
+                "rust",
+                include_str!("../../../examples/vehicle-braking/rust/defiance_example_vehicle_braking_rust.plugin.json"),
+            ),
+            (
+                "cpp",
+                include_str!("../../../examples/vehicle-braking/cpp/defiance_example_vehicle_braking_cpp.plugin.json"),
+            ),
+        ];
+        for (language, text) in examples {
+            let dll = format!("defiance_example_vehicle_braking_{language}.dll");
+            let manifest = parse(text, &dll).unwrap();
+            assert_eq!(manifest.id, format!("example.vehicle-braking.{language}"));
+            assert_eq!(manifest.group, "examples");
+            assert_eq!(manifest.abi, ABI_VERSION);
+            assert!(manifest.patch_contract);
+            assert!(!manifest.hot_reload);
+            assert!(!manifest.multiplayer_safe);
+            assert!(manifest.depends.is_empty());
+            let peer = if language == "rust" { "cpp" } else { "rust" };
+            assert_eq!(
+                manifest.conflicts,
+                [
+                    format!("example.vehicle-braking.{peer}"),
+                    "defiance.vehicle-arrival".to_string(),
+                ]
+            );
+            let setting = manifest
+                .settings
+                .iter()
+                .find(|setting| setting.key == "braking_window_percent")
+                .unwrap();
+            assert_eq!(setting.ty, "int");
+            assert_eq!(setting.default, "50");
+        }
+    }
+
+    #[test]
     fn sidecar_names_strip_the_dll_suffix() {
         assert_eq!(
             sidecar_name("defiance_plugin_core.dll"),

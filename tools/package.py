@@ -8,7 +8,7 @@ The package is a zip with
                                  expanded-ammo-menu, squad-management-scroll,
                                  unit-inspection, ability-groups,
                                  legion-vehicle-hacking, cover-markers,
-                                 vehicle-arrival, weapon-drops and moving actions
+                                 vehicle-arrival, deployed-repair, weapon-drops and moving actions
     mods/defiance_squad_scroll/  the scrolling companion UI mod, and
     mods/defiance_unit_inspection/  the unit-inspection reload bar mod, when
                                  the game directory is available to derive them
@@ -17,7 +17,7 @@ The package is a zip with
 The ZIP also includes README.md: the player guide (INSTALL.md), the only
 document shipped; the developer and plugin docs stay in the repository. Regroup,
 moving-actions and its companions, legion-vehicle-hacking, vehicle-arrival,
-weapon-drops and vehicle-special-fire are included disabled by default;
+deployed-repair, weapon-drops and vehicle-special-fire are included disabled by default;
 expanded-ammo-menu, squad-management-scroll and cover-markers are enabled by
 default, and squad-management-scroll needs its companion UI mod, which is derived from the installed game's
 paks. Extract to a
@@ -61,6 +61,8 @@ UNIT_INSPECTION_DLL = "defiance_plugin_unit_inspection.dll"
 ABILITY_GROUPS_DLL = "defiance_plugin_ability_groups.dll"
 LEGION_VEHICLE_HACKING_DLL = "defiance_plugin_legion_vehicle_hacking.dll"
 VEHICLE_ARRIVAL_DLL = "defiance_plugin_vehicle_arrival.dll"
+EXPERIENCE_LEVELS_DLL = "defiance_plugin_experience_levels.dll"
+DEPLOYED_REPAIR_DLL = "defiance_plugin_deployed_repair.dll"
 COVER_MARKERS_DLL = "defiance_plugin_cover_markers.dll"
 WEAPON_DROPS_DLL = "defiance_plugin_weapon_drops.dll"
 EXCLUDED = {"defiance_plugin_pickup.dll", "defiance_plugin_example.dll", REGROUP_DLL,
@@ -155,6 +157,10 @@ def main(argv):
                         default=ROOT / "plugins/legion-vehicle-hacking/target/release" / LEGION_VEHICLE_HACKING_DLL)
     parser.add_argument("--vehicle-arrival-dll", type=pathlib.Path,
                         default=ROOT / "plugins/vehicle-arrival/target/release" / VEHICLE_ARRIVAL_DLL)
+    parser.add_argument("--experience-levels-dll", type=pathlib.Path,
+                        default=ROOT / "plugins/experience-levels/target/release" / EXPERIENCE_LEVELS_DLL)
+    parser.add_argument("--deployed-repair-dll", type=pathlib.Path,
+                        default=ROOT / "plugins/deployed-repair/target/release" / DEPLOYED_REPAIR_DLL)
     parser.add_argument("--cover-markers-dll", type=pathlib.Path,
                         default=ROOT / "plugins/cover-markers/target/release" / COVER_MARKERS_DLL)
     parser.add_argument("--weapon-drops-dll", type=pathlib.Path,
@@ -213,6 +219,10 @@ def main(argv):
          ROOT / "plugins/legion-vehicle-hacking/defiance_plugin_legion_vehicle_hacking.plugin.json", "false"),
         (pathlib.Path(args.vehicle_arrival_dll),
          ROOT / "plugins/vehicle-arrival/defiance_plugin_vehicle_arrival.plugin.json", "false"),
+        (pathlib.Path(args.experience_levels_dll),
+         ROOT / "plugins/experience-levels/defiance_plugin_experience_levels.plugin.json", "false"),
+        (pathlib.Path(args.deployed_repair_dll),
+         ROOT / "plugins/deployed-repair/defiance_plugin_deployed_repair.plugin.json", "false"),
         (pathlib.Path(args.cover_markers_dll),
          ROOT / "plugins/cover-markers/defiance_plugin_cover_markers.plugin.json", "true"),
         (pathlib.Path(args.weapon_drops_dll),

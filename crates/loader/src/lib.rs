@@ -46,6 +46,7 @@ mod resolve;
 mod rtti;
 mod services;
 mod session;
+mod squad_panel;
 mod startup;
 mod threads;
 mod trace;
@@ -58,9 +59,13 @@ pub mod test_host {
         begin_plugin, end_plugin, installed, remove_owned, remove_owned_report,
     };
     pub use crate::resolve::build_api;
-    pub use crate::services::{
-        begin as begin_services, finish as finish_services, remove as remove_services,
-    };
+    pub use crate::services::{begin as begin_services, remove as remove_services};
+    pub fn finish_services(owner: usize, success: bool) {
+        crate::services::finish(owner, success);
+        if success {
+            crate::squad_panel::activate_owner(owner);
+        }
+    }
     pub fn service_api() -> &'static defiance_api::ServiceApiV1 {
         &crate::services::API
     }

@@ -73,7 +73,7 @@ description = "Assemble and resolve the per-build payloads named in tools/layout
 # Every layout in tools/layouts, with its build's DLLs from bin/ (tools/builds.py).
 run = "python tools/builds.py variants"
 
-# Cargo workspaces: the loader's, the standalone plugins', the service
+# Cargo workspaces: the loader's, the standalone plugins', the author
 # examples' and the crash test plugin's. The generators that write Rust
 # (tools/*_bindings.py, proxy.py) format their output too.
 [tasks.fmt]
@@ -87,6 +87,8 @@ run = [
   "cargo fmt --all --manifest-path plugins/ability-groups/Cargo.toml",
   "cargo fmt --all --manifest-path plugins/legion-vehicle-hacking/Cargo.toml",
   "cargo fmt --all --manifest-path plugins/vehicle-arrival/Cargo.toml",
+  "cargo fmt --all --manifest-path plugins/experience-levels/Cargo.toml",
+  "cargo fmt --all --manifest-path plugins/deployed-repair/Cargo.toml",
   "cargo fmt --all --manifest-path plugins/weapon-drops/Cargo.toml",
   "cargo fmt --all --manifest-path plugins/cover-markers/Cargo.toml",
   "cargo fmt --all --manifest-path plugins/moving-actions/Cargo.toml",
@@ -95,6 +97,7 @@ run = [
   "cargo fmt --all --manifest-path plugins/moving-actions-render-sync/Cargo.toml",
   "cargo fmt --all --manifest-path plugins/moving-grenades/Cargo.toml",
   "cargo fmt --all --manifest-path examples/services/Cargo.toml",
+  "cargo fmt --all --manifest-path examples/vehicle-braking/rust/Cargo.toml",
   "cargo fmt --all --manifest-path tools/crash-plugin/Cargo.toml",
 ]
 
@@ -109,6 +112,8 @@ run = """python tools/parallel.py \
   "cargo fmt --all --check --manifest-path plugins/ability-groups/Cargo.toml" \
   "cargo fmt --all --check --manifest-path plugins/legion-vehicle-hacking/Cargo.toml" \
   "cargo fmt --all --check --manifest-path plugins/vehicle-arrival/Cargo.toml" \
+  "cargo fmt --all --check --manifest-path plugins/experience-levels/Cargo.toml" \
+  "cargo fmt --all --check --manifest-path plugins/deployed-repair/Cargo.toml" \
   "cargo fmt --all --check --manifest-path plugins/weapon-drops/Cargo.toml" \
   "cargo fmt --all --check --manifest-path plugins/cover-markers/Cargo.toml" \
   "cargo fmt --all --check --manifest-path plugins/moving-actions/Cargo.toml" \
@@ -117,6 +122,7 @@ run = """python tools/parallel.py \
   "cargo fmt --all --check --manifest-path plugins/moving-actions-render-sync/Cargo.toml" \
   "cargo fmt --all --check --manifest-path plugins/moving-grenades/Cargo.toml" \
   "cargo fmt --all --check --manifest-path examples/services/Cargo.toml" \
+  "cargo fmt --all --check --manifest-path examples/vehicle-braking/rust/Cargo.toml" \
   "cargo fmt --all --check --manifest-path tools/crash-plugin/Cargo.toml"
 """
 
@@ -150,13 +156,15 @@ run = [
   "cargo test --manifest-path plugins/ability-groups/Cargo.toml",
   "cargo test --manifest-path plugins/legion-vehicle-hacking/Cargo.toml",
   "cargo test --manifest-path plugins/vehicle-arrival/Cargo.toml",
+  "cargo test --manifest-path plugins/experience-levels/Cargo.toml",
+  "cargo test --manifest-path plugins/deployed-repair/Cargo.toml",
   "cargo test --manifest-path plugins/weapon-drops/Cargo.toml",
   "cargo test --manifest-path plugins/cover-markers/Cargo.toml",
 ]
 
 [tasks.test-quick]
 description = "Format check, every workspace's Rust tests, versions, layouts and variants (cached); run the full test before committing"
-depends = ["fmt-check", "test-rust", "test-quick-python"]
+depends = ["fmt-check", "test-rust", "test-quick-python", "examples-test"]
 
 # test-quick's Python checks, run at once (tools/parallel.py) and beside the
 # Rust tests: none runs cargo, and none reads what another writes.
@@ -219,7 +227,7 @@ raw = true
 
 [tasks.test]
 description = "Build everything, then run every native test and the self test (native tests skip when they passed on the same inputs; DEFIANCE_NO_STAMP=1 runs them all)"
-depends = ["fmt-check", "loader", "crash-test"]
+depends = ["fmt-check", "loader", "crash-test", "examples-build"]
 # Two parallel groups (tools/parallel.py). The first holds everything that
 # reads only what the depends wrote: the Python checks, the parity builds (each
 # with its own --target-dir), the moving-actions bindings (each writes its own
@@ -239,12 +247,16 @@ run = [
   "python tools/test_layout.py" \
   "python tools/test_variant.py" \
   "python tools/module_writes.py check" \
+  "python tools/stamp.py test tools/test_vehicle_braking_examples.py --rust-dll examples/vehicle-braking/rust/target/x86_64-pc-windows-msvc/release/defiance_example_vehicle_braking_rust.dll --cpp-dll examples/vehicle-braking/cpp/target/defiance_example_vehicle_braking_cpp.dll --rust-source examples/vehicle-braking/rust/src/lib.rs --cpp-source examples/vehicle-braking/cpp/main.cpp --rust-manifest examples/vehicle-braking/rust/defiance_example_vehicle_braking_rust.plugin.json --cpp-manifest examples/vehicle-braking/cpp/defiance_example_vehicle_braking_cpp.plugin.json" \
+  "python tools/stamp.py test tools/test_vehicle_braking_examples_native.py --rust-dll examples/vehicle-braking/rust/target/x86_64-pc-windows-msvc/release/defiance_example_vehicle_braking_rust.dll --cpp-dll examples/vehicle-braking/cpp/target/defiance_example_vehicle_braking_cpp.dll --rust-source examples/vehicle-braking/rust/src/lib.rs --cpp-source examples/vehicle-braking/cpp/main.cpp --rust-manifest examples/vehicle-braking/rust/defiance_example_vehicle_braking_rust.plugin.json --cpp-manifest examples/vehicle-braking/cpp/defiance_example_vehicle_braking_cpp.plugin.json" \
   "python tools/test_patch_inventory.py" \
   "python tools/stamp.py test tools/test_chainlayout.py" \
   "python tools/stamp.py test tools/test_vtable_slots.py" \
   "python tools/stamp.py test tools/test_chooser.py" \
   "python tools/stamp.py test tools/test_move.py" \
   "cargo build --release --manifest-path plugins/vehicle-arrival/Cargo.toml --features parity-test --target-dir out/vehicle-arrival-parity" \
+  "cargo test --manifest-path plugins/deployed-repair/Cargo.toml" \
+  "cargo build --release --manifest-path plugins/deployed-repair/Cargo.toml --features parity-test --target-dir out/deployed-repair-parity" \
   "cargo test --manifest-path plugins/weapon-drops/Cargo.toml" \
   "cargo build --release --manifest-path plugins/weapon-drops/Cargo.toml --features parity-test --target-dir out/weapon-drops-parity" \
   "python tools/test_package_weapon_drops.py" \
@@ -281,6 +293,7 @@ run = [
 """,
   """python tools/parallel.py \
   "python tools/test_vehicle_arrival.py out/vehicle-arrival-parity/release/defiance_plugin_vehicle_arrival.dll" \
+  "python tools/stamp.py test tools/test_deployed_repair.py out/deployed-repair-parity/release/defiance_plugin_deployed_repair.dll" \
   "python tools/test_weapon_drops.py out/weapon-drops-parity/release/defiance_plugin_weapon_drops.dll" \
   "python tools/test_moving_actions.py" \
   "python tools/test_moving_actions_sync.py" \
@@ -302,6 +315,14 @@ description = "Test the compiled vehicle arrival detour and code guards against 
 run = [
   "cargo build --release --manifest-path plugins/vehicle-arrival/Cargo.toml --features parity-test --target-dir out/vehicle-arrival-parity",
   "python tools/test_vehicle_arrival.py out/vehicle-arrival-parity/release/defiance_plugin_vehicle_arrival.dll",
+]
+
+[tasks.deployed-repair-test]
+description = "Test deployed repair policy and compiled hooks against all local stock DLLs; no game writes"
+run = [
+  "cargo test --manifest-path plugins/deployed-repair/Cargo.toml",
+  "cargo build --release --manifest-path plugins/deployed-repair/Cargo.toml --features parity-test --target-dir out/deployed-repair-parity",
+  "python tools/stamp.py test tools/test_deployed_repair.py out/deployed-repair-parity/release/defiance_plugin_deployed_repair.dll",
 ]
 
 [tasks.weapon-drops-build]
@@ -341,6 +362,8 @@ run = [
   "cargo build --release --manifest-path plugins/ability-groups/Cargo.toml" \
   "cargo build --release --manifest-path plugins/legion-vehicle-hacking/Cargo.toml" \
   "cargo build --release --manifest-path plugins/vehicle-arrival/Cargo.toml" \
+  "cargo build --release --manifest-path plugins/experience-levels/Cargo.toml" \
+  "cargo build --release --manifest-path plugins/deployed-repair/Cargo.toml" \
   "cargo build --release --manifest-path plugins/cover-markers/Cargo.toml" \
   "cargo build --release --manifest-path plugins/weapon-drops/Cargo.toml" \
   "cargo build --release --manifest-path plugins/moving-actions/Cargo.toml" \
@@ -394,6 +417,8 @@ run = [
   "cargo test --manifest-path plugins/ability-groups/Cargo.toml",
   "cargo test --manifest-path plugins/legion-vehicle-hacking/Cargo.toml",
   "cargo test --manifest-path plugins/vehicle-arrival/Cargo.toml",
+  "cargo test --manifest-path plugins/experience-levels/Cargo.toml",
+  "cargo test --manifest-path plugins/deployed-repair/Cargo.toml",
   "cargo test --manifest-path plugins/cover-markers/Cargo.toml",
   "cargo test --manifest-path plugins/weapon-drops/Cargo.toml",
   "cargo test --manifest-path plugins/moving-actions/Cargo.toml",
@@ -499,6 +524,23 @@ run = [
   "python tools/test_services.py",
   "python tools/test_api_header.py",
 ]
+
+[tasks.examples-build]
+description = "Build the paired Rust/C++ vehicle-braking starters and matching manifests without game files"
+run = [
+  "cargo build --release --manifest-path examples/vehicle-braking/rust/Cargo.toml --target x86_64-pc-windows-msvc",
+  'cmd /d /c examples\vehicle-braking\cpp\build.cmd',
+]
+
+[tasks.examples-test]
+description = "Exercise both starter DLLs and patch contracts through a game-independent mock host"
+depends = ["examples-build"]
+run = "python tools/stamp.py test tools/test_vehicle_braking_examples.py --rust-dll examples/vehicle-braking/rust/target/x86_64-pc-windows-msvc/release/defiance_example_vehicle_braking_rust.dll --cpp-dll examples/vehicle-braking/cpp/target/defiance_example_vehicle_braking_cpp.dll --rust-source examples/vehicle-braking/rust/src/lib.rs --cpp-source examples/vehicle-braking/cpp/main.cpp --rust-manifest examples/vehicle-braking/rust/defiance_example_vehicle_braking_rust.plugin.json --cpp-manifest examples/vehicle-braking/cpp/defiance_example_vehicle_braking_cpp.plugin.json"
+
+[tasks.examples-native-test]
+description = "Resolve both starter hooks on all local builds and compare braking against stock native callbacks"
+depends = ["examples-test"]
+run = "python tools/stamp.py test tools/test_vehicle_braking_examples_native.py --rust-dll examples/vehicle-braking/rust/target/x86_64-pc-windows-msvc/release/defiance_example_vehicle_braking_rust.dll --cpp-dll examples/vehicle-braking/cpp/target/defiance_example_vehicle_braking_cpp.dll --rust-source examples/vehicle-braking/rust/src/lib.rs --cpp-source examples/vehicle-braking/cpp/main.cpp --rust-manifest examples/vehicle-braking/rust/defiance_example_vehicle_braking_rust.plugin.json --cpp-manifest examples/vehicle-braking/cpp/defiance_example_vehicle_braking_cpp.plugin.json"
 
 [tasks.rust-controls-test]
 description = "Compare Rust firing controls and shared Core bindings with executable assembly"

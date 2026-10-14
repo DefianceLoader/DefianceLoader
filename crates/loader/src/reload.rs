@@ -231,6 +231,7 @@ fn reload_group(
     // Plan current plugin files against the configuration supplied for this reload.
     let fresh = crate::manifest::catalog(&config.paths.plugin_dir);
     let plan = crate::plan::plan(fresh.entries, config);
+    crate::squad_panel::set_plan_order(&plan.nodes, &plan.order);
     for plugin in &group {
         let node = plan
             .nodes
@@ -1456,6 +1457,7 @@ pub fn enable(api: &'static Api, id: &str) -> Result<(), String> {
 fn restore_dependants(api: &'static Api, id: &str) {
     let config = crate::config::refresh_later();
     let plan = crate::plan::plan(config.catalog.entries.clone(), config);
+    crate::squad_panel::set_plan_order(&plan.nodes, &plan.order);
     let loaded = lifecycle::loaded();
     let mut active: HashSet<String> = loaded
         .iter()
@@ -1566,6 +1568,7 @@ fn add_plugin(api: &'static Api, id: &str, startup_retry: bool) -> Result<(), St
         config,
         &loaded_versions,
     );
+    crate::squad_panel::set_plan_order(&plan.nodes, &plan.order);
     let node = plan
         .nodes
         .iter()
@@ -1753,6 +1756,7 @@ fn remove_plugin(api: &'static Api, id: &str, why: &str) -> Result<(), String> {
     // as they are now (read-only), in which it is gone or switched off.
     let config = crate::config::inspect(&crate::config::game_dir());
     let plan = crate::plan::plan(config.catalog.entries.clone(), &config);
+    crate::squad_panel::set_plan_order(&plan.nodes, &plan.order);
     for plugin in dependants.iter().rev() {
         let node = plan
             .nodes

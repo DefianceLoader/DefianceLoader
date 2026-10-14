@@ -74,6 +74,8 @@ TEST_ARTIFACTS = ["out/logic.dll", "out/manifest.json", "out/payload*.bin", "out
                   "tools/variants/**/*.bin", "tools/variants/**/*.json",
                   "target/release/*.dll", "target/release/*.exe", "target/release/*.plugin.json",
                   "plugins/*/target/release/*.dll", "plugins/*/*.plugin.json", "out/pickup-rust/**/*.dll",
+                  "examples/vehicle-braking/rust/target/*/release/*.plugin.json",
+                  "examples/vehicle-braking/cpp/target/*.plugin.json",
                   "patch/**/*.asm", "tools/layouts/*.json", "tools/fixtures/**/*", "bin/**/*.dll"]
 # Python packages the tests use; a new version reruns them.
 TEST_PACKAGES = ["keystone-engine", "capstone", "pefile"]

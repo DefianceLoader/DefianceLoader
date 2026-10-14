@@ -3,8 +3,8 @@
 //!
 //! The hooked entries and most called functions are found by byte signature
 //! (`tools/site_signatures.py`'s encoding). The five vtables are the primary
-//! vtables of their RTTI classes; the destructors and both refreshes come from
-//! their slots, and the remaining helpers, the upgrade key static and the
+//! vtables of their RTTI classes; the destructors and vehicle refresh come
+//! from their slots, and the remaining helpers, the upgrade key static and the
 //! class offsets are read from the instructions that use them. Each must
 //! resolve to exactly one place and every hooked entry must start with the
 //! bytes its hook relocates, so a build where any site moved or changed shape
@@ -44,8 +44,6 @@ pub(crate) struct Sites {
     pub vehicle_destroy: usize,
     /// The vehicle panel's refresh, called by its vtable slot 7.
     pub vehicle_refresh: usize,
-    /// The squad panel's refresh, called by its vtable slot 7.
-    pub refresh: usize,
     /// The getter of the training table's key: it stores a static pointer in
     /// its out-parameter, and pointer + 8 resolves training names.
     pub training_key: usize,
@@ -231,14 +229,9 @@ const VEHICLE: &str = ".?AVUnitManagerVehicleInfo@Leonardo@@";
 const SLIDER: &str = ".?AVGuiSliderWidget@Leonardo@@";
 const SLIDER_CTRL: &str = ".?AVGuiSliderCtrl@Leonardo@@";
 
-/// The entry bytes each hook relocates. The squad refresh has two stack
-/// frames across the builds.
+/// The entry bytes each hook relocates.
 pub(crate) const TRAINING_SHOW_PREFIX: &[u8] =
     b"\x48\x89\x5c\x24\x08\x48\x89\x74\x24\x10\x57\x48\x83\xec\x20\x48\x89\x91\xf0\x01\x00\x00";
-pub(crate) const REFRESH_PREFIXES: [&[u8]; 2] = [
-    b"\x40\x55\x53\x56\x57\x41\x54\x41\x55\x41\x56\x41\x57\x48\x8d\xac\x24\x18\xf7\xff\xff",
-    b"\x40\x55\x53\x56\x57\x41\x54\x41\x55\x41\x56\x41\x57\x48\x8d\xac\x24\x38\xf7\xff\xff",
-];
 pub(crate) const VEHICLE_REFRESH_PREFIX: &[u8] =
     b"\x40\x55\x53\x56\x57\x41\x54\x41\x55\x41\x56\x41\x57\x48\x8d\xac\x24\xd8\xf9\xff\xff";
 pub(crate) const THUMB_PREFIX: &[u8] =
@@ -248,8 +241,8 @@ pub(crate) const SQUAD_CHOOSER_PREFIX: &[u8] =
 pub(crate) const VEHICLE_CHOOSER_PREFIX: &[u8] =
     b"\x48\x89\x5c\x24\x10\x48\x89\x74\x24\x18\x48\x89\x7c\x24\x20\x55\x41\x54\x41\x55\x41\x56";
 
-/// Both panels' vtable slot 7 is a wrapper, `push rbx; sub rsp, 0x20; mov rbx,
-/// rcx`, whose first call is the refresh.
+/// The vehicle panel's vtable slot 7 is a wrapper, `push rbx; sub rsp, 0x20;
+/// mov rbx, rcx`, whose first call is the refresh.
 const REFRESH_WRAPPER: &[u8] = b"\x40\x53\x48\x83\xec\x20\x48\x8b\xd9";
 /// `mov rcx, rax; call script` in the weapon bind.
 const SCRIPT_CALL: (usize, &[u8]) = (0x216, b"\x48\x8b\xc8\xe8");
@@ -394,7 +387,6 @@ pub(crate) fn sites(image: &Image) -> Result<Sites, String> {
         training_destroy: slot(&training, TRAINING, 0)?,
         vehicle_destroy: slot(&vehicle, VEHICLE, 0)?,
         vehicle_refresh,
-        refresh: refresh_of(&panel, PANEL)?,
         training_key,
         squad_chooser: image.find(&SQUAD_CHOOSER)?,
         vehicle_chooser: image.find(&VEHICLE_CHOOSER)?,
@@ -463,20 +455,6 @@ pub(crate) fn sites(image: &Image) -> Result<Sites, String> {
         sites.training_show,
         TRAINING_SHOW_PREFIX,
     )?;
-    if !REFRESH_PREFIXES
-        .iter()
-        .any(|prefix| image.starts_with(sites.refresh, prefix))
-    {
-        return Err(format!(
-            "squad refresh entry at {:#x} starts differently",
-            sites.refresh
-        ));
-    }
-    image.expect(
-        "vehicle refresh entry",
-        sites.vehicle_refresh,
-        VEHICLE_REFRESH_PREFIX,
-    )?;
     image.expect("slider thumb entry", sites.thumb, THUMB_PREFIX)?;
     image.expect(
         "squad chooser entry",
@@ -488,19 +466,23 @@ pub(crate) fn sites(image: &Image) -> Result<Sites, String> {
         sites.vehicle_chooser,
         VEHICLE_CHOOSER_PREFIX,
     )?;
+    image.expect(
+        "vehicle refresh entry",
+        sites.vehicle_refresh,
+        VEHICLE_REFRESH_PREFIX,
+    )?;
     Ok(sites)
 }
 
 impl Sites {
     /// The hooked entries, as (rva, relocated length, name).
-    pub(crate) fn hooks(&self) -> [(usize, usize, &'static str); 6] {
+    pub(crate) fn hooks(&self) -> [(usize, usize, &'static str); 5] {
         [
             (
                 self.training_show,
                 TRAINING_SHOW_PREFIX.len(),
                 "training show",
             ),
-            (self.refresh, REFRESH_PREFIXES[0].len(), "refresh"),
             (
                 self.vehicle_refresh,
                 VEHICLE_REFRESH_PREFIX.len(),
@@ -547,7 +529,6 @@ mod tests {
                 training_destroy: 0x2990a0,
                 vehicle_destroy: 0x2a25c0,
                 vehicle_refresh: 0x2a3c40,
-                refresh: 0x29e6c0,
                 training_key: 0x298950,
                 squad_chooser: 0x29cc40,
                 vehicle_chooser: 0x2a2ed0,
@@ -580,7 +561,6 @@ mod tests {
                 training_destroy: 0x29e430,
                 vehicle_destroy: 0x2a7950,
                 vehicle_refresh: 0x2a8fd0,
-                refresh: 0x2a3a50,
                 training_key: 0x29dce0,
                 squad_chooser: 0x2a1fd0,
                 vehicle_chooser: 0x2a8260,
@@ -613,7 +593,6 @@ mod tests {
                 training_destroy: 0x29af60,
                 vehicle_destroy: 0x2a4640,
                 vehicle_refresh: 0x2a5cc0,
-                refresh: 0x2a08a0,
                 training_key: 0x29a810,
                 squad_chooser: 0x29ec60,
                 vehicle_chooser: 0x2a4f50,
@@ -646,7 +625,6 @@ mod tests {
                 training_destroy: 0x2a0320,
                 vehicle_destroy: 0x2a9a00,
                 vehicle_refresh: 0x2ab080,
-                refresh: 0x2a5c60,
                 training_key: 0x29fbd0,
                 squad_chooser: 0x2a4020,
                 vehicle_chooser: 0x2aa310,
@@ -679,7 +657,6 @@ mod tests {
                 training_destroy: 0x29af60,
                 vehicle_destroy: 0x2a4640,
                 vehicle_refresh: 0x2a5cc0,
-                refresh: 0x2a08a0,
                 training_key: 0x29a810,
                 squad_chooser: 0x29ec60,
                 vehicle_chooser: 0x2a4f50,
@@ -712,7 +689,6 @@ mod tests {
                 training_destroy: 0x2a0320,
                 vehicle_destroy: 0x2a9a00,
                 vehicle_refresh: 0x2ab080,
-                refresh: 0x2a5c60,
                 training_key: 0x29fbd0,
                 squad_chooser: 0x2a4020,
                 vehicle_chooser: 0x2aa310,
@@ -745,7 +721,6 @@ mod tests {
                 training_destroy: 0x2a9970,
                 vehicle_destroy: 0x2b3050,
                 vehicle_refresh: 0x2b46d0,
-                refresh: 0x2af2b0,
                 training_key: 0x2a9220,
                 squad_chooser: 0x2ad670,
                 vehicle_chooser: 0x2b3960,
@@ -778,7 +753,6 @@ mod tests {
                 training_destroy: 0x2aed00,
                 vehicle_destroy: 0x2b83e0,
                 vehicle_refresh: 0x2b9a60,
-                refresh: 0x2b4640,
                 training_key: 0x2ae5b0,
                 squad_chooser: 0x2b2a00,
                 vehicle_chooser: 0x2b8cf0,
@@ -842,9 +816,9 @@ mod tests {
             return;
         };
         let mut changed = mapped.image.clone();
-        // The vehicle refresh is found through its vtable, not a signature,
-        // so only the entry check catches this.
-        changed[expected.vehicle_refresh + 1] ^= 0x01;
+        // The vehicle refresh is found through its vtable; this instruction
+        // anchors the upgrade-key lookup that squad scrolling reads there.
+        changed[expected.vehicle_refresh + UPGRADE_KEY] ^= 0x01;
         let image = Image {
             image: &changed,
             base: mapped.base,

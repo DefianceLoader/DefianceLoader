@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "id": "defiance.deployed-repair",
+  "dll": "defiance_plugin_deployed_repair.dll",
+  "version": "0.1.0",
+  "abi": 5,
+  "group": "vehicles",
+  "hot_reload": false,
+  "patch_contract": true,
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "false",
+      "description": "Allow crews to repair deployed vehicles, turrets and platforms. Restart required."
+    }
+  ],
+  "depends": [],
+  "conflicts": []
+}

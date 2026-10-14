@@ -1,0 +1,31 @@
+[package]
+name = "defiance-plugin-deployed-repair"
+version = "0.1.0"
+license = "MPL-2.0"
+edition = "2021"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+parity-test = []
+# Investigation logging (`// diagnostic:` in the source). Never shipped.
+diagnostics = []
+
+[dependencies]
+defiance-api = { path = "../../crates/api" }
+defiance-core = { path = "../../crates/core" }
+defiance-feature-sdk = { path = "../../crates/feature-sdk" }
+
+[build-dependencies]
+defiance-build-support = { path = "../../crates/build-support" }
+
+# Debug assertions and overflow checks stay on.
+[profile.dev]
+opt-level = 2
+
+[profile.release]
+panic = "abort"
+debug = 2

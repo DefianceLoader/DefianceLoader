@@ -13,14 +13,15 @@
 //! pin already ran, the plugin's mask replaces it; if not, it never runs.
 //!
 //! `[defiance.performance] main_thread_cpus` chooses the mask ([`Mode`], [`choose_mask`]):
-//! `all`, the default, every CPU the process may use in that group; `spread`
+//! `all` every CPU the process may use in that group; `spread`
 //! every CPU but the first core and its SMT siblings (the whole group when
 //! fewer than [`MIN_SPREAD_CORES`] other cores would remain, so a small CPU
-//! never has its main thread squeezed onto one core); `engine` the stock pin,
-//! untouched. `spread` gave repeated 100–500 ms stalls in `Present` on the
-//! machine it was tried on (2026-09-25), which `all` and `engine` did not, so
-//! it is not the default. None of them changes what the thread computes, so
-//! all are safe in multiplayer.
+//! never has its main thread squeezed onto one core); `engine`, the default,
+//! the stock pin, untouched. `spread` gave repeated 100–500 ms stalls in
+//! `Present` on the machine it was tried on (2026-09-25), which `all` and
+//! `engine` did not. `all` was the default until 1.8.0, which went back to
+//! `engine` after players reported worse performance. None of them changes
+//! what the thread computes, so all are safe in multiplayer.
 use crate::plan::{Kind, Plan, Write};
 use core::ffi::c_void;
 use defiance_api::{Api, LOG_INFO, LOG_WARN};
@@ -47,12 +48,12 @@ pub enum Mode {
 
 impl Mode {
     /// The setting's value; anything unknown (or an older loader that does
-    /// not declare it) is the default, `all`.
+    /// not declare it) is the default, `engine`.
     pub fn parse(text: &str) -> Mode {
         match text {
             "spread" => Mode::Spread,
-            "engine" => Mode::Engine,
-            _ => Mode::All,
+            "all" => Mode::All,
+            _ => Mode::Engine,
         }
     }
 }
@@ -466,7 +467,7 @@ mod tests {
         assert_eq!(Mode::parse("spread"), Mode::Spread);
         assert_eq!(Mode::parse("all"), Mode::All);
         assert_eq!(Mode::parse("engine"), Mode::Engine);
-        assert_eq!(Mode::parse(""), Mode::All);
+        assert_eq!(Mode::parse(""), Mode::Engine);
     }
 
     #[test]

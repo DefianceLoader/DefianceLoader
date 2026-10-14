@@ -50,6 +50,7 @@ def module_files(build):
 # Settings for the runs, beyond each plugin's defaults, so that every write a
 # player can turn on is inventoried.
 SETTINGS = {
+    "defiance.experience-levels": {"enabled": "true"},
     "defiance.legion-vehicle-hacking": {"enabled": "true"},
     "defiance.moving-actions": {"enabled": "true"},
     "defiance.moving-actions-animation": {"enabled": "true"},
@@ -59,6 +60,7 @@ SETTINGS = {
     "defiance.regroup": {"enabled": "true"},
     "defiance.vehicle-special-fire": {"enabled": "true"},
     "defiance.vehicle-arrival": {"enabled": "true", "braking_window_percent": "50"},
+    "defiance.deployed-repair": {"enabled": "true"},
     "defiance.weapon-drops": {"enabled": "true"},
 }
 

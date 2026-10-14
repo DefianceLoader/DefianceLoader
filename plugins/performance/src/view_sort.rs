@@ -24,7 +24,7 @@ use crate::plan::{self, Kind, Plan, Write};
 use core::cell::RefCell;
 use core::ffi::c_void;
 use defiance_api::{Api, LOG_INFO, LOG_WARN};
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize, Ordering};
 
 /// The camera position the predicate holds, then the stable sort's dispatch:
 /// `n <= 32` insertion-sorts, else a temporary buffer (`fn_198080`) and
@@ -99,6 +99,21 @@ pub type Stable = unsafe extern "C" fn(
 );
 
 static ORIGINAL: AtomicUsize = AtomicUsize::new(0);
+
+/// The last main-view camera position the detour saw, as `f32` bits. Other
+/// threads may read one coordinate from an older frame; a frame's movement
+/// is small next to the distances `tree_sway` compares.
+static CAMERA: [AtomicU32; 3] = [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)];
+static CAMERA_SEEN: AtomicBool = AtomicBool::new(false);
+
+/// The main-view camera position, once the detour has run.
+pub(crate) fn camera() -> Option<[f32; 3]> {
+    CAMERA_SEEN.load(Ordering::Acquire).then(|| {
+        CAMERA
+            .each_ref()
+            .map(|c| f32::from_bits(c.load(Ordering::Relaxed)))
+    })
+}
 
 thread_local! {
     /// Keys and objects, kept between frames to avoid reallocating.
@@ -222,6 +237,12 @@ unsafe extern "C" fn sort(
     camera: *const [f32; 3],
 ) {
     let original: Stable = unsafe { core::mem::transmute(ORIGINAL.load(Ordering::Acquire)) };
+    if !camera.is_null() {
+        for (slot, value) in CAMERA.iter().zip(unsafe { *camera }) {
+            slot.store(value.to_bits(), Ordering::Relaxed);
+        }
+        CAMERA_SEEN.store(true, Ordering::Release);
+    }
     let length = unsafe { end.offset_from(begin) };
     let sorted = length == count
         && SCRATCH.with(|scratch| match scratch.try_borrow_mut() {

@@ -398,6 +398,13 @@ unsafe fn read_patch_contract(
 #[cfg(feature = "test-host")]
 pub fn unload() {
     for plugin in crate::lifecycle::loaded().into_iter().rev() {
+        if !crate::squad_panel::retire_owner(plugin.owner) {
+            crate::log::error(&format!(
+                "{}: observer callback is still in flight; plugin stays mapped during shutdown",
+                plugin.name
+            ));
+            continue;
+        }
         if let Some(stop) = plugin.stop {
             unsafe { stop() };
         }

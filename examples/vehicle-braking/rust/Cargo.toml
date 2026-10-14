@@ -1,0 +1,17 @@
+[package]
+name = "defiance-example-vehicle-braking-rust"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+defiance-api = { path = "../../../crates/api" }
+
+[profile.release]
+panic = "abort"
+

@@ -48,6 +48,9 @@ SPECIAL_DYNAMIC_CLIENT = bytes.fromhex(
 # The region predicate and marquee select fill the space before their cell at
 # +0x1f0; the vehicle special-fire gate follows the priority code.
 SPECIAL_FIRE_OFFSET = 0x3f00
+# The garrison feature's vehicle adapters (patch/order-vehicle.asm), between the
+# priority code and the special-fire gate: the orders' range is full.
+VEHICLE_ORDER_OFFSET = 0x3c00
 PREVIEW_DIM_HOOKS = [
     # rva, the bytes displaced, the entry
     (0x203499, bytes.fromhex("450fb6742420"), "dim_pose"),
@@ -67,13 +70,18 @@ ORDER_CALLS = [
     (0xaac73, bytes.fromhex("e8e8a3fbff"), "building_capacity_enter", 9),
     (0x65736, bytes.fromhex("4c3bff7544"), "building_reserve_occupant", 9),
     (0x65355, bytes.fromhex("482bc8492bce"), "building_capacity_subtract", 9),
+    (0x43acf8, bytes.fromhex("c6879e02000000"), "vehicle_board_members", 9),
     (0xfe823, bytes.fromhex("ff90e8000000"), "vehicle_capacity_enter", 9),
     (0xfef63, bytes.fromhex("ff90e8000000"), "vehicle_capacity_arrive", 9),
     (0xc653a, bytes.fromhex("ff90e8000000"), "vehicle_capacity_cursor", 9),
     (0x47c93, bytes.fromhex("ff90e800000084c0745f2bf7785b"), "vehicle_capacity_command", 9),
     (0xff289, bytes.fromhex("488bceffd5"), "vehicle_exit_seat", 9),
     (0x1077b7, bytes.fromhex("ff9080000000"), "vehicle_exit_point", 9),
+    (0x111598, bytes.fromhex("488b014883c4205b48ffa0d0030000"), "vehicle_transport_query", 9),
 ]
+# What follows an order call in place of nops: the transport query's site was a
+# tail jump, so after the call it unwinds AiUtils' frame and returns.
+ORDER_TAILS = {"vehicle_transport_query": "4883c4205bc3cccccccc"}
 
 
 def vehicle_special_fire_source_call(img):
@@ -294,6 +302,14 @@ def main():
     orders, order_labels = b.assemble(
         b.source("patch/order-attack.asm", "patch/order-garrison.asm"),
         BASE + ORDER_OFFSET, b.CURSOR_OFFSET)
+    vehicle_orders, vehicle_labels = b.assemble(
+        pathlib.Path("patch/order-vehicle.asm").read_text().splitlines(),
+        BASE + VEHICLE_ORDER_OFFSET, b.CURSOR_OFFSET,
+        symbols={**b.SYMBOLS, **{name: order_labels[name]
+                                 for name in ("selected_members", "entering_members")}})
+    if set(vehicle_labels) & set(order_labels):
+        raise SystemExit("the vehicle adapters reuse an order label")
+    order_labels = {**order_labels, **vehicle_labels}
     dim, dim_labels = b.assemble(
         pathlib.Path("patch/preview-dim.asm").read_text().splitlines(),
         BASE + PREVIEW_DIM_OFFSET, b.CURSOR_OFFSET, PREVIEW_DIM_CELL)
@@ -326,8 +342,10 @@ def main():
         raise SystemExit("the dynamic passenger mount code reaches the priority code")
     if SPECIAL_FIRE_OFFSET + len(special_fire) > PAYLOAD_BLOCK_SIZE:
         raise SystemExit("the vehicle special-fire gate exceeds the injector block")
-    if SPECIAL_PRIORITY_OFFSET + len(priority) > SPECIAL_FIRE_OFFSET:
-        raise SystemExit("the vehicle priority code reaches the special-fire gate")
+    if SPECIAL_PRIORITY_OFFSET + len(priority) > VEHICLE_ORDER_OFFSET:
+        raise SystemExit("the vehicle priority code reaches the vehicle adapters")
+    if VEHICLE_ORDER_OFFSET + len(vehicle_orders) > SPECIAL_FIRE_OFFSET:
+        raise SystemExit("the vehicle adapters reach the special-fire gate")
     if ORDER_OFFSET + len(orders) > b.CURSOR_OFFSET:
         raise SystemExit("order filters would reach the rotation cursor")
     if len(code) > b.POSTURE_OFFSET or b.POSTURE_OFFSET + len(posture) > b.MOVE_OFFSET:
@@ -386,6 +404,7 @@ def main():
     payload[SPECIAL_FIRE_OFFSET:SPECIAL_FIRE_OFFSET + len(special_fire)] = special_fire
     payload[SPECIAL_PRIORITY_OFFSET:SPECIAL_PRIORITY_OFFSET + len(priority)] = priority
     payload[SPECIAL_DYNAMIC_OFFSET:SPECIAL_DYNAMIC_OFFSET + len(dynamic)] = dynamic
+    payload[VEHICLE_ORDER_OFFSET:VEHICLE_ORDER_OFFSET + len(vehicle_orders)] = vehicle_orders
     # Branches out of the block, into logic.dll: assembled here against a block
     # at zero, so the injector re-aims each rel32 from where the block landed.
     # Each carries the feature that owns the region it leaves, or 0 when the
@@ -401,7 +420,8 @@ def main():
                                  (dim, PREVIEW_DIM_OFFSET, 2),
                                  (priority, SPECIAL_PRIORITY_OFFSET, 11),
                                  (dynamic, SPECIAL_DYNAMIC_OFFSET, 11),
-                                 (special_fire, SPECIAL_FIRE_OFFSET, 11)):
+                                 (special_fire, SPECIAL_FIRE_OFFSET, 11),
+                                 (vehicle_orders, VEHICLE_ORDER_OFFSET, 9)):
         rel_fixups += [{"rel_offset": offset, "rel_target": target, "rel_feature": feature}
                        for offset, target in b.module_branches(routine, BASE + at)
                        if not 0 <= target < PAYLOAD_BLOCK_SIZE]
@@ -516,7 +536,8 @@ def main():
         pose_calls.append({"pose_site": site, "pose_before": displaced.hex(),
                            "pose_entry": (region_labels.get(label, region_labels["region_individual"])
                                           if feature == 2 else order_labels[label]),
-                           "pose_tail": "90" * (len(displaced) - 5), "pose_stock": 0})
+                           "pose_tail": ORDER_TAILS.get(label, "90" * (len(displaced) - 5)),
+                           "pose_stock": 0})
     for site, stock, label, thunk in b.POSE_CALLS:
         pose_before, pose_tail = b.pose_site(site, stock, thunk)
         if img.read(site, len(pose_before)) != pose_before:

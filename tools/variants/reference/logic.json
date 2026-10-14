@@ -336,37 +336,17 @@
       "rel_feature": 2
     },
     {
-      "rel_offset": 11396,
+      "rel_offset": 11380,
       "rel_target": 413792,
       "rel_feature": 9
     },
     {
-      "rel_offset": 11550,
+      "rel_offset": 11534,
       "rel_target": 413792,
       "rel_feature": 9
     },
     {
-      "rel_offset": 11750,
-      "rel_target": 294140,
-      "rel_feature": 9
-    },
-    {
-      "rel_offset": 11783,
-      "rel_target": 1045195,
-      "rel_feature": 9
-    },
-    {
-      "rel_offset": 11954,
-      "rel_target": 368752,
-      "rel_feature": 9
-    },
-    {
-      "rel_offset": 11973,
-      "rel_target": 1079717,
-      "rel_feature": 9
-    },
-    {
-      "rel_offset": 12012,
+      "rel_offset": 11591,
       "rel_target": 415615,
       "rel_feature": 9
     },
@@ -449,6 +429,26 @@
       "rel_offset": 16333,
       "rel_target": 2727181,
       "rel_feature": 11
+    },
+    {
+      "rel_offset": 15694,
+      "rel_target": 294140,
+      "rel_feature": 9
+    },
+    {
+      "rel_offset": 15727,
+      "rel_target": 1045195,
+      "rel_feature": 9
+    },
+    {
+      "rel_offset": 15915,
+      "rel_target": 368752,
+      "rel_feature": 9
+    },
+    {
+      "rel_offset": 15934,
+      "rel_target": 1079717,
+      "rel_feature": 9
     }
   ],
   "census_offset": 4864,
@@ -497,7 +497,7 @@
     {
       "pose_site": 1080880,
       "pose_before": "488b58504885db",
-      "pose_entry": 11023,
+      "pose_entry": 11015,
       "pose_tail": "9090",
       "pose_stock": 0,
       "pose_feature": 9
@@ -505,7 +505,7 @@
     {
       "pose_site": 1112070,
       "pose_before": "488b58504885db",
-      "pose_entry": 11023,
+      "pose_entry": 11015,
       "pose_tail": "9090",
       "pose_stock": 0,
       "pose_feature": 9
@@ -513,7 +513,7 @@
     {
       "pose_site": 3251412,
       "pose_before": "488b58504885db",
-      "pose_entry": 11023,
+      "pose_entry": 11015,
       "pose_tail": "9090",
       "pose_stock": 0,
       "pose_feature": 9
@@ -521,7 +521,7 @@
     {
       "pose_site": 1092191,
       "pose_before": "e8fca5f5ff",
-      "pose_entry": 11346,
+      "pose_entry": 11330,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 9
@@ -529,7 +529,7 @@
     {
       "pose_site": 1092651,
       "pose_before": "e830a4f5ff",
-      "pose_entry": 11346,
+      "pose_entry": 11330,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 9
@@ -537,7 +537,7 @@
     {
       "pose_site": 682909,
       "pose_before": "e8bee4fbff",
-      "pose_entry": 11423,
+      "pose_entry": 11407,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 9
@@ -545,7 +545,7 @@
     {
       "pose_site": 699507,
       "pose_before": "e8e8a3fbff",
-      "pose_entry": 11451,
+      "pose_entry": 11435,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 9
@@ -553,7 +553,7 @@
     {
       "pose_site": 415542,
       "pose_before": "4c3bff7544",
-      "pose_entry": 11977,
+      "pose_entry": 11556,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 9
@@ -561,15 +561,23 @@
     {
       "pose_site": 414549,
       "pose_before": "482bc8492bce",
-      "pose_entry": 12016,
+      "pose_entry": 11595,
       "pose_tail": "90",
+      "pose_stock": 0,
+      "pose_feature": 9
+    },
+    {
+      "pose_site": 4435192,
+      "pose_before": "c6879e02000000",
+      "pose_entry": 15360,
+      "pose_tail": "9090",
       "pose_stock": 0,
       "pose_feature": 9
     },
     {
       "pose_site": 1042467,
       "pose_before": "ff90e8000000",
-      "pose_entry": 11650,
+      "pose_entry": 15501,
       "pose_tail": "90",
       "pose_stock": 0,
       "pose_feature": 9
@@ -577,7 +585,7 @@
     {
       "pose_site": 1044323,
       "pose_before": "ff90e8000000",
-      "pose_entry": 11667,
+      "pose_entry": 15518,
       "pose_tail": "90",
       "pose_stock": 0,
       "pose_feature": 9
@@ -585,7 +593,7 @@
     {
       "pose_site": 812346,
       "pose_before": "ff90e8000000",
-      "pose_entry": 11681,
+      "pose_entry": 15532,
       "pose_tail": "90",
       "pose_stock": 0,
       "pose_feature": 9
@@ -593,7 +601,7 @@
     {
       "pose_site": 294035,
       "pose_before": "ff90e800000084c0745f2bf7785b",
-      "pose_entry": 11698,
+      "pose_entry": 15549,
       "pose_tail": "909090909090909090",
       "pose_stock": 0,
       "pose_feature": 9
@@ -601,7 +609,7 @@
     {
       "pose_site": 1045129,
       "pose_before": "488bceffd5",
-      "pose_entry": 11754,
+      "pose_entry": 15698,
       "pose_tail": "",
       "pose_stock": 0,
       "pose_feature": 9
@@ -609,8 +617,16 @@
     {
       "pose_site": 1079223,
       "pose_before": "ff9080000000",
-      "pose_entry": 11787,
+      "pose_entry": 15731,
       "pose_tail": "90",
+      "pose_stock": 0,
+      "pose_feature": 9
+    },
+    {
+      "pose_site": 1119640,
+      "pose_before": "488b014883c4205b48ffa0d0030000",
+      "pose_entry": 15938,
+      "pose_tail": "4883c4205bc3cccccccc",
       "pose_stock": 0,
       "pose_feature": 9
     },
@@ -1274,6 +1290,13 @@
       "site_offset": 0
     },
     {
+      "site_name": "vehicle_board_members",
+      "site_start": 4435192,
+      "site_group": 4434608,
+      "site_pattern": "c6879e0200000033ed4d85f60f84????????488b9c2420010000",
+      "site_offset": 0
+    },
+    {
       "site_name": "vehicle_capacity_enter",
       "site_start": 1042467,
       "site_group": 1042128,
@@ -1314,6 +1337,13 @@
       "site_group": 1078784,
       "site_pattern": "ff90800000004c8be84889457f498b0c24488b596048895d77",
       "site_offset": 0
+    },
+    {
+      "site_name": "vehicle_transport_query",
+      "site_start": 1119638,
+      "site_group": 1119584,
+      "site_pattern": "740f488b014883c4205b48ffa0d003000033c04883c4205bc3",
+      "site_offset": 2
     },
     {
       "site_name": "region_individual_0",

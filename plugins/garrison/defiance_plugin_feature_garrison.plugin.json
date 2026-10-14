@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.garrison",
   "dll": "defiance_plugin_feature_garrison.dll",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "abi": 5,
   "patch_contract": true,
   "group": "infantry",

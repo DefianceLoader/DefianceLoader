@@ -1,6 +1,7 @@
 use defiance_api::{Api, Plugin, ABI_VERSION, LOG_WARN};
 use defiance_feature_sdk::units::Embedded;
 
+mod guard;
 mod native;
 mod orders;
 mod sites;

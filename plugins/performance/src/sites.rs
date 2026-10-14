@@ -34,9 +34,17 @@ const TREE_SWAY: Signature = sig(
     "tree sway update",
     &[("48895c2408574883ec60488bd90f297424500f297c24400f28c1", 0)],
 );
+/// Through the mode-zero position fetch: `tree_sway` reads the mode at
+/// `+0x40` and the position from `[facet+0x98]` vtable `+0x58`.
 const TREE_FACET: Signature = sig(
     "tree facet refresh",
-    &[("48895c2408488974241048897c241841564881ec90000000", 0)],
+    &[(
+        "48895c2408488974241048897c241841564881ec90000000 4c8bf1 8b4140 85c0 0f85????????
+         488b4948 488b01 ff5010 498b4e48 488b01 ff5018 488bf0 498b8ea0000000 488b11
+         4c8b4278 488d542438 41ffd0 90 488b38 488b0f 488b9948010000
+         c74424200000803f c74424240000803f c74424280000803f 498b8e98000000 488b01 ff5058",
+        0,
+    )],
 );
 
 /// The entry bytes each `tree_sway` hook relocates.

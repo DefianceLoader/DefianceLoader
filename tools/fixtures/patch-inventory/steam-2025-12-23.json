@@ -43,10 +43,20 @@
   ]},
    "defiance.core": {"state": "Active", "spans": [
     ["game", 1800592, 5, "function"],
+    ["game", 2767440, 21, "function"],
     ["game", 3464320, 5, "function"],
     ["game", 3465296, 5, "function"]
   ]},
    "defiance.cover-markers": {"state": "Failed", "spans": []},
+   "defiance.deployed-repair": {"state": "Active", "spans": [
+    ["game", 2375630, 6, "function"],
+    ["game", 2376404, 6, "function"],
+    ["logic", 941248, 15, "function"],
+    ["logic", 951246, 14, "function"],
+    ["logic", 1001328, 17, "function"],
+    ["logic", 1009600, 15, "function"],
+    ["logic", 4615408, 5, "call site"]
+  ]},
    "defiance.diagnostics": {"state": "Active", "spans": []},
    "defiance.expanded-ammo-menu": {"state": "Active", "spans": [
     ["game", 253628, 5, "byte patch"],
@@ -106,6 +116,7 @@
     ["game", 3487606, 5, "byte patch"],
     ["game", 4969433, 5, "byte patch"]
   ]},
+   "defiance.experience-levels": {"state": "Active", "spans": []},
    "defiance.firing": {"state": "Active", "spans": [
     ["logic", 2812288, 5, "byte patch"],
     ["logic", 2812476, 7, "byte patch"],
@@ -129,7 +140,9 @@
     ["logic", 1092335, 5, "byte patch"],
     ["logic", 1092795, 5, "byte patch"],
     ["logic", 1112214, 7, "byte patch"],
+    ["logic", 1119784, 15, "byte patch"],
     ["logic", 3251556, 7, "byte patch"],
+    ["logic", 4435336, 7, "byte patch"],
     ["logic", 4441949, 7, "byte patch"]
   ]},
    "defiance.legion-vehicle-hacking": {"state": "Active", "spans": [
@@ -218,7 +231,6 @@
    "defiance.squad-management-scroll": {"state": "Active", "spans": [
     ["game", 2746096, 22, "function"],
     ["game", 2760656, 21, "function"],
-    ["game", 2767440, 21, "function"],
     ["game", 2785888, 22, "function"],
     ["game", 2789328, 21, "function"],
     ["game", 2929936, 24, "function"],
@@ -241,6 +253,12 @@
     ["logic", 1094528, 5, "function"],
     ["logic", 1834544, 7, "byte patch"],
     ["logic", 2662592, 5, "function"],
+    ["logic", 2666500, 18, "function"],
+    ["logic", 2668023, 18, "function"],
+    ["logic", 2668185, 13, "function"],
+    ["logic", 2668721, 18, "function"],
+    ["logic", 2669450, 11, "function"],
+    ["logic", 2670776, 11, "function"],
     ["logic", 2717648, 7, "function"],
     ["logic", 2718896, 5, "function"],
     ["logic", 2720576, 5, "function"],

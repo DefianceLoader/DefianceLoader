@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "probes": [
+    {
+      "name": "heli-repair-crew-present",
+      "enabled": true,
+      "module": "game.dll",
+      "rva": "0x24db5f",
+      "module_sha256": "035670a755180bb5adb421952bd38858dfc77ce823096e24dc4a0fdbf7b94d4c",
+      "hits": 100000,
+      "every": 1,
+      "interval_ms": 1000,
+      "stack_frames": 0,
+      "fields": [
+        {"name": "entity", "register": "r12", "type": "u64"},
+        {"name": "unload_ok", "register": "rax", "type": "u8"},
+        {"name": "ai", "register": "r13", "type": "u64"},
+        {"name": "crew_count", "register": "rsi", "type": "u32", "path": ["0x64"]},
+        {"name": "listed_begin", "register": "rsi", "type": "u64", "path": ["0xf8"]},
+        {"name": "listed_end", "register": "rsi", "type": "u64", "path": ["0x100"]}
+      ]
+    },
+    {
+      "name": "heli-repair-damage",
+      "enabled": true,
+      "module": "game.dll",
+      "rva": "0x24dc90",
+      "module_sha256": "035670a755180bb5adb421952bd38858dfc77ce823096e24dc4a0fdbf7b94d4c",
+      "hits": 100000,
+      "every": 1,
+      "interval_ms": 1000,
+      "stack_frames": 0,
+      "fields": [
+        {"name": "entity", "register": "r12", "type": "u64"},
+        {"name": "current", "register": "rax", "type": "u32"},
+        {"name": "maximum", "register": "rbx", "type": "u32"},
+        {"name": "spare_parts", "register": "r14", "type": "u32", "path": ["0x130"]},
+        {"name": "permissions", "register": "rdi", "type": "u32"}
+      ]
+    },
+    {
+      "name": "heli-repair-eligible",
+      "enabled": true,
+      "module": "game.dll",
+      "rva": "0x24dd39",
+      "module_sha256": "035670a755180bb5adb421952bd38858dfc77ce823096e24dc4a0fdbf7b94d4c",
+      "hits": 100000,
+      "every": 1,
+      "interval_ms": 1000,
+      "stack_frames": 0,
+      "fields": [
+        {"name": "entity", "register": "r12", "type": "u64"},
+        {"name": "repair_ok", "register": "rax", "type": "u8"},
+        {"name": "permissions", "register": "rdi", "type": "u32"}
+      ]
+    }
+  ]
+}

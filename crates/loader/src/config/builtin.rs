@@ -42,6 +42,7 @@ pub const NOT_MULTIPLAYER_SAFE: &[&str] = &[
     "defiance.ammunition",
     "defiance.attack",
     "defiance.diagnostics",
+    "defiance.experience-levels",
     "defiance.expanded-ammo-menu",
     "defiance.firing",
     "defiance.garrison",
@@ -61,7 +62,7 @@ pub const NOT_MULTIPLAYER_SAFE: &[&str] = &[
 pub const BUILTINS: &[Builtin] = &[Builtin {
     id: CORE_ID,
     dll: "defiance_plugin_core.dll",
-    version: "0.7.0",
+    version: "0.8.0",
     group: "core",
     patch_contract: true,
 }];
@@ -282,6 +283,9 @@ mod tests {
                 "matrix_inverse",
                 "shadow_fit",
                 "shadow_cascades",
+                "shadow_margin",
+                "shadow_stable",
+                "shadow_small_casters",
                 "tree_sway",
             ]
         );

@@ -292,7 +292,8 @@
     "move_posture_2": 892345,
     "squad_mode_1": 4524641,
     "squad_stand_1": 4524597,
-    "stand_up_gate": 2876160
+    "stand_up_gate": 2876160,
+    "vehicle_transport_query": 1152696
   },
   "logic_symbols": {
     "ai_can_attack": 936,
@@ -301,6 +302,7 @@
     "gunner_get": 304,
     "lie_down_frame": 32,
     "squad_roster": 976,
+    "squad_transport": 1000,
     "stand_up_frame": 32
   },
   "name": "gog-2026-09-14"

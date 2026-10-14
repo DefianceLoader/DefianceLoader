@@ -42,6 +42,7 @@ cargo build --release --manifest-path plugins/unit-inspection/Cargo.toml
 cargo build --release --manifest-path plugins/ability-groups/Cargo.toml
 cargo build --release --manifest-path plugins/legion-vehicle-hacking/Cargo.toml
 cargo build --release --manifest-path plugins/vehicle-arrival/Cargo.toml
+cargo build --release --manifest-path plugins/deployed-repair/Cargo.toml
 cargo build --release --manifest-path plugins/cover-markers/Cargo.toml
 cargo build --release --manifest-path plugins/weapon-drops/Cargo.toml
 cargo build --release --manifest-path plugins/moving-actions/Cargo.toml

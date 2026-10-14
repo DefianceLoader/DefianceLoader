@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "defiance.squad-management-scroll",
   "dll": "defiance_plugin_squad_management_scroll.dll",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "abi": 5,
   "patch_contract": true,
   "group": "weapons",
@@ -48,7 +48,12 @@
       "description": "Apply independent scrolling to the out-of-mission vehicle panel (weapons, ammunition and upgrades). False leaves the vehicle panel entirely stock and hides its scrollbars, while the infantry panel keeps scrolling. Restart required."
     }
   ],
-  "depends": [],
+  "depends": [
+    {
+      "id": "defiance.core",
+      "min": "0.8.0"
+    }
+  ],
   "conflicts": [],
   "hot_reload": false
 }

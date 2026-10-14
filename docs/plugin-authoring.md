@@ -1,10 +1,12 @@
 # Writing a Defiance plugin
 
-Start with the runnable [service examples](../examples/services/README.md).
-They build two real DLLs and use the production loader to test discovery,
-configuration, dependency ordering, initialization, and shared state. No game
-files are required for those examples. The older [single-plugin template](../plugins/example/src/lib.rs)
-shows the basic entry point and commented hook setup.
+Start with the paired [Rust and C++ vehicle braking examples](../examples/vehicle-braking/README.md).
+They demonstrate a complete managed native plugin in both languages, including
+signature guards, a game-thread hook, a settings manifest, and an expected-write
+contract. The [service examples](../examples/services/README.md) are useful
+further reading for discovery, dependency ordering, initialization, and shared
+state. The [minimal ABI reference](../plugins/example/README.md) shows the
+entry point without a complete gameplay feature.
 
 The [public API reference](plugin-api.md) lists supported functions and their
 constraints. Rust definitions live in `crates/api`; C/C++ definitions are in
@@ -13,11 +15,12 @@ wrappers live in `crates/feature-sdk`.
 
 ## Create and build
 
-1. Copy an example crate, choose a unique plugin ID such as `yourname.feature`,
-   and give the DLL a distinct filename. Keep its Cargo `crate-type = ["cdylib"]`.
-   Inside this repository, add the crate to its chosen workspace. Outside it,
-   adjust the API/SDK path dependencies to your checkout and pin the SDK revision
-   you build against. Shared contract crates contain types, not shared storage.
+1. Copy either vehicle braking project, choose a unique plugin ID such as
+   `yourname.feature`, and give the DLL a distinct filename. For Rust, keep
+   `crate-type = ["cdylib"]` and the independent `[workspace]`, adjusting the
+   `defiance-api` path for your copy's location. For C++, adjust the header
+   include path in `build.cmd`. Pin the API revision you build against. Shared
+   contract crates contain types, not shared storage.
 2. Export `defiance_plugin()` returning a permanent `Plugin`. Keep the exported
    ID, version, DLL filename, and manifest in agreement. Validate the incoming
    API version and `reserved == 0` before using it. Return zero from `init` only
@@ -38,9 +41,11 @@ wrappers live in `crates/feature-sdk`.
    must keep working after `stop`: a consumer that can only load at startup
    keeps calling the old copy, which stays loaded for it. State it left in game
    objects stays for the next copy.
-4. Build from the repository root with `mise exec -- cargo build --release
-   --manifest-path path/to/Cargo.toml`. Compile DLLs and the game for x64.
-   To build and test the included service example, run `mise run services-test`.
+4. Follow the vehicle braking walkthrough to build a complete Rust or C++
+   plugin. For another Rust crate, build from the repository root with
+   `mise exec -- cargo build --release --manifest-path path/to/Cargo.toml`.
+   Compile DLLs and the game for x64. Run `mise run services-test` for the
+   separate cross-plugin service tutorial.
 
 `init` runs on the loader's startup thread after game modules are present. It
 is appropriate for resolving addresses, reading configuration, registering

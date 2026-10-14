@@ -86,6 +86,153 @@ const FRAME_RAX: &[u8] = &[0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x20];
 /// `mov rcx, [r14+0xe10]`.
 const UI_BEFORE: &[u8] = &[0x49, 0x8b, 0x8e, 0x10, 0x0e, 0x00, 0x00];
 
+/// Where a weapon-record guard sends a gun without a record.
+enum Skip {
+    /// The target of the `je rel32` this many bytes before the site: the
+    /// branch's own exit when its aim source is missing.
+    JeBefore(usize),
+    /// The target of the `je rel32` this many bytes after the site: the
+    /// method's `return false`.
+    JeAfter(usize),
+    /// This many bytes after the site, the end of the signature.
+    At(usize),
+}
+
+/// One unchecked read of `[gun+0x48]` (see `guard.rs`). The signature starts
+/// or ends with the branch around the read; the site holds the read's whole
+/// instructions.
+struct GuardSpec {
+    signature: Signature,
+    before: &'static [u8],
+    /// The `Gun` slot the read lies in or after, and how far past its entry.
+    slot: usize,
+    within: usize,
+    skip: Skip,
+    /// The instructions the skip lands on.
+    lands_on: &'static [u8],
+}
+
+/// The guarded reads, in [`crate::guard::detours`] order.
+const GUARDS: [GuardSpec; 6] = [
+    GuardSpec {
+        signature: sig(
+            "Gun vf10 mode 2 turn rate",
+            &[(
+                "0f84????????488b01ff90880000008b08898b040100008b4004898308010000488b4b28488b5348488b01488b92c0000000",
+                0x20,
+            )],
+        ),
+        // mov rcx, [rbx+0x28]; mov rdx, [rbx+0x48]; mov rax, [rcx];
+        // mov rdx, [rdx+0xc0]
+        before: &[
+            0x48, 0x8b, 0x4b, 0x28, 0x48, 0x8b, 0x53, 0x48, 0x48, 0x8b, 0x01, 0x48, 0x8b, 0x92,
+            0xc0, 0x00, 0x00, 0x00,
+        ],
+        slot: 10,
+        within: 0x400,
+        skip: Skip::JeBefore(0x20),
+        // mov dl, 1
+        lands_on: &[0xb2, 0x01],
+    },
+    GuardSpec {
+        signature: sig(
+            "Gun vf10 mode 0 turn rate",
+            &[(
+                "0f84????????488b01ff9088000000488b53488b08488b92c0000000",
+                0xf,
+            )],
+        ),
+        // mov rdx, [rbx+0x48]; mov ecx, [rax]; mov rdx, [rdx+0xc0]
+        before: &[
+            0x48, 0x8b, 0x53, 0x48, 0x8b, 0x08, 0x48, 0x8b, 0x92, 0xc0, 0x00, 0x00, 0x00,
+        ],
+        slot: 10,
+        within: 0x400,
+        skip: Skip::JeBefore(0xf),
+        // movaps xmm1, xmm6; mov rcx, rbx
+        lands_on: &[0x0f, 0x28, 0xce, 0x48, 0x8b, 0xcb],
+    },
+    GuardSpec {
+        signature: sig(
+            "Gun fire helper mode 1 turn rate",
+            &[(
+                "0f84????????488b01ff90880000008b08898b040100008b4004898308010000488b4b28488b01488b5348488b92c0000000",
+                0x20,
+            )],
+        ),
+        // mov rcx, [rbx+0x28]; mov rax, [rcx]; mov rdx, [rbx+0x48];
+        // mov rdx, [rdx+0xc0]
+        before: &[
+            0x48, 0x8b, 0x4b, 0x28, 0x48, 0x8b, 0x01, 0x48, 0x8b, 0x53, 0x48, 0x48, 0x8b, 0x92,
+            0xc0, 0x00, 0x00, 0x00,
+        ],
+        // The helper vf10 calls follows it.
+        slot: 10,
+        within: 0x1000,
+        skip: Skip::JeBefore(0x20),
+        // movss xmm0, [rbx+0x13c]
+        lands_on: &[0xf3, 0x0f, 0x10, 0x83, 0x3c, 0x01, 0x00, 0x00],
+    },
+    GuardSpec {
+        signature: sig(
+            "Gun fire helper ranges",
+            &[(
+                "488b4b48488b81c0000000488945a7448845aff3440f1155b3f30f104210f30f104a14f30f105218f30f1175b7f30f117dbbf3440f1145bff30f1145c3f30f114dc7f30f1155cb488b81c8000000488945cf448845d7f3440f115ddb488b4b28488b01488d558fff9080000000488d55b7488b4b28488b01ff9080000000",
+                0,
+            )],
+        ),
+        // mov rcx, [rbx+0x48]; mov rax, [rcx+0xc0]
+        before: &[
+            0x48, 0x8b, 0x4b, 0x48, 0x48, 0x8b, 0x81, 0xc0, 0x00, 0x00, 0x00,
+        ],
+        slot: 10,
+        within: 0x1000,
+        // After both fire calls.
+        skip: Skip::At(0x7e),
+        // addss xmm9, [rbx+0xe4]
+        lands_on: &[0xf3, 0x44, 0x0f, 0x58, 0x8b, 0xe4, 0x00, 0x00, 0x00],
+    },
+    GuardSpec {
+        signature: sig(
+            "Gun vf36 ranges",
+            &[(
+                "488b43484c8b88c80000004d85c97412488b4b28488b01488d542420ff50580fb6f0488b43484c8b88c00000004d85c97415488b4b28488b010f28d6488d542420ff50580fb6f84084f67409",
+                0,
+            )],
+        ),
+        // mov rax, [rbx+0x48]; mov r9, [rax+0xc8]
+        before: &[
+            0x48, 0x8b, 0x43, 0x48, 0x4c, 0x8b, 0x88, 0xc8, 0x00, 0x00, 0x00,
+        ],
+        slot: 36,
+        within: 0x400,
+        // The target of the closing `je +9`.
+        skip: Skip::At(0x55),
+        // xor al, al
+        lands_on: &[0x32, 0xc0],
+    },
+    GuardSpec {
+        signature: sig(
+            "Gun vf56 ranges",
+            &[(
+                "488b4f28488b5748488b01488b92c0000000ff5040488b4f280fb6d8488b114c8b4240488b5748488b92c800000041ffd084db0f84????????",
+                0,
+            )],
+        ),
+        // mov rcx, [rdi+0x28]; mov rdx, [rdi+0x48]; mov rax, [rcx];
+        // mov rdx, [rdx+0xc0]
+        before: &[
+            0x48, 0x8b, 0x4f, 0x28, 0x48, 0x8b, 0x57, 0x48, 0x48, 0x8b, 0x01, 0x48, 0x8b, 0x92,
+            0xc0, 0x00, 0x00, 0x00,
+        ],
+        slot: 56,
+        within: 0x400,
+        skip: Skip::JeAfter(0x33),
+        // xor al, al
+        lands_on: &[0x32, 0xc0],
+    },
+];
+
 /// One entry hook: the rva and the whole instructions it relocates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Site {
@@ -105,6 +252,9 @@ pub(crate) struct Sites {
     pub move_acquire: Site,
     pub candidate_query: Site,
     pub capable: Site,
+    /// The unchecked weapon-record reads, in [`crate::guard::detours`]
+    /// order.
+    pub gun_guards: [Guard; 6],
     /// In game.dll.
     pub ui: Site,
     /// Called, not hooked.
@@ -118,8 +268,9 @@ pub(crate) struct Sites {
 }
 
 impl Sites {
-    /// The logic.dll entry hooks.
-    pub(crate) fn logic_hooks(&self) -> [Site; 9] {
+    /// The logic.dll hooks.
+    pub(crate) fn logic_hooks(&self) -> [Site; 15] {
+        let [a, b, c, d, e, f] = self.gun_guards.map(|guard| guard.site);
         [
             self.tick,
             self.choose,
@@ -130,8 +281,52 @@ impl Sites {
             self.move_acquire,
             self.candidate_query,
             self.capable,
+            a,
+            b,
+            c,
+            d,
+            e,
+            f,
         ]
     }
+}
+
+/// A weapon-record guard: the hooked read and the rva a gun without a record
+/// resumes at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Guard {
+    pub site: Site,
+    pub skip: usize,
+}
+
+/// `spec`'s read in `logic`, which must lie within `spec.within` bytes past
+/// the entry of `Gun` method `method`, and a skip just past it that lands on
+/// `spec.lands_on`.
+fn guard(logic: &Image, spec: &GuardSpec, method: usize) -> Result<Guard, String> {
+    let name = spec.signature.name;
+    let rva = logic.find(&spec.signature)?;
+    if !rva
+        .checked_sub(method)
+        .is_some_and(|delta| delta < spec.within)
+    {
+        return Err(format!("{name} is outside its Gun method"));
+    }
+    let site = site(logic, name, rva, spec.before)?;
+    let je = |at: usize| {
+        logic
+            .starts_with(at, &[0x0f, 0x84])
+            .then(|| logic.rip_target(at + 2, at + 6))
+            .flatten()
+    };
+    let skip = match spec.skip {
+        Skip::JeBefore(back) => rva.checked_sub(back).and_then(je),
+        Skip::JeAfter(ahead) => je(rva + ahead),
+        Skip::At(ahead) => Some(rva + ahead),
+    }
+    .filter(|skip| (rva + spec.before.len()..rva + 0x200).contains(skip))
+    .ok_or_else(|| format!("{name}: the skip target is out of place"))?;
+    logic.expect(name, skip, spec.lands_on)?;
+    Ok(Guard { site, skip })
 }
 
 /// `rva` as a hook site, if its code starts with `before` and those bytes are
@@ -158,6 +353,11 @@ pub(crate) fn sites(logic: &Image, game: &Image, redraw: usize) -> Result<Sites,
     let found = |signature: &Signature, before| -> Result<Site, String> {
         site(logic, signature.name, logic.find(signature)?, before)
     };
+    let mut gun_guards = Vec::with_capacity(GUARDS.len());
+    for spec in &GUARDS {
+        gun_guards.push(guard(logic, spec, gun_method(spec.slot)?)?);
+    }
+    let gun_guards: [Guard; 6] = gun_guards.try_into().expect("one guard per spec");
     let ui = game.find(&UI)?;
     // Each offset is the disp32 of `call [rax+disp32]` or
     // `mov r8, [rcx+disp32]` at a fixed place in the redraw.
@@ -177,6 +377,7 @@ pub(crate) fn sites(logic: &Image, game: &Image, redraw: usize) -> Result<Sites,
         move_acquire: found(&MOVE_ACQUIRE, SAVE_RDX_10)?,
         candidate_query: found(&CANDIDATE_QUERY, SAVE_RBX_08)?,
         capable: found(&CAPABLE, SAVE_RBX_08)?,
+        gun_guards,
         ui: site(game, UI.name, ui, UI_BEFORE)?,
         query: gunner_method(12)?,
         range: gun_method(60)?,
@@ -278,6 +479,116 @@ mod tests {
         let resolved = sites(&Image::mapped(&logic), &game, REDRAW_RVAS[0]).unwrap();
         // A hooked Gunner method's prologue, then a byte inside a signature.
         for at in [resolved.tick.rva + 1, resolved.capable.rva + 0x18] {
+            let mut changed = logic.image.clone();
+            changed[at] ^= 1;
+            let image = Image {
+                image: &changed,
+                base: logic.base,
+            };
+            assert!(sites(&image, &game, REDRAW_RVAS[0]).is_err(), "{at:#x}");
+        }
+    }
+
+    /// The weapon-record guards per build, in [`BUILDS`] order, as (site,
+    /// skip) in [`GUARDS`] order.
+    const GUN_GUARDS: [[(usize, usize); 6]; 8] = [
+        [
+            (0x28b567, 0x28b6a9),
+            (0x28b609, 0x28b683),
+            (0x28b821, 0x28b88a),
+            (0x28bafa, 0x28bb78),
+            (0x28c028, 0x28c07d),
+            (0x28af74, 0x28b0d4),
+        ],
+        [
+            (0x28b5f7, 0x28b739),
+            (0x28b699, 0x28b713),
+            (0x28b8b1, 0x28b91a),
+            (0x28bb8a, 0x28bc08),
+            (0x28c0b8, 0x28c10d),
+            (0x28b004, 0x28b164),
+        ],
+        [
+            (0x299ac7, 0x299c09),
+            (0x299b69, 0x299be3),
+            (0x299d81, 0x299dea),
+            (0x29a05a, 0x29a0d8),
+            (0x29a588, 0x29a5dd),
+            (0x2994d4, 0x299634),
+        ],
+        [
+            (0x299b57, 0x299c99),
+            (0x299bf9, 0x299c73),
+            (0x299e11, 0x299e7a),
+            (0x29a0ea, 0x29a168),
+            (0x29a618, 0x29a66d),
+            (0x299564, 0x2996c4),
+        ],
+        [
+            (0x299ac7, 0x299c09),
+            (0x299b69, 0x299be3),
+            (0x299d81, 0x299dea),
+            (0x29a05a, 0x29a0d8),
+            (0x29a588, 0x29a5dd),
+            (0x2994d4, 0x299634),
+        ],
+        [
+            (0x299b57, 0x299c99),
+            (0x299bf9, 0x299c73),
+            (0x299e11, 0x299e7a),
+            (0x29a0ea, 0x29a168),
+            (0x29a618, 0x29a66d),
+            (0x299564, 0x2996c4),
+        ],
+        [
+            (0x29a307, 0x29a449),
+            (0x29a3a9, 0x29a423),
+            (0x29a5c1, 0x29a62a),
+            (0x29a89a, 0x29a918),
+            (0x29adc8, 0x29ae1d),
+            (0x299d14, 0x299e74),
+        ],
+        [
+            (0x29a397, 0x29a4d9),
+            (0x29a439, 0x29a4b3),
+            (0x29a651, 0x29a6ba),
+            (0x29a92a, 0x29a9a8),
+            (0x29ae58, 0x29aead),
+            (0x299da4, 0x299f04),
+        ],
+    ];
+
+    #[test]
+    fn the_gun_guards_resolve_on_every_build() {
+        for ((build, expected), redraw) in BUILDS.iter().zip(GUN_GUARDS).zip(REDRAW_RVAS) {
+            let (Some(logic), Some(game)) =
+                (reference(build, "logic.dll"), reference(build, "game.dll"))
+            else {
+                eprintln!("skipping {build}: no bin/{build} DLLs");
+                continue;
+            };
+            let resolved = sites(&Image::mapped(&logic), &Image::mapped(&game), redraw)
+                .unwrap_or_else(|error| panic!("{build}: {error}"));
+            let guarded = resolved
+                .gun_guards
+                .map(|guard| (guard.site.rva, guard.skip));
+            assert_eq!(guarded, expected, "{build}");
+        }
+    }
+
+    #[test]
+    fn a_changed_guarded_read_is_refused() {
+        let build = BUILDS[0];
+        let (Some(logic), Some(game)) =
+            (reference(build, "logic.dll"), reference(build, "game.dll"))
+        else {
+            return;
+        };
+        let game = Image::mapped(&game);
+        // A byte of each read, then of each skip's landing.
+        let reads = GUN_GUARDS[0].map(|(site, _)| site + 2);
+        let landings = GUN_GUARDS[0].map(|(_, skip)| skip + 1);
+        for at in reads.into_iter().chain(landings) {
             let mut changed = logic.image.clone();
             changed[at] ^= 1;
             let image = Image {

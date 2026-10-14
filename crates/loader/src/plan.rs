@@ -396,8 +396,30 @@ fn find_cycles(planned: &[Planned], by_id: &BTreeMap<String, Vec<usize>>) -> Vec
 /// plugin that is not multiplayer-safe also comes after Core, which installs
 /// the multiplayer guard it needs.
 fn order_active(planned: &[Planned], by_id: &BTreeMap<String, Vec<usize>>) -> Vec<usize> {
+    order_ranked(planned, by_id, false)
+}
+
+/// Dependency-aware rank for every discovered candidate, including those
+/// disabled by configuration. Used to preserve observer order if one is later
+/// enabled while already-loaded plugins keep their existing ranks.
+pub(crate) fn order_all(planned: &[Planned]) -> Vec<usize> {
+    let mut by_id = BTreeMap::<String, Vec<usize>>::new();
+    for (index, node) in planned.iter().enumerate() {
+        by_id
+            .entry(node.id.to_ascii_lowercase())
+            .or_default()
+            .push(index);
+    }
+    order_ranked(planned, &by_id, true)
+}
+
+fn order_ranked(
+    planned: &[Planned],
+    by_id: &BTreeMap<String, Vec<usize>>,
+    include_all: bool,
+) -> Vec<usize> {
     let active: Vec<usize> = (0..planned.len())
-        .filter(|&i| planned[i].decision == Decision::Initialize)
+        .filter(|&i| include_all || planned[i].decision == Decision::Initialize)
         .collect();
     let active_set: BTreeSet<usize> = active.iter().copied().collect();
     let core = by_id
@@ -407,13 +429,11 @@ fn order_active(planned: &[Planned], by_id: &BTreeMap<String, Vec<usize>>) -> Ve
     let mut remaining: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
     for &index in &active {
         let mut needs = BTreeSet::new();
-        if let Some(manifest) = &planned[index].manifest {
-            for dependency in &manifest.depends {
-                if let Some(indices) = by_id.get(&dependency.id.to_ascii_lowercase()) {
-                    let target = indices[0];
-                    if active_set.contains(&target) && target != index {
-                        needs.insert(target);
-                    }
+        for dependency in &planned[index].depends {
+            if let Some(indices) = by_id.get(&dependency.to_ascii_lowercase()) {
+                let target = indices[0];
+                if active_set.contains(&target) && target != index {
+                    needs.insert(target);
                 }
             }
         }

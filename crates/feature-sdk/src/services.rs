@@ -71,8 +71,11 @@ pub unsafe fn register<T: Sync + 'static>(
 /// # Safety
 /// Call only during init and declare provider in the manifest dependencies.
 /// T must exactly match the provider's documented C layout for this version.
-/// The returned pointer does not authorize calls from arbitrary threads or
-/// after stopping. The current loader has no hot unload; stop consumers first.
+/// Do not call the table after this consumer stops or from threads outside the
+/// service's contract. During reload, the loader stops consumers before their
+/// providers. If a consumer cannot reload, the loader may retain its old
+/// provider copy; that provider must keep the cached table and its callbacks
+/// usable after `stop` until the retained copy is released.
 pub unsafe fn query<T: 'static>(provider: &CStr, name: &CStr, version: u32) -> Option<&'static T> {
     let api = API.load(Ordering::Acquire);
     if api.is_null() {
@@ -199,6 +202,24 @@ pub unsafe fn mission_events() -> Option<&'static defiance_api::MissionEventsV1>
 /// Same lifecycle requirements as query.
 pub unsafe fn mission_feed() -> Option<&'static defiance_api::MissionFeedV1> {
     unsafe { query(defiance_api::LOADER_PROVIDER, c"mission-feed", 1) }
+}
+
+/// Observe infantry squad info panel refreshes after the original.
+/// Requires a manifest dependency on `defiance.core`.
+///
+/// # Safety
+/// Query during plugin init; callbacks and contexts must satisfy
+/// [`defiance_api::SquadPanelRefreshV1`]'s lifetime and thread contract.
+pub unsafe fn squad_panel_refresh() -> Option<&'static defiance_api::SquadPanelRefreshV1> {
+    unsafe { query(c"defiance.core", c"squad-panel-refresh", 1) }
+}
+
+/// Core's provider interface for its infantry squad info panel refresh hook.
+///
+/// # Safety
+/// Only Core may acquire this table during init and feed verified native panels.
+pub unsafe fn squad_panel_feed() -> Option<&'static defiance_api::SquadPanelFeedV1> {
+    unsafe { query(defiance_api::LOADER_PROVIDER, c"squad-panel-feed", 1) }
 }
 
 /// Resolve Core's game-thread access table. Declare a direct defiance.core dependency.

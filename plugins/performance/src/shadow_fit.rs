@@ -24,7 +24,7 @@ use defiance_api::{Api, LOG_INFO, LOG_WARN};
 /// `fn_194c50` from its start through the call after the discarded loop: the
 /// casters' merge, the loop over `view+0x330` into `rbp-0x79`, and the
 /// frustum box that replaces it.
-pub const FIT_PATTERN: &str =
+pub(crate) const FIT_PATTERN: &str =
     "48 8b c4 55 41 57 48 8d 68 b1 48 81 ec f8 00 00 00 0f 29 70 c8 0f 57 c0 0f 29 78 b8 4c \
      8b fa 44 0f 29 40 a8 44 0f 29 48 98 44 0f 29 50 88 48 89 58 10 49 8b 19 48 89 70 18 49 \
      8b f0 48 89 78 e8 40 b7 01 0f 11 44 24 24 4c 89 60 e0 4d 8b e1 f3 44 0f 10 44 24 30 f3 \
@@ -48,7 +48,7 @@ pub const FIT_PATTERN: &str =
      10 81 84 00 00 00 0f b6 81 80 00 00 00 f3 0f 10 89 98 00 00 00 0f 11 45 8b 88 45 87 f3 \
      0f 10 81 94 00 00 00 48 8d 4c 24 20 f3 0f 11 45 9b f3 0f 11 4d 9f e8 ?? ?? ?? ??";
 /// All of `fn_195030`: an axis-aligned box through a matrix, into `out`.
-pub const BOX_PATTERN: &str =
+pub(crate) const BOX_PATTERN: &str =
     "48 8b c4 48 89 58 08 48 89 68 10 48 89 70 18 57 41 56 41 57 48 81 ec a0 00 00 00 0f 29 \
      70 d8 4c 8d 59 04 0f 29 78 c8 48 8d 59 10 44 0f 29 40 b8 48 8d 71 08 44 0f 29 48 a8 4c \
      8d 71 0c 44 0f 29 50 98 4c 8d 79 14 c6 01 01 48 8d 69 18 44 0f 29 58 88 33 c0 49 89 03 \
@@ -93,7 +93,7 @@ const LOOP_JE_AT: usize = 0x202;
 const BEFORE: [u8; 2] = [0x74, 0x31];
 const AFTER: [u8; 2] = [0xeb, 0x31];
 
-fn find(api: &Api, base: *mut c_void, size: usize, pattern: &str) -> *mut u8 {
+pub(crate) fn find(api: &Api, base: *mut c_void, size: usize, pattern: &str) -> *mut u8 {
     let pattern = std::ffi::CString::new(pattern).unwrap_or_default();
     unsafe { (api.find_pattern)(base, size, pattern.as_ptr()) as *mut u8 }
 }
@@ -105,7 +105,7 @@ unsafe fn call_target(site: *const u8) -> usize {
 }
 
 /// Whether the fit at `fit` calls the box transform at `boxed` all three times.
-unsafe fn vouched(fit: *const u8, boxed: *const u8) -> bool {
+pub(crate) unsafe fn vouched(fit: *const u8, boxed: *const u8) -> bool {
     BOX_CALLS
         .iter()
         .all(|&at| unsafe { call_target(fit.add(at)) } == boxed as usize)

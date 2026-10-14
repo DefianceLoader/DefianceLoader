@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "id": "example.vehicle-braking.cpp",
+  "dll": "defiance_example_vehicle_braking_cpp.dll",
+  "version": "0.1.0",
+  "abi": 5,
+  "group": "examples",
+  "hot_reload": false,
+  "patch_contract": true,
+  "multiplayer_safe": false,
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "true",
+      "description": "Enable the C++ vehicle-braking example. Restart required."
+    },
+    {
+      "key": "braking_window_percent",
+      "type": "int",
+      "default": "50",
+      "description": "Destination slowdown window as a percentage of stock (50 to 100). 50 halves the window; 100 keeps stock behavior. Restart required."
+    }
+  ],
+  "depends": [],
+  "conflicts": ["example.vehicle-braking.rust", "defiance.vehicle-arrival"]
+}

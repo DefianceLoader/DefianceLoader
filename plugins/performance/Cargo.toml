@@ -1,6 +1,6 @@
 [package]
 name = "defiance-plugin-performance"
-version = "0.1.0"
+version = "0.2.0"
 license = "MPL-2.0"
 edition = "2021"
 
@@ -34,6 +34,10 @@ shadow-cull-profile = ["render-profile-toggle"]
 tree-rate-probe = ["render-profile-toggle"]
 # Diagnostic, never shipped: skip active tree facet work on omitted half-rate ticks.
 facet-half-probe = ["tree-rate-probe"]
+# Diagnostic, never shipped: log per-band tree sway samples and the tree distance range.
+tree-distance-count = []
+# Diagnostic, never shipped: count small shadow casters kept and dropped per cascade.
+small-caster-count = []
 
 [build-dependencies]
 defiance-build-support = { path = "../../crates/build-support" }

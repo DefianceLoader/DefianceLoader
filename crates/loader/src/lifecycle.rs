@@ -67,7 +67,9 @@ pub fn next_owner() -> usize {
 }
 
 pub fn record(loaded: Loaded) {
+    let owner = loaded.owner;
     LOADED.lock().unwrap().push(loaded);
+    crate::squad_panel::activate_owner(owner);
 }
 
 /// Keep a successful managed initializer available for conflict rollback
@@ -93,7 +95,10 @@ pub fn commit_pending(owners: &[usize]) {
     LOADED
         .lock()
         .unwrap_or_else(|p| p.into_inner())
-        .extend(committed);
+        .extend(committed.iter().cloned());
+    for plugin in committed {
+        crate::squad_panel::activate_owner(plugin.owner);
+    }
 }
 
 fn candidate(owner: usize) -> Option<Loaded> {
@@ -121,6 +126,14 @@ pub fn forget(owner: usize) {
         .unwrap()
         .retain(|plugin| plugin.owner != owner);
     PENDING
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .retain(|plugin| plugin.owner != owner);
+}
+
+#[cfg(test)]
+pub(crate) fn forget_retained(owner: usize) {
+    RETAINED
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .retain(|plugin| plugin.owner != owner);
@@ -307,6 +320,11 @@ pub fn unload(owner: usize, retain: bool) -> Result<Loaded, UnloadError> {
     if !plugin.reloadable {
         return Err(UnloadError::NotReloadable);
     }
+    // Stop future observer calls before consulting stop or tearing down code.
+    // A callback already on its stack makes the module busy until it returns.
+    if !crate::squad_panel::retire_owner(owner) {
+        return Err(UnloadError::Busy);
+    }
     // The safe point skips the calling thread; a reload on a game thread
     // (before a mission is built) must not be inside the plugin itself.
     if on_own_stack(&plugin.code) {
@@ -357,6 +375,15 @@ pub fn discard_started(owner: usize) -> Result<(), UnloadError> {
     let Some(plugin) = candidate(owner) else {
         return Err(UnloadError::Unknown);
     };
+    if !crate::squad_panel::retire_owner(owner) {
+        crate::services::withdraw(owner);
+        forget(owner);
+        RETAINED
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(plugin);
+        return Err(UnloadError::Busy);
+    }
     if let Some(stop) = plugin.stop {
         unsafe { stop() };
     }

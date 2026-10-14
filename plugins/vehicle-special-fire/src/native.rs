@@ -153,6 +153,12 @@ pub(super) unsafe fn install(api: &Api, resolved: &Resolved) -> i32 {
             return 1;
         }
     }
+    for (guard, (detour, original, skip)) in sites.gun_guards.iter().zip(crate::guard::detours()) {
+        skip.store(logic + guard.skip, Ordering::Release);
+        if unsafe { install_one(api, logic, guard.site, detour, original) } != 0 {
+            return 1;
+        }
+    }
     if unsafe {
         install_one(
             api,

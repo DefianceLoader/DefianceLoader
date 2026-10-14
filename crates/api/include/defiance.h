@@ -287,6 +287,41 @@ typedef struct DefianceMissionFeedV1 {
     void (*frame)(void *scene, float dt);
 } DefianceMissionFeedV1;
 
+/* Runs on the infantry refresh's calling UI thread after the original returns.
+ * panel is borrowed only for this call. Observers may decorate the panel but
+ * cannot suppress the original, change its arguments/result, retain panel, or
+ * unwind. Nested refreshes run their original; observer delivery is suppressed
+ * while an observer dispatch is already on this thread's stack. */
+typedef void (*DefianceSquadPanelRefreshCallback)(void *panel, void *context);
+
+/* Provider defiance.core, name squad-panel-refresh, service version 1.
+ * Requires a Core dependency. Core owns the infantry refresh hook, calling the
+ * original exactly once and preserving its result. Callbacks run in plugin plan
+ * order (preserved across reload), then subscription order within each plugin.
+ * subscribe: init only; 0 for NULL callback, missing provider or invalid context.
+ * Nonzero tokens become callable after successful init and patch publication.
+ * The loader retires them on failure, withdrawal and unload.
+ * context may be NULL and must remain valid
+ * until quiescence. unsubscribe: any thread, immediately prevents new calls;
+ * 0 quiescent, 1 unknown token, 2 retired but still in flight. Retry after 2 before
+ * freeing context; self-unsubscribe never waits on the current callback. */
+typedef struct DefianceSquadPanelRefreshV1 {
+    uint64_t (*subscribe)(DefianceSquadPanelRefreshCallback callback, void *context);
+    int32_t (*unsubscribe)(uint64_t token);
+} DefianceSquadPanelRefreshV1;
+
+/* Provider defiance.loader, name squad-panel-feed, service version 1. Core only.
+ * publish: init only after the native hook is ready; 0 success. Publication
+ * becomes active after successful init and patch publication, and is retired
+ * with its provider.
+ * dispatch: after original; ignores NULL panel, absent provider,
+ * and nested observer dispatch. Core forwards the loader's squad-panel-observers
+ * table as its public squad-panel-refresh service to track dependencies. */
+typedef struct DefianceSquadPanelFeedV1 {
+    int32_t (*publish)(void);
+    void (*dispatch)(void *panel);
+} DefianceSquadPanelFeedV1;
+
 /* Provider defiance.loader, name original, service version 1. Memory as it was
  * before any plugin hooked or patched it through the loader, so checking bytes
  * a plugin only reads or calls does not depend on start order; check the live

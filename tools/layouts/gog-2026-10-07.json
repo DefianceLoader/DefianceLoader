@@ -305,6 +305,7 @@
     "gunner_get": 304,
     "lie_down_frame": 32,
     "squad_roster": 976,
+    "squad_transport": 1000,
     "stand_up_frame": 32
   },
   "name": "gog-2026-10-07"

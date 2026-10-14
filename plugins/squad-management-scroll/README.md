@@ -19,6 +19,10 @@ binds through the script service's display resolver, exactly as the stock
 refresh does. The upgrade list is a dynamic vector on the unit, so scrolling
 never drops upgrades the game can hold. No fixed widget arrays are enlarged.
 
+Requires Core 0.8.0 or later. Infantry refreshes share Core's callback service
+with the experience-levels meter, so both features can be enabled together.
+Vehicle refresh remains an exclusive squad-scroll hook.
+
 The upgrade scrollbar is a vertical track in the four-pixel gutter right of
 the column. The game's slider lays out and drags only along x, so the plugin
 hooks its thumb layout and maps the drag along y for a slider taller than wide;

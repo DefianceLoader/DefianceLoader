@@ -923,26 +923,29 @@ fn main() {
                 .expect("passenger sites resolve on the stock build");
             let tick = unsafe { vtable_slot(c".?AVGunner@Leonardo@@".as_ptr(), 5) } as usize;
             assert_eq!(targets[0].base as usize + build.tick.rva, tick);
-            let entry_sites = [
-                (0, build.tick),
-                (0, build.deployment),
-                (0, build.choose),
-                (0, build.command),
-                (0, build.setter),
-                (0, build.shared_refresh),
-                (0, build.move_acquire),
-                (0, build.candidate_query),
-                (0, build.capable),
-                (1, build.ui),
-            ];
+            let entry_sites = build
+                .logic_hooks()
+                .into_iter()
+                .map(|site| (0, site))
+                .chain([(1, build.ui)]);
             for (i, site) in entry_sites {
                 let at = site.rva;
                 let length = site.before.len();
                 assert_eq!(&originals[i][at..at + length], site.before);
-                assert_eq!(actual[i][at], 0xe9, "passenger native entry holds a jump");
+                let branch_length = if actual[i][at] == 0xe9 {
+                    5
+                } else {
+                    assert_eq!(
+                        &actual[i][at..at + 6],
+                        &[0xff, 0x25, 0, 0, 0, 0],
+                        "passenger entry holds a jump"
+                    );
+                    14
+                };
+                assert!(length >= branch_length, "passenger entry fits its jump");
                 let destination = reached(&actual[i], at, targets[i].base as usize);
                 assert_ne!(destination, targets[i].base as usize + at);
-                let mut branch = actual[i][at..at + 5].to_vec();
+                let mut branch = actual[i][at..at + branch_length].to_vec();
                 branch.resize(length, 0x90);
                 expected[i][at..at + length].copy_from_slice(&branch);
             }
@@ -1169,6 +1172,22 @@ fn main() {
             assert_eq!(out[0], 0, "the guarded connection fails");
             let size = usize::from_le_bytes(out[0x20..0x28].try_into().unwrap());
             assert!(size > 15, "with the message, on the game's heap");
+        }
+        // Core's typed panel service owns the infantry refresh entry, including
+        // when neither feature has subscribed. Resolve through the original
+        // vtables to verify the full exclusive entry spans independently.
+        let image = defiance_core::sites::Image {
+            image: &originals[1],
+            base: targets[1].base as usize,
+        };
+        for class in [".?AVUnitManagerSquadInfo@Leonardo@@"] {
+            let wrapper = image.primary_vtable(class).unwrap().methods[7];
+            let at = image.branch_target(wrapper + 9).unwrap();
+            assert!(
+                matches!(actual[1][at], 0xe9 | 0xff),
+                "{class}: Core refresh hook"
+            );
+            expected[1][at..at + 21].copy_from_slice(&actual[1][at..at + 21]);
         }
         // A corrupted byte stays corrupted in memory; expected carries it too.
         if let Some((at, byte)) = corrupted {

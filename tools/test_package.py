@@ -71,6 +71,10 @@ class PackageTests(unittest.TestCase):
         self.legion_hacking.write_bytes(b"current Legion vehicle hacking")
         self.vehicle_arrival = self.root / package.VEHICLE_ARRIVAL_DLL
         self.vehicle_arrival.write_bytes(b"current vehicle arrival")
+        self.experience_levels = self.root / package.EXPERIENCE_LEVELS_DLL
+        self.experience_levels.write_bytes(b"current experience levels")
+        self.deployed_repair = self.root / package.DEPLOYED_REPAIR_DLL
+        self.deployed_repair.write_bytes(b"current deployed repair")
         self.cover_markers = self.root / package.COVER_MARKERS_DLL
         self.cover_markers.write_bytes(b"current cover markers")
         self.weapon_drops = self.root / package.WEAPON_DROPS_DLL
@@ -90,7 +94,8 @@ class PackageTests(unittest.TestCase):
                        self.source / "defiance_plugin_feature_selection.dll",
                        self.regroup, self.expanded, self.scroll, self.inspection,
                        self.ability_groups, self.legion_hacking, self.cover_markers,
-                       self.vehicle_arrival, self.weapon_drops]:
+                       self.vehicle_arrival, self.experience_levels, self.deployed_repair,
+                       self.weapon_drops]:
             binary.with_name(binary.stem.replace("-", "_") + ".pdb").write_bytes(b"fixture symbols")
         self.out = self.root / "defiance-loader.zip"
 
@@ -107,6 +112,8 @@ class PackageTests(unittest.TestCase):
                    "--legion-vehicle-hacking-dll", str(self.legion_hacking),
                    "--cover-markers-dll", str(self.cover_markers),
                    "--vehicle-arrival-dll", str(self.vehicle_arrival),
+                   "--experience-levels-dll", str(self.experience_levels),
+                   "--deployed-repair-dll", str(self.deployed_repair),
                    "--weapon-drops-dll", str(self.weapon_drops)]
         for name, path in self.moving.items():
             command += ["--" + name + "-dll", str(path)]
@@ -136,6 +143,8 @@ class PackageTests(unittest.TestCase):
             self.assertIn("DefianceLoader/plugins/" + package.LEGION_VEHICLE_HACKING_DLL, names)
             self.assertIn("DefianceLoader/plugins/" + package.ABILITY_GROUPS_DLL, names)
             self.assertIn("DefianceLoader/plugins/" + package.VEHICLE_ARRIVAL_DLL, names)
+            self.assertIn("DefianceLoader/plugins/" + package.EXPERIENCE_LEVELS_DLL, names)
+            self.assertIn("DefianceLoader/plugins/" + package.DEPLOYED_REPAIR_DLL, names)
             self.assertIn("DefianceLoader/plugins/" + package.COVER_MARKERS_DLL, names)
             self.assertIn("DefianceLoader/plugins/" + package.WEAPON_DROPS_DLL, names)
             self.assertNotIn("DefianceLoader/plugins/defiance_plugin_pickup.dll", names)
@@ -158,6 +167,10 @@ class PackageTests(unittest.TestCase):
                              b"current ability groups")
             self.assertEqual(archive.read("DefianceLoader/plugins/" + package.VEHICLE_ARRIVAL_DLL),
                              b"current vehicle arrival")
+            self.assertEqual(archive.read("DefianceLoader/plugins/" + package.EXPERIENCE_LEVELS_DLL),
+                             b"current experience levels")
+            self.assertEqual(archive.read("DefianceLoader/plugins/" + package.DEPLOYED_REPAIR_DLL),
+                             b"current deployed repair")
             self.assertEqual(archive.read("DefianceLoader/plugins/" + package.WEAPON_DROPS_DLL),
                              b"current weapon drops")
             for name in (package.EXPANDED_AMMO_DLL, package.SQUAD_SCROLL_DLL):
@@ -167,15 +180,27 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(next(s["default"] for s in manifest["settings"] if s["key"] == "enabled"), "false")
             manifest = json.loads(archive.read("DefianceLoader/plugins/defiance_plugin_vehicle_arrival.plugin.json"))
             self.assertEqual(next(s["default"] for s in manifest["settings"] if s["key"] == "enabled"), "false")
+            manifest = json.loads(archive.read("DefianceLoader/plugins/defiance_plugin_experience_levels.plugin.json"))
+            self.assertEqual(manifest["id"], "defiance.experience-levels")
+            self.assertEqual(manifest["dll"], package.EXPERIENCE_LEVELS_DLL)
+            self.assertEqual(next(s["default"] for s in manifest["settings"] if s["key"] == "enabled"), "false")
+            manifest = json.loads(archive.read("DefianceLoader/plugins/defiance_plugin_deployed_repair.plugin.json"))
+            self.assertEqual(manifest["id"], "defiance.deployed-repair")
+            self.assertEqual(manifest["dll"], package.DEPLOYED_REPAIR_DLL)
+            self.assertEqual(next(s["default"] for s in manifest["settings"] if s["key"] == "enabled"), "false")
             manifest = json.loads(archive.read("DefianceLoader/plugins/defiance_plugin_cover_markers.plugin.json"))
             self.assertEqual(next(s["default"] for s in manifest["settings"] if s["key"] == "enabled"), "true")
             manifest = json.loads(archive.read("DefianceLoader/plugins/defiance_plugin_weapon_drops.plugin.json"))
             self.assertEqual(next(s["default"] for s in manifest["settings"] if s["key"] == "enabled"), "false")
-            names_off = [package.LEGION_VEHICLE_HACKING_DLL, *(path.name for path in self.moving.values())]
+            names_off = [package.LEGION_VEHICLE_HACKING_DLL, package.DEPLOYED_REPAIR_DLL,
+                         *(path.name for path in self.moving.values())]
             for name in names_off:
                 manifest = json.loads(archive.read("DefianceLoader/plugins/" + name.replace(".dll", ".plugin.json")))
                 enabled = next(s["default"] for s in manifest["settings"] if s["key"] == "enabled")
                 self.assertEqual(enabled, "false", name)
+            for folder, stem in package.stage.STANDALONE:
+                self.assertIn(f"DefianceLoader/plugins/{stem}.dll", names, folder)
+                self.assertIn(f"DefianceLoader/plugins/{stem}.plugin.json", names, folder)
 
     def test_exe_startup_package_contains_injector_loader_and_defaults_without_proxy(self):
         result = self.build(startup="exe")
@@ -264,6 +289,7 @@ class PackageTests(unittest.TestCase):
                 self.assertEqual(report.returncode, 0, report.stderr)
                 self.assertIn(f"defiance.regroup.enabled = {expected}", report.stdout)
                 self.assertIn("defiance.vehicle-arrival.enabled = false", report.stdout)
+                self.assertIn("defiance.deployed-repair.enabled = false", report.stdout)
                 self.assertIn("defiance.cover-markers.enabled = true", report.stdout)
                 self.assertIn("defiance.weapon-drops.enabled = false", report.stdout)
                 self.assertIn("defiance.legion-vehicle-hacking.enabled = false", report.stdout)
@@ -302,7 +328,8 @@ class PackageTests(unittest.TestCase):
 
     def test_missing_required_files_refuse_an_incomplete_package(self):
         for missing in (self.proxy, self.sidecar, self.regroup, self.expanded, self.scroll,
-                        self.cover_markers, self.vehicle_arrival, self.weapon_drops,
+                        self.cover_markers, self.vehicle_arrival, self.experience_levels,
+                        self.deployed_repair, self.weapon_drops,
                         self.helper, self.proxy.with_suffix(".pdb")):
             with self.subTest(missing=missing.name):
                 original = missing.read_bytes()

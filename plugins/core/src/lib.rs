@@ -36,6 +36,7 @@ mod relation;
 mod selection;
 mod session;
 mod sites;
+mod squad_panel;
 mod symbols;
 #[cfg(feature = "test-host")]
 pub mod test_host;
@@ -762,6 +763,7 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
             if let Some((ctor, dtor)) = RUNTIME.get().and_then(|runtime| runtime.tactical_state) {
                 session::install(api, ctor, dtor);
             }
+            squad_panel::install(api);
             session::install_frames(api);
             #[cfg(feature = "inspect-probe")]
             inspect_probe::install(api);
@@ -787,6 +789,7 @@ unsafe extern "C" fn build_name() -> *const c_char {
 /// cannot be read fails the whole contract.
 fn collect_core_contract(api: &Api) -> Result<Vec<defiance_feature_sdk::contract::Patch>, String> {
     let mut plans = vec![session::frames_plan(api)];
+    plans.push(squad_panel::plan(api));
     if let Ok((lobby, tactical_state)) = native_hook_sites(api) {
         if let Some(lobby) = lobby {
             plans.push(Ok(multiplayer::plan(api, lobby)));

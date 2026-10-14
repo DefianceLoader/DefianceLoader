@@ -35,7 +35,7 @@ reuses its reservation.
 | `unhook(target)` | Drops a staged request or restores the published hook/patch at that address. Storage remains retained if restoration fails. |
 | `rtti_method(class, method)` | Method pointer or null, using the loader's `defiance-rtti.ini` name-to-slot table. Class names are substring matches; RTTI contains no method names. |
 | `vtable_slot(class, slot)` | Zero-based virtual slot pointer or null, using the first matching vtable in logic.dll then game.dll. Validate ambiguous class matches yourself. |
-| `config_get(plugin_id, key)` | Canonical validated UTF-8 setting or null. IDs/keys are case-insensitive. The diagnostics `probe_file` setting resolves valid relative filenames against the loader's accepted config directory and returns an absolute path. Loader owns the returned process-lifetime string. |
+| `config_get(plugin_id, key)` | For a manifest-declared setting, the canonical validated UTF-8 value or null. If no declared value exists, the loader falls back to a matching legacy `[section] key` in `defiance-loader.ini`; this raw, unvalidated fallback preserves manifestless ABI 5 plugins. IDs/keys are case-insensitive. The diagnostics `probe_file` setting resolves valid relative filenames against the loader's accepted config directory and returns an absolute path. Loader owns the returned process-lifetime string. |
 | `patch_bytes(target, before, after, length)` | Compares expected bytes and requests an owned replacement; mismatch/overlap is refused. Caller supplies valid buffers. |
 
 ## Optional expected-write contract v1
@@ -264,6 +264,67 @@ returned.
 `frames()` returns 1 once Core feeds frame events and 0 otherwise. Without
 Core's feed, frame subscriptions are never called. Core feeds frames through
 `mission-feed` v1 (`MissionFeedV1`), which other plugins have no use for.
+
+## Core service: squad-panel-refresh v1
+
+Provider `defiance.core`, name `squad-panel-refresh`, exact version `1`;
+Rust `SquadPanelRefreshV1`, C `DefianceSquadPanelRefreshV1`. Declare a direct
+Core dependency with minimum version `0.8.0` and query during init with
+`services::squad_panel_refresh()`. Core needs loader `0.10.0` for this service.
+A missing table means the loader is too old or Core could not validate and
+install the native panel hook. Refuse a feature that requires the callbacks
+before installing its other hooks; an optional decorator may leave the native
+UI untouched and log that it is unavailable. Base ABI 5 is unchanged.
+
+Core owns one entry hook on the infantry squad info refresh.
+Every call runs its original exactly once and preserves its return value,
+then notifies observers on the calling UI thread. The callback receives
+`(panel, context)`, for an infantry squad info panel.
+The panel is borrowed only for the callback. An observer may decorate the
+refreshed UI, but cannot suppress the original, change its arguments or
+result, retain the panel pointer, or unwind across the C boundary.
+
+`subscribe(callback, context)` works only during init. It returns a nonzero
+token or 0 for a null callback, invalid ownership or unavailable provider.
+The loader activates registrations after successful init and patch publication.
+Callbacks run in
+plugin plan order, then registration order within a plugin; reloading a
+consumer preserves its place. A nested refresh still calls its original,
+but observer delivery is suppressed while an observer dispatch is already
+on that thread's stack. No registry lock is held while calling plugin code.
+
+`unsubscribe(token)` retires a registration immediately. It returns 0 when
+no callback remains in flight, 1 for an unknown token, or 2 while retirement
+is still in flight. Retry after 2 before releasing callback state. A callback
+may unsubscribe itself without deadlocking. Keep `context` valid until
+quiescence; a null context is allowed.
+
+The loader also retires contributions on failed init, patch-plan refusal,
+withdrawal and unload. Retirement prevents a saved dispatch snapshot from
+entering plugin code. The loader checks quiescence before stop/free, including
+provider removal; a busy callback delays retirement rather than permitting
+calls into an unloaded DLL. Removing one consumer leaves the others active.
+Core's hook remains installed for its process lifetime, even with no observers.
+This service adds no interceptor or arbitrary detour chaining.
+
+```rust
+unsafe extern "C" fn refreshed(panel: *mut core::ffi::c_void,
+                              _context: *mut core::ffi::c_void) {
+    // Decorate the borrowed, freshly updated infantry panel here.
+    let _ = panel;
+}
+// Inside init, after declaring the Core dependency in the manifest:
+let service = unsafe { defiance_feature_sdk::services::squad_panel_refresh() }
+    .ok_or("Core squad-panel-refresh v1 unavailable")?;
+let token = unsafe { (service.subscribe)(Some(refreshed), core::ptr::null_mut()) };
+if token == 0 { return Err("squad panel observer registration refused"); }
+```
+
+The vehicle refresh remains exclusive to squad management scrolling.
+Core alone queries the loader's `squad-panel-feed` and `squad-panel-observers`
+tables. The former publishes readiness and dispatches notifications; the
+latter is forwarded as Core's public table so normal dependency tracking
+orders provider and consumer retirement.
 
 ## Loader service: trace v1
 
@@ -586,7 +647,7 @@ contracts. Loader `test_host` helpers are test infrastructure,
 not exports on which a game plugin should depend.
 
 There is currently no public global-variable store, game-thread scheduler,
-general event bus (only `mission-events`), hotkey manager, hot reload, or
+general event bus (only the documented typed callbacks), hotkey manager, hot reload, or
 automatic game-object lifetime tracking.
 
 Crash and panic reporting is documented in [crash-reporting.md](crash-reporting.md).

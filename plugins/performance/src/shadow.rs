@@ -6,7 +6,8 @@
 //! `+0xf40`) into one shadow map (`+0x498`; 8 bytes on from GOG 2026-10-07,
 //! [`LAYOUTS`]): it culls and draws the casters
 //! (`fn_1916b0`, most of its time) and writes the cascades' matrices and
-//! splits, which lit surfaces read, into the `ShadowDataBuffer` (`+0x408`).
+//! splits, which lit surfaces read, into the `ShadowDataBuffer` (`+0x408`;
+//! `+0x410` from GOG 2026-10-07).
 //!
 //! `[defiance.performance] shadow_cascades` spreads that work over frames ([`Cascades`];
 //! `far_half` by default, `all` leaves the pass alone): the map is a texture
@@ -18,9 +19,21 @@
 //!   casters and widens each caster's cascade range (`vt+0xa0`/`vt+0xa8` with
 //!   `min`/`max` of the cascade index, [`RANGE_PATTERN`]); the pass then draws
 //!   each caster into its range only. A cascade the loop skips gets no draws.
-//! - The loop writes each cascade's matrix for lit surfaces into the view
-//!   (`+0x7a8 + 0x40·i`), which the pass copies into the `ShadowDataBuffer`, so
-//!   a skipped cascade keeps the matrix its layer was drawn with.
+//!   A caster found in cascades on both sides of a skipped one still spans
+//!   it, and is drawn into its layer through the loop's fit for it
+//!   ([`LOOP_FITS`], copied into the `ShadowDataBuffer` after the loop, GOG
+//!   2026-09-25 `0x192305`), which the loop did not write this frame: a
+//!   stack slot holding whatever an earlier call left there. That painted
+//!   stray casters over held layers, most where the cascades overlap with the
+//!   camera nearly overhead. The skip path writes a fit there that draws
+//!   nothing ([`head_stub`]).
+//! - Lit surfaces find their place in a layer through the view's matrices
+//!   ([`Layout::matrices`]), which the pass copies into the `ShadowDataBuffer`
+//!   after drawing the casters (GOG 2026-09-25 `0x192e30`). The loop writes a
+//!   cascade's matrix only when it runs it, so a held layer keeps the matrix
+//!   it was drawn with, and its shadows stay where it put them. The plugin
+//!   keeps those matrices ([`Held`]) to tell whether a held layer still
+//!   covers its band.
 //! - The pass clears the map with `DeviceImpl::clearDepthStencilView`
 //!   (`fn_e7a10`), whose last argument selects one layer, or all of them when
 //!   negative ([`Layout::clear`] passes -1). A layer's clear needs a depth
@@ -38,6 +51,21 @@
 //! at the clear ([`clear_layers`]) clears only the due layers. A view's first
 //! frame, a new or resized map, a changed cascade count and the first frame
 //! after shadows come back on draw every cascade, so no layer is left stale.
+//!
+//! A layer that is not due still has to cover the camera's band for it. Its
+//! map holds only the casters the loop culled into the band it was drawn
+//! for, though the map itself may reach further, so where the band has moved
+//! since, casters are missing until the layer is redrawn (whole buildings'
+//! shadows blinking). With the camera nearly overhead the splits cross the
+//! ground at a shallow angle, and a small pitch or pan sweeps them far. So
+//! each frame the plugin asks the camera for every band as the caster pass
+//! does ([`splits`]; the view's camera holder at `+0x90`, `vt+0x60`, then the
+//! camera's `vt+0x100`), and draws the layer again unless the band's slice of
+//! the camera frustum lies within its slice when the layer was drawn
+//! ([`contains`], [`stale`], [`Coverage`]). The loop culls against the slice's
+//! planes (`fn_fe210`), not its box: near overhead a pitch reshapes the slice
+//! inside an unchanged box. In practice a layer is held only while its band
+//! stands still.
 use crate::plan::{self, Kind, Plan, Write};
 use core::cell::RefCell;
 use core::ffi::c_void;
@@ -78,6 +106,14 @@ pub struct Layout {
     pub shadow_map: usize,
     /// The view's cascade count, which [`Layout::latch`] compares.
     pub cascade_count: usize,
+    /// The camera's near and far planes (floats) and the shadow distance (an
+    /// int), from which the caster pass splits the cascades.
+    pub near: usize,
+    pub far: usize,
+    pub distance: usize,
+    /// The cascades' matrices for lit surfaces, `0x40` bytes each (row
+    /// vectors), from world space to the cascade's layer.
+    pub matrices: usize,
 }
 
 /// The two `SceneViewImpl` layouts: every build up to GOG 2026-09-25, then
@@ -97,6 +133,10 @@ pub const LAYOUTS: [Layout; 2] = [
         shadows_on: 0x443,
         shadow_map: 0x498,
         cascade_count: 0xf40,
+        near: 0xfa8,
+        far: 0xfac,
+        distance: 0xf44,
+        matrices: 0x7a8,
     },
     Layout {
         site: "48 8b ce e8 ?? ?? ?? ?? 48 8b ce e8 ?? ?? ?? ?? 80 be 40 04 00 00 00",
@@ -112,6 +152,10 @@ pub const LAYOUTS: [Layout; 2] = [
         shadows_on: 0x44b,
         shadow_map: 0x4a0,
         cascade_count: 0xf48,
+        near: 0xfb0,
+        far: 0xfb4,
+        distance: 0xf4c,
+        matrices: 0x7b0,
     },
 ];
 /// The index in [`LAYOUTS`] of the running build's layout, set by
@@ -127,7 +171,7 @@ const SITE_CALL_AT: usize = 11;
 /// Offset in the pass of its call to the caster pass (`fn_1916b0`).
 const PASS_CASTERS_CALL_AT: usize = 0x145;
 /// The caster pass's size, within which the loop's sites lie.
-const CASTERS_SIZE: usize = 0xe34;
+pub(crate) const CASTERS_SIZE: usize = 0xe34;
 /// Offset of the `jb` in [`Layout::latch`].
 const LATCH_JUMP_AT: usize = 14;
 /// Each visible caster's cascade range: `vt+0xa0(min(vt+0xb0(), i))`, then
@@ -142,6 +186,31 @@ const CLEAR_DEPTH_AT: usize = 0x17;
 const CLEAR_SIZE: usize = 0x32;
 /// The loop's slot for the next cascade index, relative to its `rbp`.
 const LOOP_NEXT_INDEX: usize = 0x4c0;
+/// The loop's slots for each cascade's fit (`fn_194c50`'s world-to-clip
+/// matrix, `0x40` bytes each, row vectors), relative to its `rbp`. After the
+/// loop the caster pass copies them into the `ShadowDataBuffer`
+/// ([`FIT_COPY_PATTERN`]), and the pass draws each caster into its cascade
+/// range's layers through them, before it puts [`Layout::matrices`] there for
+/// lit surfaces.
+const LOOP_FITS: usize = 0x220;
+/// The copy's first loads after the loop (GOG 2026-09-25 `0x192305`):
+/// `movsd xmm2, [rbp + rbx + 0x230]; movsd xmm10, [rbp + rbx + 0x220]`, at
+/// [`LOOP_FITS`].
+pub const FIT_COPY_PATTERN: &str = "f2 0f 10 94 1d 30 02 00 00 f2 44 0f 10 94 1d 20 02 00 00";
+/// In the cascade loop, after the receivers are culled against the band and
+/// before the casters are picked against them (GOG 2026-10-07 `0x1960eb`):
+/// `r13` becomes cascade `r15d`'s receiver box (`rbp + 0x190 + i * 0x1c`), then
+/// `VisibleMgr` vt+0x30 takes the band (`[rbp + 0x38]`), that box and the
+/// light direction (`rax`). [`pad_stub`] goes [`PAD_AT`] bytes in, once `r13`
+/// is set.
+pub const PAD_PATTERN: &str = "49 6b cd 1c 4c 8d ad 90 01 00 00 4c 03 e9 48 8d 4c 24 60 \
+     48 89 4c 24 28 48 8d 8d 30 01 00 00 48 89 4c 24 20 4c 8b c8 4d 8b c5 48 8b 55 38 \
+     48 8b cf ff d3";
+const PAD_AT: usize = 14;
+/// The loop's band `shared_ptr` and its splits (`count + 1` floats), relative
+/// to its `rbp`.
+pub(crate) const LOOP_BAND: usize = 0x38;
+const LOOP_SPLITS: usize = 0x48;
 const DEVICE_CLEAR_DEPTH: usize = 0x148;
 
 /// In `DeviceImpl::clearDepthStencilView` (`fn_e7a10`, the device's
@@ -486,6 +555,20 @@ static HEAD_TRAMPOLINE: AtomicUsize = AtomicUsize::new(0);
 static LATCH: AtomicUsize = AtomicUsize::new(0);
 static CLEAR_TRAMPOLINE: AtomicUsize = AtomicUsize::new(0);
 static CLEAR_RESUME: AtomicUsize = AtomicUsize::new(0);
+static PAD_TRAMPOLINE: AtomicUsize = AtomicUsize::new(0);
+/// The margin a held layer is drawn with, as a fraction of its band's depth
+/// ([`margin`]); 0 when the loop is not padded.
+static MARGIN: AtomicU32 = AtomicU32::new(0);
+
+/// `shadow_margin`'s fraction of a band's depth.
+pub fn margin(text: &str) -> f32 {
+    match text {
+        "none" => 0.0,
+        "small" => 0.05,
+        "medium" => 0.1,
+        _ => 0.2,
+    }
+}
 
 /// What a view's shadow map looked like on its last frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -532,6 +615,338 @@ impl Default for Rotations {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// How far (in world units) a corner of a band's slice may pass a plane of
+/// its slice as drawn before the layer is redrawn: the corners are solved
+/// from the planes, so rounding separates the two while the camera stands
+/// still.
+pub const SLACK: f64 = 0.01;
+
+/// The cascade splits, `count + 1` of them, as the caster pass (`fn_1916b0`)
+/// computes them: halfway between linear and logarithmic, from the near
+/// plane to the far plane or the shadow distance, whichever is nearer.
+pub fn splits(near: f32, far: f32, distance: i32, count: u32) -> Vec<f32> {
+    let f = far.min(distance as f32).max(near);
+    let c = count as f32;
+    let mut s: Vec<f32> = (0..=count)
+        .map(|i| {
+            let t = i as f32 / c;
+            0.5 * ((f - near) * t + near + near * (f / near).powf(t))
+        })
+        .collect();
+    s[0] = near;
+    s[count as usize] = f;
+    s
+}
+
+/// A band's slice of the camera frustum: six planes `(n, d)`, a point `p`
+/// inside each when `n . p + d >= 0`, as `fn_fe210` tests them.
+pub type Slice = [[f32; 4]; 6];
+
+/// The corners of `slice`: every point on three of its planes and inside the
+/// rest.
+pub fn corners(slice: &Slice) -> Vec<[f64; 3]> {
+    let p: Vec<[f64; 4]> = slice.iter().map(|q| q.map(f64::from)).collect();
+    let mut out = Vec::new();
+    for a in 0..6 {
+        for b in a + 1..6 {
+            for c in b + 1..6 {
+                let Some(at) = solve(p[a], p[b], p[c]) else {
+                    continue;
+                };
+                if p.iter().all(|q| distance(*q, at) >= -SLACK) {
+                    out.push(at);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The point on planes `x`, `y` and `z`, if they meet in one.
+fn solve(x: [f64; 4], y: [f64; 4], z: [f64; 4]) -> Option<[f64; 3]> {
+    let cross = |u: [f64; 4], v: [f64; 4]| {
+        [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ]
+    };
+    let (yz, zx, xy) = (cross(y, z), cross(z, x), cross(x, y));
+    let det = x[0] * yz[0] + x[1] * yz[1] + x[2] * yz[2];
+    if det.abs() < 1e-9 {
+        return None;
+    }
+    let at: [f64; 3] =
+        core::array::from_fn(|k| -(x[3] * yz[k] + y[3] * zx[k] + z[3] * xy[k]) / det);
+    at.iter().all(|v| v.is_finite()).then_some(at)
+}
+
+/// A band (`Galileo::KdTreeMath::Frustum`, built by `fn_fcc40`) as the cascade
+/// loop fits its layer to it: its planes, its world box and its eight
+/// corners. Its other fields (which planes bound each axis, the planes'
+/// normals and its edge axes) do not change with [`pad`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Band {
+    pub planes: Slice,
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+    pub corners: [[f32; 3]; 8],
+}
+
+/// `band` grown by `margin` world units on every side: each plane moved
+/// outward, each corner solved again on the three nearest planes that meet in
+/// a point, and the box grown to hold the corners. `None` when no three
+/// planes meet.
+pub fn pad(band: &Band, margin: f32) -> Option<Band> {
+    let planes: Slice = band.planes.map(|q| {
+        let len = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2]).sqrt();
+        [q[0], q[1], q[2], q[3] + margin * len]
+    });
+    let (old, new) = (
+        band.planes.map(|q| q.map(f64::from)),
+        planes.map(|q| q.map(f64::from)),
+    );
+    let mut out = Band {
+        planes,
+        min: band.min.map(|v| v - margin),
+        max: band.max.map(|v| v + margin),
+        corners: band.corners,
+    };
+    for corner in out.corners.iter_mut() {
+        let at = corner.map(f64::from);
+        // The three nearest planes that meet in a point.
+        let mut order: [usize; 6] = core::array::from_fn(|i| i);
+        order.sort_by(|&a, &b| {
+            distance(old[a], at)
+                .abs()
+                .total_cmp(&distance(old[b], at).abs())
+        });
+        let mut triples = (0..6)
+            .flat_map(|a| (a + 1..6).flat_map(move |b| (b + 1..6).map(move |c| (a, b, c))))
+            .map(|(a, b, c)| (order[a], order[b], order[c]));
+        let moved = triples.find_map(|(a, b, c)| solve(new[a], new[b], new[c]))?;
+        *corner = moved.map(|v| v as f32);
+        for k in 0..3 {
+            out.min[k] = out.min[k].min(corner[k]);
+            out.max[k] = out.max[k].max(corner[k]);
+        }
+    }
+    Some(out)
+}
+
+/// The signed distance of `at` from plane `q` (positive inside).
+fn distance(q: [f64; 4], at: [f64; 3]) -> f64 {
+    let len = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2]).sqrt();
+    (q[0] * at[0] + q[1] * at[1] + q[2] * at[2] + q[3]) / len
+}
+
+/// Whether the slice `now` lies within the slice `drawn`; an unknown or
+/// degenerate slice does not.
+pub fn contains(drawn: Option<&Slice>, now: &Slice) -> bool {
+    let Some(drawn) = drawn else {
+        return false;
+    };
+    let corners = corners(now);
+    corners.len() >= 4
+        && corners.iter().all(|at| {
+            drawn
+                .iter()
+                .all(|q| distance(q.map(f64::from), *at) >= -SLACK)
+        })
+}
+
+/// A view's cascades' band slices as their layers were last drawn.
+pub type Slices = [Option<Slice>; 32];
+
+/// Per-view band slices of each cascade when its layer was last drawn, the
+/// most recent views first, as [`Rotations`] keeps them.
+pub struct Coverage {
+    seen: Vec<(usize, Slices)>,
+}
+
+impl Coverage {
+    const CAPACITY: usize = 8;
+
+    pub const fn new() -> Self {
+        Coverage { seen: Vec::new() }
+    }
+
+    /// `view`'s drawn slices; all unknown for a view not seen.
+    pub fn slices(&self, view: usize) -> Slices {
+        self.seen
+            .iter()
+            .find(|(v, _)| *v == view)
+            .map_or([None; 32], |(_, slices)| *slices)
+    }
+
+    /// Records `view`'s slices for the cascades in `drawn`.
+    pub fn record(&mut self, view: usize, drawn: u32, fresh: &Slices) {
+        let mut slices = self.slices(view);
+        for (i, slice) in fresh.iter().enumerate() {
+            if drawn >> i & 1 != 0 {
+                slices[i] = *slice;
+            }
+        }
+        self.seen.retain(|(v, _)| *v != view);
+        self.seen.insert(0, (view, slices));
+        self.seen.truncate(Self::CAPACITY);
+    }
+}
+
+impl Default for Coverage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The view's camera holder; its vt+0x60 answers the camera, whose vt+0x100
+/// answers the frustum between two distances (a new one each call,
+/// `CameraImpl` vt+0x100, GOG 2026-10-07 `0xd6860`), its world box at +0x80
+/// (an empty flag, then min and max) and its eight corners at +0xa4.
+const VIEW_CAMERAS: usize = 0x90;
+const HOLDER_CAMERA: usize = 0x60;
+const CAMERA_BAND: usize = 0x100;
+const BAND_PLANES: usize = 8;
+pub(crate) const BAND_BOX: usize = 0x80;
+const BAND_CORNERS: usize = 0xa4;
+/// A box as the loop keeps one per cascade for its receivers: an empty flag,
+/// then min and max.
+pub(crate) const BOX_MIN: usize = 4;
+pub(crate) const BOX_MAX: usize = 0x10;
+
+/// Drops an MSVC `shared_ptr`'s reference through its control block: uses
+/// at +8, weak references at +0xc, `_Destroy` and `_Delete_this` its first
+/// two methods.
+unsafe fn drop_shared(control: usize) {
+    use std::sync::atomic::AtomicI32;
+    if control == 0 {
+        return;
+    }
+    let count = |at: usize| unsafe { &*((control + at) as *const AtomicI32) };
+    if count(8).fetch_sub(1, Ordering::AcqRel) == 1 {
+        let object = control as *mut c_void;
+        let destroy: unsafe extern "C" fn(*mut c_void) = unsafe { method(object, 0) };
+        unsafe { destroy(object) };
+        if count(0xc).fetch_sub(1, Ordering::AcqRel) == 1 {
+            let delete: unsafe extern "C" fn(*mut c_void) = unsafe { method(object, 8) };
+            unsafe { delete(object) };
+        }
+    }
+}
+
+/// Each cascade's band this frame, asked of the view's camera as the caster
+/// pass asks it; `None` for a band that is empty. `None` overall when the
+/// view has no camera.
+unsafe fn bands(view: *const u8, layout: &Layout, count: u32) -> Option<Slices> {
+    type Shared = [usize; 2];
+    let holder = unsafe { *(view.add(VIEW_CAMERAS) as *const *mut c_void) };
+    if holder.is_null() {
+        return None;
+    }
+    let get: unsafe extern "C" fn(*mut c_void, *mut Shared) -> *mut Shared =
+        unsafe { method(holder, HOLDER_CAMERA) };
+    let mut camera: Shared = [0; 2];
+    unsafe { get(holder, &mut camera) };
+    if camera[0] == 0 {
+        unsafe { drop_shared(camera[1]) };
+        return None;
+    }
+    let read = |at: usize| unsafe { *(view.add(at) as *const f32) };
+    let distance = unsafe { *(view.add(layout.distance) as *const i32) };
+    let near = read(layout.near);
+    let splits = splits(near, read(layout.far), distance, count);
+    let mut out = [None; 32];
+    if near > 0.0 && splits.iter().all(|s| s.is_finite()) {
+        let cam = camera[0] as *mut c_void;
+        let band: unsafe extern "C" fn(*mut c_void, *mut Shared, f32, f32) -> *mut Shared =
+            unsafe { method(cam, CAMERA_BAND) };
+        for (i, slot) in out.iter_mut().enumerate().take(count as usize) {
+            let mut frustum: Shared = [0; 2];
+            unsafe { band(cam, &mut frustum, splits[i], splits[i + 1]) };
+            let at = frustum[0] as *const u8;
+            if !at.is_null() && unsafe { *at.add(BAND_BOX) } == 0 {
+                let plane = |i: usize| unsafe {
+                    (at.add(BAND_PLANES + 0x10 * i) as *const [f32; 4]).read_unaligned()
+                };
+                let slice: Slice = core::array::from_fn(plane);
+                if slice.iter().flatten().all(|v| v.is_finite()) {
+                    *slot = Some(slice);
+                }
+            }
+            unsafe { drop_shared(frustum[1]) };
+        }
+    }
+    unsafe { drop_shared(camera[1]) };
+    Some(out)
+}
+
+/// Cascade `i`'s matrix for lit surfaces in the view.
+unsafe fn matrix(view: *const u8, layout: &Layout, i: usize) -> [f32; 16] {
+    unsafe { (view.add(layout.matrices + 0x40 * i) as *const [f32; 16]).read_unaligned() }
+}
+
+/// Per-view matrices for lit surfaces ([`Layout::matrices`]) of each cascade
+/// as its layer was last drawn, the most recent views first, as [`Rotations`] keeps them. A view
+/// whose map, count or shadow switch changed has none.
+pub struct Held {
+    seen: Vec<(usize, Seen, HeldMatrices)>,
+}
+
+/// One view's cascades' matrices, `None` where unknown.
+pub type HeldMatrices = [Option<[f32; 16]>; Held::CASCADES];
+
+impl Held {
+    const CAPACITY: usize = 8;
+    /// The most cascades a view may have and still hold any of them.
+    pub const CASCADES: usize = 8;
+
+    pub const fn new() -> Self {
+        Held { seen: Vec::new() }
+    }
+
+    /// `view`'s matrices, if its map is still `now`.
+    pub fn matrices(&self, view: usize, now: Seen) -> HeldMatrices {
+        self.seen
+            .iter()
+            .find(|(v, seen, _)| *v == view && *seen == now)
+            .map_or([None; Held::CASCADES], |(_, _, m)| *m)
+    }
+
+    /// Records `view`'s matrices for the cascades in `drawn`.
+    pub fn record(&mut self, view: usize, now: Seen, drawn: u32, fresh: &HeldMatrices) {
+        let mut held = self.matrices(view, now);
+        for (i, m) in fresh.iter().enumerate() {
+            if drawn >> i & 1 != 0 {
+                held[i] = *m;
+            }
+        }
+        self.seen.retain(|(v, _, _)| *v != view);
+        self.seen.insert(0, (view, now, held));
+        self.seen.truncate(Self::CAPACITY);
+    }
+}
+
+impl Default for Held {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The first `count` cascades not in `mask` whose bands are unknown or have
+/// left their bands as drawn.
+fn stale(mask: u32, count: u32, bands: &Slices, drawn: &Slices) -> u32 {
+    let mut stale = 0;
+    for (i, band) in bands.iter().enumerate().take(count as usize) {
+        let held = band
+            .as_ref()
+            .is_some_and(|band| contains(drawn[i].as_ref(), band));
+        if mask >> i & 1 == 0 && !held {
+            stale |= 1 << i;
+        }
+    }
+    stale
 }
 
 /// Called by [`head_stub`] for each cascade: whether the loop runs it.
@@ -582,9 +997,14 @@ unsafe extern "C" fn clear_layers(view: *mut c_void) -> u8 {
 }
 
 /// At the cascade loop's head (in place of its first instruction): runs the
-/// cascade when [`cascade_due`] says so, else stores the next index where the
-/// loop keeps it and jumps to the loop's test. The volatile registers and
-/// flags are dead here; `rsp` is 16-aligned in the loop.
+/// cascade when [`cascade_due`] says so, else empties its fit slot
+/// ([`LOOP_FITS`]), stores the next index where the loop keeps it and jumps to
+/// the loop's test. A caster whose range spans a skipped cascade (found in
+/// cascades on both sides of it) is still drawn into that layer through the
+/// slot, which would otherwise hold whatever an earlier call left on the
+/// stack; the empty fit sends every vertex to one point past the far plane, so
+/// the held layer keeps its map. The volatile registers and flags are dead
+/// here.
 /// Inline hook sites do not promise Windows x64 call alignment. The stubs save
 /// and restore the game stack around each Rust callback.
 #[unsafe(naked)]
@@ -597,17 +1017,34 @@ unsafe extern "C" fn head_stub() {
         "mov rcx, rsi",
         "mov edx, r15d",
         "call {due}",
-        "mov rsp, rbx",
-        "pop rbx",
         "test al, al",
         "jnz 2f",
+        "mov rsp, rbx",
+        "pop rbx",
+        "mov eax, r15d",
+        "shl rax, 6",
+        "lea rax, [rbp + rax + {fits}]",
+        "xor ecx, ecx",
+        "mov qword ptr [rax], rcx",
+        "mov qword ptr [rax + 0x08], rcx",
+        "mov qword ptr [rax + 0x10], rcx",
+        "mov qword ptr [rax + 0x18], rcx",
+        "mov qword ptr [rax + 0x20], rcx",
+        "mov qword ptr [rax + 0x28], rcx",
+        "mov qword ptr [rax + 0x30], rcx",
+        // The last row (0, 0, 2, 1): z = 2w, past the far plane.
+        "mov rcx, 0x3f80000040000000",
+        "mov qword ptr [rax + 0x38], rcx",
         "lea eax, [r15 + 1]",
         "mov dword ptr [rbp + {next}], eax",
         "jmp qword ptr [rip + {latch}]",
         "2:",
+        "mov rsp, rbx",
+        "pop rbx",
         "jmp qword ptr [rip + {head}]",
         due = sym cascade_due,
         next = const LOOP_NEXT_INDEX,
+        fits = const LOOP_FITS,
         latch = sym LATCH,
         head = sym HEAD_TRAMPOLINE,
     );
@@ -639,8 +1076,110 @@ unsafe extern "C" fn clear_stub() {
     );
 }
 
+/// The pass running with its holdable layers padded: its view, the
+/// cascades it pads, and each padded cascade's slice as drawn.
+struct Padding {
+    view: usize,
+    cascades: u32,
+    slices: Slices,
+}
+
+/// Called by [`pad_stub`] for each cascade the loop runs: grows a cascade in
+/// [`Padding::cascades`] by [`MARGIN`] of its depth, its band (`[frame +
+/// LOOP_BAND]`) and its receivers' box alike, so its layer covers the camera
+/// for a while as it moves and is held for longer. The casters are then
+/// picked, and the layer fitted, for the grown band.
+unsafe extern "C" fn pad_band(view: usize, index: u32, frame: *const u8, receivers: *mut u8) {
+    let i = index as usize;
+    let fraction = f32::from_bits(MARGIN.load(Ordering::Relaxed));
+    PADDING.with(|state| {
+        let Ok(mut state) = state.try_borrow_mut() else {
+            return;
+        };
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        if view == 0 || state.view != view || i >= 32 || state.cascades >> i & 1 == 0 {
+            return;
+        }
+        let split = |k: usize| unsafe { *(frame.add(LOOP_SPLITS + 4 * k) as *const f32) };
+        let margin = fraction * (split(i + 1) - split(i));
+        let at = unsafe { *(frame.add(LOOP_BAND) as *const *mut u8) };
+        if !(margin.is_finite() && margin > 0.0)
+            || at.is_null()
+            || unsafe { *at.add(BAND_BOX) } != 0
+            || unsafe { *receivers } != 0
+        {
+            return;
+        }
+        let read3 = |p: *const u8| unsafe { (p as *const [f32; 3]).read_unaligned() };
+        let band = Band {
+            planes: core::array::from_fn(|q| unsafe {
+                (at.add(BAND_PLANES + 0x10 * q) as *const [f32; 4]).read_unaligned()
+            }),
+            min: read3(unsafe { at.add(BAND_BOX + BOX_MIN) }),
+            max: read3(unsafe { at.add(BAND_BOX + BOX_MAX) }),
+            corners: core::array::from_fn(|c| read3(unsafe { at.add(BAND_CORNERS + 12 * c) })),
+        };
+        let finite = |b: &Band| {
+            b.planes.iter().flatten().all(|v| v.is_finite())
+                && b.corners.iter().flatten().all(|v| v.is_finite())
+                && b.min.iter().chain(&b.max).all(|v| v.is_finite())
+        };
+        if !finite(&band) {
+            return;
+        }
+        let Some(padded) = pad(&band, margin).filter(finite) else {
+            return;
+        };
+        let write3 = |p: *mut u8, v: [f32; 3]| unsafe { (p as *mut [f32; 3]).write_unaligned(v) };
+        unsafe {
+            for (q, plane) in padded.planes.iter().enumerate() {
+                (at.add(BAND_PLANES + 0x10 * q) as *mut [f32; 4]).write_unaligned(*plane);
+            }
+            for (c, corner) in padded.corners.iter().enumerate() {
+                write3(at.add(BAND_CORNERS + 12 * c), *corner);
+            }
+            write3(at.add(BAND_BOX + BOX_MIN), padded.min);
+            write3(at.add(BAND_BOX + BOX_MAX), padded.max);
+            let (min, max) = (read3(receivers.add(BOX_MIN)), read3(receivers.add(BOX_MAX)));
+            write3(receivers.add(BOX_MIN), min.map(|v| v - margin));
+            write3(receivers.add(BOX_MAX), max.map(|v| v + margin));
+        }
+        state.slices[i] = Some(padded.planes);
+    });
+}
+
+/// In the cascade loop at [`PAD_PATTERN`] + [`PAD_AT`]: [`pad_band`], then
+/// the loop's own instructions. `rax` (the light direction) is live and kept;
+/// the other volatile registers and flags are dead.
+#[unsafe(naked)]
+unsafe extern "C" fn pad_stub() {
+    core::arch::naked_asm!(
+        "push rbx",
+        "mov rbx, rsp",
+        "and rsp, -16",
+        "sub rsp, 0x30",
+        "mov qword ptr [rsp + 0x20], rax",
+        "mov rcx, rsi",
+        "mov edx, r15d",
+        "mov r8, rbp",
+        "mov r9, r13",
+        "call {pad}",
+        "mov rax, qword ptr [rsp + 0x20]",
+        "mov rsp, rbx",
+        "pop rbx",
+        "jmp qword ptr [rip + {original}]",
+        pad = sym pad_band,
+        original = sym PAD_TRAMPOLINE,
+    );
+}
+
 thread_local! {
+    static PADDING: RefCell<Option<Padding>> = const { RefCell::new(None) };
     static ROTATIONS: RefCell<Rotations> = const { RefCell::new(Rotations::new()) };
+    static COVERAGE: RefCell<Coverage> = const { RefCell::new(Coverage::new()) };
+    static HELD: RefCell<Held> = const { RefCell::new(Held::new()) };
 }
 
 /// The world2 call can arrive with a misaligned stack; this adapter restores
@@ -661,7 +1200,7 @@ unsafe extern "C" fn pass_stub() {
 }
 
 /// The function in slot `offset` of the vtable of the object at `object`.
-unsafe fn method<F: Copy>(object: *mut c_void, offset: usize) -> F {
+pub(crate) unsafe fn method<F: Copy>(object: *mut c_void, offset: usize) -> F {
     let vtable = unsafe { *(object as *const *const usize) };
     let entry = unsafe { *vtable.add(offset / 8) };
     unsafe { core::mem::transmute_copy(&entry) }
@@ -713,11 +1252,41 @@ unsafe extern "C" fn pass(view: *mut c_void) {
         3 => "far_half",
         _ => "all",
     });
-    let mask = ROTATIONS.with(|r| match r.try_borrow_mut() {
+    let mut mask = ROTATIONS.with(|r| match r.try_borrow_mut() {
         Ok(mut r) => r.due(view as usize, now, mode),
         Err(_) => Cascades::All.due(0, now.count),
     });
     let all = Cascades::All.due(0, now.count);
+    let holdable = now.on && (1..=Held::CASCADES as u32).contains(&now.count);
+    // A held layer needs the matrix it was drawn with to check its coverage;
+    // without it every layer is drawn.
+    let held = HELD.with(|h| {
+        h.try_borrow()
+            .map_or([None; Held::CASCADES], |h| h.matrices(view as usize, now))
+    });
+    if !holdable || (0..now.count as usize).any(|i| mask >> i & 1 == 0 && held[i].is_none()) {
+        mask = all;
+    }
+    // A layer that is not due keeps last frame's map; redraw it anyway when
+    // the camera's band for it has moved past the band it was drawn for.
+    let checked = holdable && mask != all;
+    let bands = if checked {
+        unsafe { bands(bytes, layout, now.count) }
+    } else {
+        None
+    };
+    // Without bands no held layer can be checked, so every layer is drawn.
+    match &bands {
+        Some(bands) => {
+            let drawn = COVERAGE.with(|c| {
+                c.try_borrow()
+                    .map_or([None; 32], |c| c.slices(view as usize))
+            });
+            mask |= stale(mask, now.count, bands, &drawn);
+        }
+        None if checked => mask = all,
+        None => {}
+    }
     let effective_mask = if mask != all && unsafe { layer_views_ready(view, now.count) } {
         PARTIAL_MASK.store(mask, Ordering::Relaxed);
         PARTIAL_VIEW.store(view as usize, Ordering::Relaxed);
@@ -725,11 +1294,56 @@ unsafe extern "C" fn pass(view: *mut c_void) {
     } else {
         all
     };
-    #[cfg(not(feature = "render-profile"))]
-    let _ = effective_mask;
+    // Layers that may be held are drawn for a padded band, so they cover the
+    // camera's band for longer as it moves; those drawn every frame are not.
+    let padded = if holdable && MARGIN.load(Ordering::Relaxed) != 0 {
+        let always = (0..2 * now.count).fold(all, |m, f| m & mode.due(f, now.count));
+        all & !always
+    } else {
+        0
+    };
+    PADDING.with(|state| {
+        if let Ok(mut state) = state.try_borrow_mut() {
+            *state = (padded != 0).then_some(Padding {
+                view: view as usize,
+                cascades: padded,
+                slices: [None; 32],
+            });
+        }
+    });
     #[cfg(feature = "render-profile")]
     let started = crate::render_profile::shadow_begin(view);
     unsafe { original(view) };
+    let padded = PADDING.with(|state| {
+        state
+            .try_borrow_mut()
+            .ok()
+            .and_then(|mut state| state.take())
+            .map_or([None; 32], |state| state.slices)
+    });
+    if holdable {
+        let fresh: HeldMatrices = core::array::from_fn(|i| {
+            (i < now.count as usize).then(|| unsafe { matrix(bytes, layout, i) })
+        });
+        HELD.with(|h| {
+            if let Ok(mut h) = h.try_borrow_mut() {
+                h.record(view as usize, now, effective_mask, &fresh);
+            }
+        });
+        // Without bands the slices are unknown, so the next frame draws every
+        // layer.
+        // A padded layer covers its padded slice.
+        let bands = bands.or_else(|| unsafe { self::bands(bytes, layout, now.count) });
+        let slices: Slices = match bands {
+            Some(bands) => core::array::from_fn(|i| padded[i].or(bands[i])),
+            None => [None; 32],
+        };
+        COVERAGE.with(|c| {
+            if let Ok(mut c) = c.try_borrow_mut() {
+                c.record(view as usize, effective_mask, &slices);
+            }
+        });
+    }
     #[cfg(feature = "render-profile")]
     crate::render_profile::shadow_end(view, effective_mask, started);
     #[cfg(feature = "shadow-timing")]
@@ -791,7 +1405,9 @@ struct Rotation {
     depth: f32,
     latch: usize,
     resume: usize,
-    writes: [Write; 2],
+    /// Whether [`Rotation::writes`] pads the held layers' bands.
+    padded: bool,
+    writes: Vec<Write>,
 }
 
 fn redirect(api: &Api) -> Result<Redirect, String> {
@@ -830,20 +1446,22 @@ fn redirect(api: &Api) -> Result<Redirect, String> {
 
 /// The loop-head and clear stubs for [`Cascades`], inside the pass that
 /// [`redirect`] found.
-fn rotation(api: &Api, redirect: &Redirect) -> Result<Rotation, String> {
+fn rotation(api: &Api, redirect: &Redirect, margin: f32) -> Result<Rotation, String> {
     let base = unsafe { (api.module_base)(c"world2.dll".as_ptr()) };
     let size = unsafe { (api.module_size)(base) };
     let layout = &LAYOUTS[redirect.layout];
-    let (head, latch, range, clear) = (
+    let (head, latch, range, copy, clear, pad) = (
         find(api, base, size, layout.head) as usize,
         find(api, base, size, layout.latch) as usize,
         find(api, base, size, RANGE_PATTERN) as usize,
+        find(api, base, size, FIT_COPY_PATTERN) as usize,
         find(api, base, size, layout.clear) as usize,
+        find(api, base, size, PAD_PATTERN) as usize,
     );
     let signatures = d3d_signatures(api)?;
     let casters = redirect.casters;
     let inside = |at: usize| at > casters && at < casters + CASTERS_SIZE;
-    if !(inside(head) && inside(latch) && inside(range))
+    if !(inside(head) && inside(latch) && inside(range) && copy > latch && inside(copy))
         || jb_target(latch + LATCH_JUMP_AT) != Some(head)
         || clear != redirect.pass + PASS_CLEAR_AT
     {
@@ -859,23 +1477,34 @@ fn rotation(api: &Api, redirect: &Redirect) -> Result<Rotation, String> {
         detour,
         original: Some(original),
     };
+    let mut writes = vec![
+        stub(
+            head,
+            head_stub as unsafe extern "C" fn() as *mut c_void,
+            &HEAD_TRAMPOLINE,
+        ),
+        stub(
+            clear,
+            clear_stub as unsafe extern "C" fn() as *mut c_void,
+            &CLEAR_TRAMPOLINE,
+        ),
+    ];
+    // Without its site the layers are held for their bands as they are.
+    let padded = margin > 0.0 && inside(pad) && head < pad && pad < latch;
+    if padded {
+        writes.push(stub(
+            pad + PAD_AT,
+            pad_stub as unsafe extern "C" fn() as *mut c_void,
+            &PAD_TRAMPOLINE,
+        ));
+    }
     Ok(Rotation {
         signatures,
         depth,
         latch,
         resume: clear + CLEAR_SIZE,
-        writes: [
-            stub(
-                head,
-                head_stub as unsafe extern "C" fn() as *mut c_void,
-                &HEAD_TRAMPOLINE,
-            ),
-            stub(
-                clear,
-                clear_stub as unsafe extern "C" fn() as *mut c_void,
-                &CLEAR_TRAMPOLINE,
-            ),
-        ],
+        padded,
+        writes,
     })
 }
 
@@ -901,22 +1530,24 @@ fn redirects(api: &Api, mode: Cascades) -> bool {
 
 /// The writes `install` makes for `cascades`: the pass's redirect, and the
 /// loop's stubs when the cascades rotate and the loop resolves.
-pub fn plan(api: &Api, cascades: &str) -> Result<Plan, String> {
+pub fn plan(api: &Api, cascades: &str, margin: &str) -> Result<Plan, String> {
     let mode = Cascades::parse(cascades);
     if !redirects(api, mode) {
         return Ok(Plan::default());
     }
     let redirect = redirect(api)?;
     let rotation = (mode != Cascades::All)
-        .then(|| rotation(api, &redirect).ok())
+        .then(|| rotation(api, &redirect, self::margin(margin)).ok())
         .flatten();
     let mut writes = vec![redirect.write];
     writes.extend(rotation.into_iter().flat_map(|rotation| rotation.writes));
     Ok(Plan { writes })
 }
 
-/// `cascades` is `shadow_cascades`; `all` leaves the pass alone.
-pub fn install(api: &Api, cascades: &str) {
+/// `cascades` is `shadow_cascades`, `all` leaving the pass alone; `margin` is
+/// `shadow_margin`.
+pub fn install(api: &Api, cascades: &str, margin: &str) {
+    let margin = self::margin(margin);
     let mode = Cascades::parse(cascades);
     #[cfg(feature = "shadow-timing")]
     timing::install(api.log, mode);
@@ -936,7 +1567,7 @@ pub fn install(api: &Api, cascades: &str) {
     }
     let result = redirect(api).and_then(|redirect| {
         LAYOUT.store(redirect.layout, Ordering::Relaxed);
-        let rotation = (mode != Cascades::All).then(|| rotation(api, &redirect));
+        let rotation = (mode != Cascades::All).then(|| rotation(api, &redirect, margin));
         let pass = Plan {
             writes: vec![redirect.write],
         };
@@ -968,8 +1599,17 @@ pub fn install(api: &Api, cascades: &str) {
         CLEAR_DEPTH.store(rotation.depth.to_bits(), Ordering::Relaxed);
         LATCH.store(rotation.latch, Ordering::Release);
         CLEAR_RESUME.store(rotation.resume, Ordering::Release);
+        if rotation.padded {
+            MARGIN.store(margin.to_bits(), Ordering::Relaxed);
+        } else if margin > 0.0 {
+            super::say(
+                api,
+                LOG_WARN,
+                "shadow map: the cascade loop's bands were not found; held parts are not padded",
+            );
+        }
         let stubs = Plan {
-            writes: rotation.writes.into(),
+            writes: rotation.writes,
         };
         plan::apply(api, &stubs).map_err(|_| "the cascade loop could not be hooked".to_string())
     });
@@ -1004,6 +1644,36 @@ pub fn install(api: &Api, cascades: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn held_matrices_merge_and_drop_with_the_map() {
+        let map = Seen {
+            map: 0x5000,
+            count: 4,
+            on: true,
+        };
+        let one = |v: f32| -> HeldMatrices { core::array::from_fn(|_| Some([v; 16])) };
+        let mut h = Held::new();
+        assert_eq!(h.matrices(0x1000, map), [None; Held::CASCADES]);
+        h.record(0x1000, map, 0b1111, &one(1.0));
+        h.record(0x1000, map, 0b0010, &one(2.0));
+        let m = h.matrices(0x1000, map);
+        assert_eq!(m[0], Some([1.0; 16]));
+        assert_eq!(m[1], Some([2.0; 16]));
+        assert_eq!(m[4], None);
+        // A changed map forgets the view's matrices.
+        let resized = Seen { map: 0x6000, ..map };
+        assert_eq!(h.matrices(0x1000, resized), [None; Held::CASCADES]);
+        h.record(0x1000, resized, 0b0001, &one(3.0));
+        let m = h.matrices(0x1000, resized);
+        assert_eq!((m[0], m[1]), (Some([3.0; 16]), None));
+        // The least recent view drops past capacity.
+        for view in 1..=Held::CAPACITY {
+            h.record(view, map, 1, &one(4.0));
+        }
+        assert_eq!(h.matrices(0x1000, resized), [None; Held::CASCADES]);
+        assert_eq!(h.matrices(1, map)[0], Some([4.0; 16]));
+    }
 
     #[test]
     fn cascades_due_each_frame() {
@@ -1315,6 +1985,125 @@ mod tests {
         LAYER_VIEWS.with(|cache| cache.borrow_mut().clear());
     }
 
+    #[test]
+    fn splits_run_from_near_to_the_nearer_far() {
+        let s = splits(1.0, 1000.0, 200, 4);
+        assert_eq!(s.len(), 5);
+        assert_eq!((s[0], s[4]), (1.0, 200.0));
+        assert!(s.windows(2).all(|w| w[0] < w[1]));
+        // Halfway between linear (50.75) and logarithmic (200^0.25).
+        let want = 0.5 * (199.0 * 0.25 + 1.0 + 200f32.powf(0.25));
+        assert!((s[1] - want).abs() < 1e-4);
+        assert_eq!(*splits(1.0, 100.0, 200, 2).last().unwrap(), 100.0);
+    }
+
+    /// The box `min..max` as six planes.
+    fn boxed(min: [f32; 3], max: [f32; 3]) -> Slice {
+        let mut s = [[0.0; 4]; 6];
+        for k in 0..3 {
+            s[2 * k][k] = 1.0;
+            s[2 * k][3] = -min[k];
+            s[2 * k + 1][k] = -1.0;
+            s[2 * k + 1][3] = max[k];
+        }
+        s
+    }
+
+    #[test]
+    fn a_slice_has_its_corners() {
+        let c = corners(&boxed([0.0; 3], [1.0, 2.0, 3.0]));
+        assert_eq!(c.len(), 8);
+        assert!(c.iter().any(|p| p == &[1.0, 2.0, 3.0]));
+    }
+
+    #[test]
+    fn a_padded_band_grows_by_its_margin() {
+        let planes = boxed([0.0; 3], [1.0, 2.0, 3.0]);
+        let c = corners(&planes);
+        let band = Band {
+            planes,
+            min: [0.0; 3],
+            max: [1.0, 2.0, 3.0],
+            corners: core::array::from_fn(|i| c[i].map(|v| v as f32)),
+        };
+        let padded = pad(&band, 0.5).unwrap();
+        assert_eq!(padded.planes, boxed([-0.5; 3], [1.5, 2.5, 3.5]));
+        assert_eq!((padded.min, padded.max), ([-0.5; 3], [1.5, 2.5, 3.5]));
+        for (old, new) in band.corners.iter().zip(&padded.corners) {
+            for k in 0..3 {
+                let moved = if old[k] == 0.0 { -0.5 } else { 0.5 };
+                assert!((new[k] - old[k] - moved).abs() < 1e-5, "{old:?} -> {new:?}");
+            }
+        }
+        // The padded band holds the drawn one, and a band moved by less
+        // than the margin.
+        assert!(contains(Some(&padded.planes), &planes));
+        assert!(contains(
+            Some(&padded.planes),
+            &boxed([0.4, 0.0, 0.0], [1.4, 2.0, 3.0])
+        ));
+        assert_eq!(pad(&band, 0.0).unwrap(), band);
+    }
+
+    #[test]
+    fn a_band_that_moves_past_its_drawn_band_redraws_its_layer() {
+        let drawn = boxed([2.0, 2.0, 0.0], [8.0, 8.0, 1.0]);
+        assert!(contains(Some(&drawn), &drawn));
+        // Within the slice as drawn: held.
+        assert!(contains(
+            Some(&drawn),
+            &boxed([3.0, 2.0, 0.0], [8.0, 7.0, 1.0])
+        ));
+        // Past it: its casters were never drawn.
+        assert!(!contains(
+            Some(&drawn),
+            &boxed([2.1, 2.0, 0.0], [8.1, 8.0, 1.0])
+        ));
+        assert!(!contains(None, &drawn));
+        // A slice turned within its old box: the box still holds it, the
+        // slice does not.
+        let wedge = |tilt: f32| {
+            let mut s = boxed([0.0; 3], [10.0; 3]);
+            s[0] = [1.0, -tilt, 0.0, 0.0];
+            s
+        };
+        assert!(!contains(Some(&wedge(0.5)), &wedge(0.0)));
+        assert!(contains(Some(&wedge(0.0)), &wedge(0.5)));
+    }
+
+    #[test]
+    fn a_band_not_known_redraws_its_layer() {
+        let slice = Some(boxed([0.0; 3], [1.0; 3]));
+        let mut bands = [None; 32];
+        bands[0] = slice;
+        bands[2] = slice;
+        let drawn = [slice; 32];
+        // Cascade 1 is due; 3 has no band; 4 is past the count.
+        assert_eq!(stale(0b0010, 4, &bands, &drawn), 0b1000);
+        assert_eq!(stale(0, 3, &bands, &[None; 32]), 0b0111);
+    }
+
+    #[test]
+    fn coverage_keeps_each_views_drawn_slices() {
+        let mut c = Coverage::new();
+        assert_eq!(c.slices(1), [None; 32]);
+        let (a, b) = (
+            Some(boxed([0.0; 3], [1.0; 3])),
+            Some(boxed([0.0; 3], [2.0; 3])),
+        );
+        let mut slices = [None; 32];
+        slices[0] = a;
+        slices[1] = b;
+        c.record(1, 0b01, &slices);
+        assert_eq!(c.slices(1)[..2], [a, None]);
+        c.record(1, 0b10, &[b; 32]);
+        assert_eq!(c.slices(1)[..3], [a, b, None]);
+        for view in 2..20 {
+            c.record(view, 1, &slices);
+        }
+        assert_eq!(c.slices(1), [None; 32]);
+    }
+
     /// The patterns against the game's `world2.dll`, when it is available.
     #[test]
     fn the_patterns_find_the_pass_in_the_game() {
@@ -1343,18 +2132,42 @@ mod tests {
         assert_eq!(target(sites[0] + SITE_CALL_AT), passes[0]);
         let casters = target(passes[0] + PASS_CASTERS_CALL_AT);
         // The cascade rotation's sites.
-        let (heads, latches, ranges, clears) = (
+        let (heads, latches, ranges, copies, clears) = (
             find(layout.head),
             find(layout.latch),
             find(RANGE_PATTERN),
+            find(FIT_COPY_PATTERN),
             find(layout.clear),
         );
         assert_eq!(
-            (heads.len(), latches.len(), ranges.len(), clears.len()),
-            (1, 1, 1, 1)
+            (
+                heads.len(),
+                latches.len(),
+                ranges.len(),
+                copies.len(),
+                clears.len()
+            ),
+            (1, 1, 1, 1, 1)
         );
         let inside = |at: usize| at > casters && at < casters + CASTERS_SIZE;
         assert!(inside(heads[0]) && inside(latches[0]) && inside(ranges[0]));
+        // The fits are copied after the loop, from the slots the skip path
+        // empties.
+        assert!(copies[0] > latches[0] && inside(copies[0]));
+        // The band call that the padding hooks: once, inside the loop.
+        let pads = find(PAD_PATTERN);
+        assert_eq!(pads.len(), 1);
+        assert!(heads[0] < pads[0] && pads[0] < latches[0]);
+        // The caster pass reads the splits' inputs and writes the matrices
+        // at the layout's offsets.
+        let body = &image[casters..casters + CASTERS_SIZE];
+        for offset in [layout.near, layout.far, layout.distance, layout.matrices] {
+            let disp = (offset as u32).to_le_bytes();
+            assert!(
+                body.windows(4).any(|w| w == disp),
+                "the caster pass uses {offset:#x}"
+            );
+        }
         let jb = latches[0] + LATCH_JUMP_AT;
         assert_eq!(image[jb..jb + 2], [0x0f, 0x82]);
         let rel = i32::from_le_bytes(image[jb + 2..jb + 6].try_into().unwrap());

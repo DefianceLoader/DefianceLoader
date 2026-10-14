@@ -65,6 +65,17 @@ jobs:
           python-version: '3.12'
       - name: Install the Python test dependencies
         run: python -m pip install -r tools/requirements.txt
+      - name: Build and test the Rust and C++ starter plugins
+        run: |
+          cargo fmt --all --check --manifest-path examples/vehicle-braking/rust/Cargo.toml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo build --release --manifest-path examples/vehicle-braking/rust/Cargo.toml --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & examples/vehicle-braking/cpp/build.cmd
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python tools/test_api_header.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python tools/stamp.py test tools/test_vehicle_braking_examples.py --rust-dll examples/vehicle-braking/rust/target/x86_64-pc-windows-msvc/release/defiance_example_vehicle_braking_rust.dll --cpp-dll examples/vehicle-braking/cpp/target/defiance_example_vehicle_braking_cpp.dll --rust-source examples/vehicle-braking/rust/src/lib.rs --cpp-source examples/vehicle-braking/cpp/main.cpp --rust-manifest examples/vehicle-braking/rust/defiance_example_vehicle_braking_rust.plugin.json --cpp-manifest examples/vehicle-braking/cpp/defiance_example_vehicle_braking_cpp.plugin.json
       - name: Check injector coverage and installation for every embedded build
         run: |
           python tools/test_stamp.py

@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "id": "defiance.experience-levels",
+  "dll": "defiance_plugin_experience_levels.dll",
+  "version": "0.1.1",
+  "abi": 5,
+  "group": "gameplay",
+  "hot_reload": false,
+  "patch_contract": true,
+  "settings": [
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default": "false",
+      "description": "Experimental: read level_6 and later columns of scripts/species/exp_levels.txt, so a squad can have more than six experience levels. Restart required."
+    },
+    {
+      "key": "max_levels",
+      "type": "int",
+      "default": "32",
+      "description": "The most levels a row may have, counting level_0 (6 to 64). Restart required."
+    }
+  ],
+  "depends": [
+    {
+      "id": "defiance.core",
+      "min": "0.8.0"
+    }
+  ],
+  "conflicts": []
+}

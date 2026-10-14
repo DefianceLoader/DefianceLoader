@@ -8,15 +8,15 @@
 use super::{
     sites::Sites,
     viewport::{Viewport, PERK_VISIBLE, UPGRADE_VISIBLE, VISIBLE},
-    ACTIVE, ENGINE, LOG_DEBUG, LOG_WARN, ORIGINAL, ORIGINAL_SQUAD_CHOOSER, ORIGINAL_THUMB,
-    ORIGINAL_VEHICLE, ORIGINAL_VEHICLE_CHOOSER,
+    ACTIVE, ENGINE, LOG_DEBUG, LOG_WARN, ORIGINAL_SQUAD_CHOOSER, ORIGINAL_THUMB, ORIGINAL_VEHICLE,
+    ORIGINAL_VEHICLE_CHOOSER,
 };
 mod training;
 use core::{ffi::c_char, ptr};
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
-    sync::atomic::{AtomicPtr, Ordering},
+    sync::atomic::Ordering,
 };
 pub(super) use training::training_show;
 
@@ -926,24 +926,29 @@ unsafe fn update(panel: usize, layout: &'static Layout, input: Input, event: usi
     }
 }
 
-unsafe fn run_refresh(
-    panel: usize,
-    layout: &'static Layout,
-    original: &AtomicPtr<core::ffi::c_void>,
+pub(super) unsafe extern "C" fn panel_refresh(
+    panel: *mut core::ffi::c_void,
+    _context: *mut core::ffi::c_void,
 ) {
-    let original: One = std::mem::transmute(original.load(Ordering::Acquire));
+    let panel = panel as usize;
+    if panel == 0 || !ACTIVE.load(Ordering::Acquire) {
+        return;
+    }
+    if let Some(_guard) = Guard::enter() {
+        update(panel, &SQUAD, Input::Refresh, 0);
+    }
+}
+unsafe fn run_vehicle_refresh(panel: usize) {
+    let original: One = std::mem::transmute(ORIGINAL_VEHICLE.load(Ordering::Acquire));
     original(panel);
     if ACTIVE.load(Ordering::Acquire) {
         if let Some(_guard) = Guard::enter() {
-            update(panel, layout, Input::Refresh, 0);
+            update(panel, &VEHICLE, Input::Refresh, 0);
         }
     }
 }
-pub(super) unsafe extern "C" fn refresh(panel: usize) {
-    run_refresh(panel, &SQUAD, &ORIGINAL);
-}
 pub(super) unsafe extern "C" fn refresh_vehicle(panel: usize) {
-    run_refresh(panel, &VEHICLE, &ORIGINAL_VEHICLE);
+    run_vehicle_refresh(panel);
 }
 pub(super) unsafe extern "C" fn destroy(panel: usize, flags: u32) -> usize {
     STATES.with(|s| s.borrow_mut().remove(&panel));

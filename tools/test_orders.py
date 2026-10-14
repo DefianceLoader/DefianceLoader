@@ -1,7 +1,7 @@
 """Execute order hooks through their actual call-site register/stack ABI.
 
-The stock collector is represented by its completed command-local array. The
-real payload wrappers run via patched copies of the actual module instructions.
+The real payload wrappers run via patched module instructions, with completed
+command-local arrays or the native transport dispatcher and its member loop.
 Guard cells and register snapshots catch stack, count and resume-flag errors.
 """
 import ctypes, json, pathlib, sys, struct
@@ -577,6 +577,154 @@ def transport(capacity, owners):
     poke(helper, 0xb0, len(owners))
     return helper
 
+# Boarding dispatcher (fn_43aab0): run its installed adapter at the native
+# rsp+20 copied roster, r14 count, r13 order and rdi squad-AI ABI. Snapshot
+# the loop's retained members and preserve guards outside the local array.
+board_entry = install_order_site(0x43acf8)
+board_trampoline = blob(asm(f"""
+    push rbx
+    push rbp
+    push rsi
+    push rdi
+    push r13
+    push r14
+    sub rsp, 0xb8
+    mov rbx, r9
+    mov rsi, rcx
+    mov r14, rdx
+    mov rbp, rdx
+    mov r13, r8
+    mov rdi, qword ptr [rbx]
+    mov qword ptr [rsp + 0xa0], 0x76543210
+    mov qword ptr [rsp + 0x18], 0x76543210
+    xor r9d, r9d
+board_copy:
+    cmp r9, rbp
+    jae board_copied
+    mov rax, qword ptr [rsi + r9*8]
+    mov qword ptr [rsp + r9*8 + 0x20], rax
+    inc r9
+    jmp board_copy
+board_copied:
+    mov r10, {board_entry}
+    call r10
+    mov qword ptr [rbx + 8], r14
+    mov rax, qword ptr [rsp + 0x18]
+    mov qword ptr [rbx + 0x10], rax
+    mov rax, qword ptr [rsp + 0xa0]
+    mov qword ptr [rbx + 0x18], rax
+    xor r9d, r9d
+board_result:
+    cmp r9, rbp
+    jae board_done
+    mov rax, qword ptr [rsp + r9*8 + 0x20]
+    mov qword ptr [rbx + r9*8 + 0x20], rax
+    inc r9
+    jmp board_result
+board_done:
+    add rsp, 0xb8
+    pop r14
+    pop r13
+    pop rdi
+    pop rsi
+    pop rbp
+    pop rbx
+    ret
+"""))
+board = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_size_t,
+                        ctypes.c_void_p, ctypes.c_void_p)(board_trampoline)
+for board_mode in (0, 1):
+    for marks in ([], [False]*4, [True]*4, [False, True, False, False],
+                  [True, False, True, False], [False, False, False, True],
+                  [True, "disabled", "deselected", False], [True, False]*8):
+        members = [entity(mark, prone=True) for mark in marks]
+        source = words(members)
+        order = scratch(0x30)
+        poke(order, 0x28, board_mode, 1)
+        squad_ai = scratch(0x2a0)
+        poke(squad_ai, 0x29e, 1, 1)
+        output = scratch(0xa0)
+        poke(output, 0, squad_ai)
+        board(source, len(members), order, output)
+        subset = any(m is True for m in marks) and not all(m is True for m in marks)
+        expected = [m for m, mark in zip(members, marks) if mark is True] if subset else members
+        label = f"vehicle dispatch mode={board_mode} marks={marks}"
+        check(peek(output, 8) == len(expected), label + " count")
+        check([peek(output, 0x20 + i*8) for i in range(len(expected))] == expected, label + " ordered members")
+        check([peek(source, i*8) for i in range(len(members))] == members, label + " roster untouched")
+        check(peek(output, 0x10) == peek(output, 0x18) == 0x76543210, label + " stack guards")
+        check(peek(squad_ai, 0x29e, 1) == 0, label + " displaced posture reset")
+        for member, mark in zip(members, marks):
+            check(pin(member) == ((3, 0x7a5e) if subset and mark is not True else (0, 0)),
+                  label + " prone squadmate pin")
+
+# Run the actual native dispatcher, including collection and its per-human
+# order loop. Only game services and allocation/order submission are fixtures.
+# Both values of the order's +28 flag still create AiLoadToTransportOrder.
+ctypes.memmove(native + 0x43aab0, image.read(0x43aab0, 0x40e), 0x40e)
+install_order_site(0x43acf8)
+requested_boarders = []
+
+@ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+                  ctypes.c_void_p, ctypes.c_uint8)
+def record_transport_order(repository, member, vehicle, flag):
+    requested_boarders.append((member, flag))
+    return None  # No allocated reference; the native loop's null cleanup is safe.
+
+copy_roster = blob(asm("push rdi; push rsi; mov rdi, rcx; mov rsi, rdx; "
+                       "mov rcx, r8; rep movsb; pop rsi; pop rdi; ret"))
+for at, target in [(0x43ab53, copy_roster),
+                   (0x43ad6a, ctypes.cast(record_transport_order, ctypes.c_void_p).value),
+                   (0x43ae08, blob(asm("xorps xmm0, xmm0; ret"))),
+                   (0x43ae65, blob(asm("ret")))]:
+    relay = blob(b"\xff\x25\x00\x00\x00\x00" + struct.pack("<Q", target))
+    ctypes.memmove(native + at, near_call(native + at, relay), 5)
+native_board = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p)(native + 0x43aab0)
+return_self = blob(asm("mov rax, rcx; ret"))
+return_field = blob(asm("mov rax, qword ptr [rcx + 0x110]; ret"))
+for flag in (0, 1):
+    members = [entity(mark, prone=True) for mark in (False, True, False, True)]
+    roster = words(members)
+    holder_vt = [0]*14
+    holder_vt[0x68//8] = return_field
+    holder = scratch(0x118)
+    poke(holder, 0, words(holder_vt))
+    poke(holder, 0x110, words([roster, roster + len(members)*8]))
+    squad_vt = [0]*120
+    squad_vt[0x3b8//8] = return_field
+    squad_ai = scratch(0x2a0)
+    poke(squad_ai, 0, words(squad_vt))
+    poke(squad_ai, 0x110, holder)
+    squad_entity = entity()
+    owner_vt = [0]*32
+    owner_vt[0x98//8] = blob(asm("mov eax, 1; ret"))
+    owner_vt[0xb0//8] = return_field
+    owner_vt[0x78//8] = return_field
+    owner_facets = words([0, 0, 0, 0, 0, squad_ai])
+    poke(squad_entity, 0, words(owner_vt))
+    poke(squad_entity, 0x110, owner_facets)
+    # The same field serves the native context->repository lookup.
+    poke(owner_facets, 0, words([0, return_self]))
+    poke(squad_ai, 0x10, words([0, 10, squad_entity]))
+    poke(squad_ai, 0x29e, 1, 1)
+    vehicle_vt = [0]*43
+    vehicle_vt[0x150//8] = return_self
+    vehicle_vt[0x98//8] = blob(asm("xor eax, eax; ret"))
+    vehicle = words([words(vehicle_vt)])
+    order = scratch(0x30)
+    poke(order, 0x20, words([0, 10, vehicle]))
+    poke(order, 0x28, flag, 1)
+    for member in members:
+        poke(peek(member, 0x110), 0x28, scratch(0xf0))
+    requested_boarders.clear()
+    native_board(squad_ai, order)
+    check(requested_boarders == [(members[1], flag), (members[3], flag)],
+          f"native transport dispatcher flag={flag} creates only selected soldiers' orders")
+    check([peek(roster, i*8) for i in range(len(members))] == members,
+          f"native transport dispatcher flag={flag} leaves original roster unchanged")
+    check(pin(members[0]) == pin(members[2]) == (3, 0x7a5e),
+          f"native transport dispatcher flag={flag} protects prone squadmates")
+
 squad = [capacity_unit() for _ in range(5)]
 check(not vehicle_places(transport(3, []), words(squad), 5), "stock whole-squad check rejects 5 with 3 seats")
 check(vehicle_places(transport(6, [first[0]]), words(squad), 5), "stock check admits a squad that fits")
@@ -629,6 +777,17 @@ check(peek(count) == 5 and peek(copied) == squad[0], "no owner leaves the native
 copied, count = words(squad), words([0])
 check(vehicle_check(transport(3, admitted), copied, transport_state(squad[4]), count), "count zero stays native")
 check(peek(count) == 0 and peek(copied) == squad[0], "count zero leaves the copy alone")
+# A state the squad itself runs (a script's or the board order's squad load)
+# boards the whole squad, as stock.
+squad_vt = [0]*32
+squad_vt[0x98//8] = blob(asm("xor eax, eax; cmp edx, 0x10; sete al; ret"))
+squad_owner = words([words(squad_vt)])
+copied, count = words(squad), words([5])
+check(not vehicle_check(transport(3, []), copied, transport_state(squad_owner), count),
+      "a squad-run state checks the whole squad against the seats")
+check(peek(count) == 5 and peek(copied) == squad[0], "a squad-run state leaves the native squad and count")
+check(vehicle_check(transport(5, []), words(squad), transport_state(squad_owner), words([5])),
+      "a squad-run state boards a squad that fits")
 
 # Boarding phase (fn_fee10): the same check when each soldier reaches the
 # vehicle, with the state in rbp and no fallback to adjust.
@@ -655,6 +814,8 @@ for index, unit in enumerate(squad):
         admitted.append(unit)
 check(not arrive_check(transport(3, []), words(squad), words([0, 0, 0]), 5),
       "vehicle arrival without an owner stays native")
+check(not arrive_check(transport(3, []), words(squad), transport_state(squad_owner), 5),
+      "a squad-run arrival checks the whole squad")
 
 # Cursor (fn_c6440): one soldier of the squad is asked about, so the order is
 # offered while a seat is free.
@@ -675,11 +836,13 @@ check(not cursor_check(transport(3, strangers), words(squad), 5), "vehicle curso
 check(cursor_check(transport(3, strangers), words(squad), 0), "vehicle cursor keeps an empty squad native")
 
 # Order (fn_47740): the places check, then the transport's seats left (esi)
-# less the squad's size (edi); a skip jumps to +47cfc.
+# less the squad's size (edi); a skip jumps to +47cfc. The host keeps the
+# squads still unplaced at its rsp+20/+28 and the transports at rbp+6f/+77.
 command = install_order_site(0x47c93)
 command_epilogue = """
     mov dword ptr [rbx], esi
-    add rsp, 0x20
+    add rsp, 0x38
+    pop rbp
     pop rbx
     pop rdi
     pop rsi
@@ -690,10 +853,16 @@ command_trampoline = blob(asm(f"""
     push rsi
     push rdi
     push rbx
-    sub rsp, 0x20
+    push rbp
+    sub rsp, 0x38
     mov rbx, r9
     mov esi, dword ptr [rbx]
     mov edi, r8d
+    mov rbp, qword ptr [rbx + 8]
+    mov r10, qword ptr [rbx + 0x10]
+    mov qword ptr [rsp + 0x20], r10
+    mov r10, qword ptr [rbx + 0x18]
+    mov qword ptr [rsp + 0x28], r10
     mov rax, qword ptr [rcx]
     mov r10, {command}
     call r10
@@ -702,21 +871,73 @@ command_trampoline = blob(asm(f"""
 command_check = ctypes.CFUNCTYPE(ctypes.c_uint8, ctypes.c_void_p, ctypes.c_void_p,
                                  ctypes.c_size_t, ctypes.c_void_p)(command_trampoline)
 command_cases = [
-    # squad, capacity, passengers, seats left, taken, seats after, label
-    (squad, 3, [], 3, True, 0, "a squad larger than the seats takes them all"),
-    (squad[:2], 3, strangers[:2], 1, True, 0, "a squad larger than the seats left takes them"),
-    (squad[:2], 3, [], 3, True, 1, "a squad that fits takes its size"),
-    (squad, 3, strangers, 0, False, 0, "a full vehicle skips"),
-    (squad[:2], 3, [], 0, False, 0, "no seats left in this order skips"),
-    (squad, 3, [], 0, True, 0, "an empty squad stays native"),
+    # squad, capacity, passengers, seats left, squads waiting, last transport, taken, seats after, label
+    (squad[:2], 3, [], 3, 3, False, True, 1, "a squad that fits takes its size"),
+    (squad[:2], 3, [], 1, 1, False, False, 0, "a squad that does not fit tries the next transport"),
+    (squad[:2], 3, [], 1, 2, True, False, 0, "a squad that does not fit leaves the seats to another squad"),
+    (squad, 3, [], 3, 1, True, True, 0, "the last squad, too large for any transport, takes the last seats"),
+    (squad[:2], 3, strangers[:2], 1, 1, True, True, 0, "the last squad takes the last seat left"),
+    (squad, 3, strangers, 0, 1, True, False, 0, "a full vehicle skips"),
+    (squad[:2], 3, [], 0, 1, True, False, 0, "no seats left in this order skips"),
+    (squad, 3, [], 0, 1, True, True, 0, "an empty squad stays native"),
 ]
-for members, capacity, passengers, seats, taken, after, label in command_cases:
+def command_cell(seats, waiting=1, last=True):
+    host = scratch(0x80)
+    transports = scratch(0x18)
+    poke(host, 0x6f, transports)
+    poke(host, 0x77, transports + (8 if last else 0x10))
+    waiting_squads = scratch(0x20)
+    return words([seats, host, waiting_squads, waiting_squads + 8*waiting])
+
+for members, capacity, passengers, seats, waiting, last, taken, after, label in command_cases:
     size = 0 if label.startswith("an empty") else len(members)
-    cell = words([seats])
+    cell = command_cell(seats, waiting, last)
     answer = bool(command_check(transport(capacity, passengers), words(members), size, cell))
     check(answer == taken, "vehicle order: " + label)
     if taken:
         check(peek(cell, 0, 4) == after, "vehicle order seats after: " + label)
+
+# A squad with marked soldiers is narrowed to them first: the check and the
+# seats taken count only that subset, so subsets of different squads share a
+# transport. The places check sees a retained soldier, including one already
+# aboard a full vehicle. A subset larger than the seats left, as the last squad
+# at the last transport, takes them all.
+for marks, capacity, seated_indices, seats, taken, after in [
+        ([False, True, False, False, False], 3, [], 3, True, 2),
+        ([True, False, True, False, False], 3, [], 3, True, 1),
+        ([False, True, True, True, True], 2, [], 2, True, 0),
+        ([False, True, False], 1, [1], 1, True, 0),
+        ([False, True, False], 1, [0], 0, False, 0),
+        ([True, "disabled", "deselected"], 3, [], 3, True, 2)]:
+    members = [capacity_unit() for _ in marks]
+    for member, mark in zip(members, marks):
+        selectable = peek(peek(member, 0x110), 0x50)
+        poke(selectable, 0x30, int(mark is True or isinstance(mark, str)), 1)
+        poke(selectable, 0x18, int(mark != "disabled"), 1)
+        poke(peek(selectable, 0x28), 0x10, int(mark != "deselected"), 1)
+    copied = words(members)
+    cell = command_cell(seats)
+    answer = bool(command_check(transport(capacity, [members[i] for i in seated_indices]), copied, len(members), cell))
+    expected = [m for m, mark in zip(members, marks) if mark is True]
+    check(answer == taken and (not taken or peek(cell, 0, 4) == after), f"vehicle subset seats {marks}")
+    check([peek(copied, i*8) for i in range(len(expected))] == expected, f"vehicle subset candidates {marks}")
+# Another squad's subset that would not fit whole tries the next transport.
+members = [capacity_unit() for _ in range(4)]
+for member, marked in zip(members, [True, True, True, False]):
+    poke(peek(peek(member, 0x110), 0x50), 0x30, int(marked), 1)
+check(not command_check(transport(3, []), words(members), len(members), command_cell(2, waiting=2)),
+      "a subset that does not fit whole leaves the seats to another squad")
+
+helper = transport(3, [])
+remaining = command_cell(3, waiting=2, last=False)
+for marks, seats_after in [([False, True, False, False], 2),
+                           ([True, False, True, False], 0)]:
+    members = [capacity_unit() for _ in marks]
+    for member, marked in zip(members, marks):
+        poke(peek(peek(member, 0x110), 0x50), 0x30, int(marked), 1)
+    check(command_check(helper, words(members), len(members), remaining),
+          "vehicle admits selected members from another squad")
+    check(peek(remaining, 0, 4) == seats_after, "vehicle shares seats across selected squads")
 
 # Leaving (fn_ff080): the exit slot (vt+c0, here a recorder answering from the
 # helper's first byte) places passengers; a refusal jumps to phase 5 (+ff2cb)
@@ -830,15 +1051,21 @@ def passenger(alive=True, down=False):
     poke(member, 0x110, facets)
     return member
 
-vehicle = scratch(0x10)
-poke(vehicle, 0, words([0]*16 + [unload_order]))
+# The vehicle's flag test (vt+98) answers from its +8: an aircraft (2000) keeps
+# the stock order, whose unload state drops the ropes.
+vehicle_flags = blob(asm("xor eax, eax; test dword ptr [rcx + 8], edx; setnz al; ret"))
 riders = [passenger(), passenger(down=True), passenger(alive=False, down=True), passenger()]
-for label, seated, helper_ref, expected, members in [
-    ("passengers each get their own move", riders + [0], True, 2, [riders[0], riders[1], riders[3]]),
-    ("one passenger", riders[:1], True, 2, riders[:1]),
-    ("an empty vehicle stays native", [], True, 1, None),
-    ("an AI without a transport stays native", riders, False, 1, None),
+for label, seated, helper_ref, flags, expected, members in [
+    ("passengers each get their own move", riders + [0], True, 0, 2, [riders[0], riders[1], riders[3]]),
+    ("one passenger", riders[:1], True, 0, 2, riders[:1]),
+    ("an empty vehicle stays native", [], True, 0, 1, None),
+    ("an AI without a transport stays native", riders, False, 0, 1, None),
+    ("an aircraft with passengers stays native", riders, True, 0x2000, 1, None),
+    ("other flags still order passengers", riders[:1], True, 0x20, 2, riders[:1]),
 ]:
+    vehicle = scratch(0x10)
+    poke(vehicle, 0, words([0]*16 + [unload_order, 0, 0, vehicle_flags]))
+    poke(vehicle, 8, flags, 4)
     array = words(seated)
     helper = scratch(0x120)
     poke(helper, 0x110, array)
@@ -851,12 +1078,48 @@ for label, seated, helper_ref, expected, members in [
         poke(rbp, offset, 0xdead)
     answer = unload_point(vehicle, ai, rbp)
     check(answer == expected, "vehicle unload: " + label)
-    if members is not None:
+    if members is None:
+        check(peek(rbp, -0x51) == 0xdead, "vehicle unload leaves the member vector: " + label)
+    else:
         begin, end = peek(rbp, -0x51), peek(rbp, -0x49)
         check([peek(begin, n) for n in range(0, end - begin, 8)] == members, "vehicle unload members: " + label)
         check(peek(rbp, 0x100) == end and peek(rbp, 0x108) == 0, "vehicle unload joins with rbx = end, rsi = 0: " + label)
         check([peek(rbp, o) for o in (-0x39, -0x31, -0x29)] == [0, 0, 0], "vehicle unload empties the positions: " + label)
         check([peek(array, i*8) for i in range(len(seated))] == seated, "vehicle unload leaves the passengers: " + label)
+
+# AiUtils' squad-transport query (reference 0x111560), run with its tail call
+# patched: the command menu sees the transport only while no member is on foot.
+ctypes.memmove(native + 0x111560, image.read(0x111560, 0x52), 0x52)
+install_order_site(0x111598)
+transport_query = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)(native + 0x111560)
+ai_vt = [0] * 0x80
+ai_vt[0x3d0 // 8] = blob(asm("mov rax, qword ptr [rcx + 8]; ret"))
+ai_vt[0x3b8 // 8] = blob(asm("mov rax, qword ptr [rcx + 0x10]; ret"))
+ai_vt = words(ai_vt)
+holder_vt = words([0]*13 + [blob(asm("mov rax, qword ptr [rcx + 8]; ret"))])
+squad_vt = [0] * 32
+squad_vt[0x98 // 8] = blob(asm("xor eax, eax; cmp edx, 0x10; sete al; ret"))
+squad_vt[0xb0 // 8] = STUB_FACETS
+squad_vt = words(squad_vt)
+heli = scratch(0x10)
+for label, transport_ref, marks, expected in [
+    ("no transport", 0, ["disabled"], 0),
+    ("every member aboard", heli, ["disabled", "disabled"], heli),
+    ("one member on foot", heli, ["disabled", False, "disabled"], 0),
+    ("null members skipped", heli, [None, "disabled"], heli),
+    ("no members", heli, [], heli),
+]:
+    members = [0 if mark is None else entity(mark) for mark in marks]
+    vector = words([0, 0])
+    array = words(members)
+    poke(vector, 0, array)
+    poke(vector, 8, array + 8*len(members))
+    holder = words([holder_vt, vector])
+    ai = words([ai_vt, transport_ref, holder])
+    squad = scratch(0x120)
+    poke(squad, 0, squad_vt)
+    poke(squad, 0x110, words([0]*5 + [ai]))
+    check((transport_query(0, squad) or 0) == expected, "vehicle transport query: " + label)
 
 print(f"Order hook regressions: {failures} failures")
 sys.exit(bool(failures))

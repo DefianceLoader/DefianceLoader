@@ -76,7 +76,8 @@ UNITS = {
         (["patch/select-trace.asm"], {"cursor": "@trace_ring"}, None),
         (["patch/behaviour-census.asm"], {"cursor": "census"}, None)])},
     "attack": {LOGIC: (8, [], [(["patch/order-attack.asm", "patch/order-selected.asm"], {}, None)])},
-    "garrison": {LOGIC: (9, [], [(["patch/order-garrison.asm"], {}, None)])},
+    "garrison": {LOGIC: (9, [], [(["patch/order-garrison.asm"], {}, None),
+                                 (["patch/order-vehicle.asm"], {}, None)])},
     "preview-weapon": {GAME: (10, [], [(["patch/preview-weapon.asm"], {}, None)])},
     "vehicle-special-fire": {LOGIC: (11, [], [
         (["patch/vehicle-special-fire.asm", "patch/vehicle-priority-fire.asm",
@@ -137,6 +138,9 @@ def assemble_unit(plugin, module, spec, symbol_overrides=None):
             else:
                 labels[label] = where - UNIT_BASE
         blob.extend(code)
+        # A later routine reaches an earlier one's label as {label}, as
+        # patch/order-vehicle.asm calls the garrison routine's member filter.
+        symbols.update(found)
     return bytes(blob), labels, cells, code_start
 
 

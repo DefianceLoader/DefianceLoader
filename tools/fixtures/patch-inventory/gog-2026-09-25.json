@@ -44,6 +44,7 @@
    "defiance.core": {"state": "Active", "spans": [
     ["galileo", 140064, 5, "function"],
     ["game", 1787664, 5, "function"],
+    ["game", 2754720, 21, "function"],
     ["game", 3447216, 5, "function"],
     ["game", 3448192, 5, "function"],
     ["world2", 1628064, 7, "function"]
@@ -59,6 +60,15 @@
     ["logic", 4513509, 5, "call site"],
     ["logic", 4516032, 11, "function"],
     ["logic", 4522266, 5, "call site"]
+  ]},
+   "defiance.deployed-repair": {"state": "Active", "spans": [
+    ["game", 2361854, 6, "function"],
+    ["game", 2362628, 6, "function"],
+    ["logic", 972032, 15, "function"],
+    ["logic", 980430, 14, "function"],
+    ["logic", 1028432, 17, "function"],
+    ["logic", 1036704, 15, "function"],
+    ["logic", 4693232, 5, "call site"]
   ]},
    "defiance.diagnostics": {"state": "Active", "spans": []},
    "defiance.expanded-ammo-menu": {"state": "Active", "spans": [
@@ -119,6 +129,21 @@
     ["game", 3470502, 5, "byte patch"],
     ["game", 4951801, 5, "byte patch"]
   ]},
+   "defiance.experience-levels": {"state": "Active", "spans": [
+    ["logic", 3671648, 5, "function"],
+    ["logic", 3671809, 5, "call site"],
+    ["logic", 3673024, 7, "function"],
+    ["logic", 3673237, 5, "call site"],
+    ["logic", 3677168, 5, "function"],
+    ["logic", 3677377, 5, "call site"],
+    ["logic", 3677680, 7, "function"],
+    ["logic", 3677744, 5, "call site"],
+    ["logic", 3678016, 5, "function"],
+    ["logic", 3678225, 5, "call site"],
+    ["logic", 3678544, 5, "function"],
+    ["logic", 3678734, 5, "call site"],
+    ["logic", 3788288, 7, "function"]
+  ]},
    "defiance.firing": {"state": "Active", "spans": [
     ["logic", 2870560, 5, "byte patch"],
     ["logic", 2870748, 7, "byte patch"],
@@ -142,7 +167,9 @@
     ["logic", 1121647, 5, "byte patch"],
     ["logic", 1122107, 5, "byte patch"],
     ["logic", 1144278, 7, "byte patch"],
+    ["logic", 1152696, 15, "byte patch"],
     ["logic", 3312100, 7, "byte patch"],
+    ["logic", 4513144, 7, "byte patch"],
     ["logic", 4521997, 7, "byte patch"]
   ]},
    "defiance.legion-vehicle-hacking": {"state": "Active", "spans": [
@@ -193,6 +220,7 @@
     ["world2", 1637659, 5, "call site"],
     ["world2", 1639157, 5, "call site"],
     ["world2", 1645018, 7, "function"],
+    ["world2", 1645577, 5, "function"],
     ["world2", 1649197, 7, "function"],
     ["world2", 1658450, 2, "byte patch"]
   ]},
@@ -262,7 +290,6 @@
    "defiance.squad-management-scroll": {"state": "Active", "spans": [
     ["game", 2732576, 22, "function"],
     ["game", 2747488, 21, "function"],
-    ["game", 2754720, 21, "function"],
     ["game", 2772816, 22, "function"],
     ["game", 2776256, 21, "function"],
     ["game", 2916864, 24, "function"],
@@ -291,6 +318,12 @@
     ["logic", 1123840, 5, "function"],
     ["logic", 1887552, 7, "byte patch"],
     ["logic", 2721168, 5, "function"],
+    ["logic", 2725076, 18, "function"],
+    ["logic", 2726599, 18, "function"],
+    ["logic", 2726761, 13, "function"],
+    ["logic", 2727297, 18, "function"],
+    ["logic", 2728026, 11, "function"],
+    ["logic", 2729352, 11, "function"],
     ["logic", 2775920, 7, "function"],
     ["logic", 2777168, 5, "function"],
     ["logic", 2778848, 5, "function"],

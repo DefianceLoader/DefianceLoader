@@ -29,6 +29,8 @@ pub(super) static LOG: AtomicUsize = AtomicUsize::new(0);
 
 const GUN_OWNER: usize = 0x18;
 const GUN_DESCRIPTION: usize = 0x40;
+/// The weapon record a mount fires with; null when it has none.
+const GUN_RECORD: usize = 0x48;
 const GUN_AMMO: usize = 0x50;
 const DESCRIPTION_SHOT_MODE: usize = 0xc4;
 const DESCRIPTION_GRENADE: usize = 0xa9;
@@ -42,6 +44,11 @@ const VEHICLE_GUNNERS_BEGIN: usize = 0x208;
 const VEHICLE_GUNNERS_END: usize = 0x210;
 /// `Gun::vfunc_56` skips its moving check when the owner reports this flag.
 const OWNER_FIRES_WHILE_MOVING: u32 = 0x2000;
+/// Owners with this flag fire single shots, which need no weapon record; the
+/// fire helper builds every other shot from the record.
+const OWNER_SINGLE_SHOTS: u32 = 0x20;
+/// Passenger guns remembered as leaving their mount without a record.
+const RECORDLESS_LIMIT: usize = 256;
 const ROSTER_LIMIT: usize = 64;
 
 /// How often one mount re-evaluates its binding.
@@ -242,6 +249,43 @@ static MOUNTS: OnceLock<Mutex<HashMap<usize, MountState>>> = OnceLock::new();
 
 static FORCED: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
+/// Passenger guns, as (gun, description), whose mount got no weapon record
+/// when bound to them, so it cannot fire (`crate::guard` skips its shots).
+/// Seen when a save made without a gameplay mod loads with it. The
+/// description tells a reused gun address apart.
+static RECORDLESS: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
+
+/// Whether `gun`, a mount owned by `owner`, has no weapon record and needs one
+/// to fire.
+unsafe fn recordless(gun: usize, owner: usize) -> bool {
+    if unsafe { q(gun, GUN_RECORD) } != 0 {
+        return false;
+    }
+    let flags = unsafe { virtual_method(owner, 0x98) };
+    flags != 0
+        && unsafe { std::mem::transmute::<usize, FlagTest>(flags)(owner, OWNER_SINGLE_SHOTS) } == 0
+}
+
+unsafe fn remember_recordless(source: usize) -> bool {
+    let entry = (source, unsafe { q(source, GUN_DESCRIPTION) });
+    let Ok(mut known) = RECORDLESS.lock() else {
+        return false;
+    };
+    if known.contains(&entry) {
+        return false;
+    }
+    if known.len() >= RECORDLESS_LIMIT {
+        known.remove(0);
+    }
+    known.push(entry);
+    true
+}
+
+unsafe fn known_recordless(gun: usize) -> bool {
+    let entry = (gun, unsafe { q(gun, GUN_DESCRIPTION) });
+    RECORDLESS.lock().is_ok_and(|known| known.contains(&entry))
+}
+
 /// Re-evaluate `gunner` on its next tick, skipping the check interval but not
 /// the rebind dwell. A new explicit order calls this.
 pub(super) fn force(gunner: usize) {
@@ -290,7 +334,19 @@ pub(super) unsafe fn update(gunner: usize) {
         let (moving, generation) = vehicle_moving(owner, now, unsafe { owner_moving(gun) });
         let changed = generation != state.seen;
         state.seen = generation;
-        if state.due(now, forced || changed) && (changed || state.may_rebind(now)) {
+        // A mount left without a record never fires: move it to another gun
+        // now rather than after the dwell.
+        let stuck = unsafe { recordless(gun, owner) };
+        if stuck && unsafe { remember_recordless(source) } {
+            log(
+                defiance_api::LOG_INFO,
+                &format!(
+                    "passenger gun {} gives its mount no weapon record; rebinding",
+                    unsafe { gun_name(source) }
+                ),
+            );
+        }
+        if state.due(now, forced || changed) && (changed || stuck || state.may_rebind(now)) {
             unsafe { evaluate(gunner, gun, owner, source, moving, &mut state, now) };
         }
         put_state(gun, state);
@@ -435,7 +491,8 @@ unsafe fn position(entity: usize) -> Option<[f32; 2]> {
 
 /// `source`'s passenger guns that a mount can carry: the same class (bind,
 /// `Gun::vfunc_11`, dereferences null for a source of another class), with
-/// ammunition, no grenades, and not bound to another mount of the vehicle. The roster path
+/// ammunition, no grenades, not bound to another mount of the vehicle, and not
+/// known to leave a mount without a weapon record. The roster path
 /// matches `vehicle_special_fire_roster_gun` in `patch/vehicle-priority-fire.asm`.
 unsafe fn candidates(source: usize, vehicle_ai: usize) -> Vec<Candidate> {
     let passenger = unsafe { weak_object(q(source, GUN_OWNER)) };
@@ -457,6 +514,7 @@ unsafe fn candidates(source: usize, vehicle_ai: usize) -> Vec<Candidate> {
         .into_iter()
         .filter(|&gun| gun != 0 && unsafe { q(gun, 0) } == class)
         .filter(|&gun| gun == source || !unsafe { bound_in_vehicle(vehicle_ai, gun) })
+        .filter(|&gun| !unsafe { known_recordless(gun) })
         .filter_map(|gun| unsafe { candidate(gun) })
         .collect()
 }
@@ -575,7 +633,7 @@ unsafe fn gun_name(gun: usize) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-fn log(level: u32, message: &str) {
+pub(super) fn log(level: u32, message: &str) {
     let log = LOG.load(Ordering::Acquire);
     if log == 0 {
         return;

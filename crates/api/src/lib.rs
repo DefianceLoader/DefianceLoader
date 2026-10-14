@@ -319,6 +319,53 @@ pub struct MissionFeedV1 {
     pub frame: unsafe extern "C" fn(scene: *mut c_void, dt: f32),
 }
 
+/// Runs after the native infantry squad info panel refresh has returned, on its
+/// calling UI thread. `panel` is borrowed for this callback only.
+/// Observers may decorate the refreshed panel, but cannot suppress the original,
+/// change its arguments or return value, or retain the panel pointer. Do not
+/// unwind across this boundary. Nested refreshes still run their original;
+/// observer delivery is suppressed while an observer dispatch is on the stack.
+pub type SquadPanelRefreshCallback = unsafe extern "C" fn(panel: *mut c_void, context: *mut c_void);
+
+/// `defiance.core` / `squad-panel-refresh`, version 1. Requires a Core manifest
+/// dependency. Core owns the infantry refresh entry hook and calls its original
+/// exactly once, preserving its return value before notifying observers.
+/// Observers run in plugin plan order, then subscription order within a plugin;
+/// reloading a consumer preserves its place. No interceptor role is supported.
+#[repr(C)]
+pub struct SquadPanelRefreshV1 {
+    /// Init thread only. The registration belongs to the initializing plugin
+    /// and becomes callable after successful init and patch publication.
+    /// Returns a nonzero token, or 0 for a null callback, unavailable provider
+    /// or invalid init context.
+    /// The loader retires registrations on failure, withdrawal and unload.
+    /// Keep `context` valid until retirement is quiescent; it may be null.
+    pub subscribe: unsafe extern "C" fn(
+        callback: Option<SquadPanelRefreshCallback>,
+        context: *mut c_void,
+    ) -> u64,
+    /// Any thread. Retires a token, preventing new invocations immediately.
+    /// Returns 0 when quiescent, 1 for an unknown token, or 2 while a callback
+    /// is still in flight. Retry after 2 before freeing callback state. Calling
+    /// from an observer never waits on that observer's own frame.
+    pub unsubscribe: unsafe extern "C" fn(token: u64) -> i32,
+}
+
+/// `defiance.loader` / `squad-panel-feed`, version 1. Reserved for Core.
+/// The companion loader table `squad-panel-observers` is forwarded by Core as
+/// [`SquadPanelRefreshV1`]; consumers query Core to retain dependency ownership.
+#[repr(C)]
+pub struct SquadPanelFeedV1 {
+    /// Init thread only, Core only. Announces that the native hook is ready.
+    /// Returns 0 on success. Publication becomes active only after successful
+    /// init and patch publication, and is retired with the provider, including
+    /// any failed patch plan.
+    pub publish: unsafe extern "C" fn() -> i32,
+    /// Called after the original refresh. Ignores null panels,
+    /// unpublished providers and nested observer dispatch on the same thread.
+    pub dispatch: unsafe extern "C" fn(panel: *mut c_void),
+}
+
 /// `defiance.loader` / `original`, service version 1. Memory as it was before
 /// any plugin hooked or patched it through the loader, so checking bytes a
 /// plugin only reads or calls does not depend on which plugin started first.
@@ -851,6 +898,18 @@ mod tests {
             2 * size_of::<*const c_void>()
         );
         assert_eq!(size_of::<GameSymbolsV1>(), size_of::<*const c_void>());
+        assert_eq!(
+            size_of::<SquadPanelRefreshV1>(),
+            2 * size_of::<*const c_void>()
+        );
+        assert_eq!(
+            size_of::<SquadPanelFeedV1>(),
+            2 * size_of::<*const c_void>()
+        );
+        assert_eq!(
+            size_of::<Option<SquadPanelRefreshCallback>>(),
+            size_of::<*const c_void>()
+        );
         assert_eq!(size_of::<GameSymbolV1>(), 7 * size_of::<*const c_void>());
         assert_eq!(
             core::mem::offset_of!(GameSymbolV1, span),

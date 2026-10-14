@@ -135,7 +135,7 @@ class PassengerTargetStartup(unittest.TestCase):
                 self.assertEqual(solo["states"].get(PLUGIN), "Active", "\n".join(solo["errors"]))
                 spans = inventory.own(solo, PLUGIN)
                 image = Image(build.require().logic)
-                self.assertEqual(len(spans), 17)
+                self.assertEqual(len(spans), 23)
                 self.assertEqual(sum(module == "game" for module, *_ in spans), 1)
                 for field in HELPERS:
                     rva = locate_helper(image, field)
@@ -159,7 +159,7 @@ class PassengerTargetStartup(unittest.TestCase):
                         self.assertEqual(reloaded["states"].get(PLUGIN), "Active",
                                          "\n".join(reloaded["errors"]))
                         self.assertEqual(inventory.own(reloaded, PLUGIN), expected_spans)
-                print(f"{build.name}: passenger hooks active, same 17 spans in both orders")
+                print(f"{build.name}: passenger hooks active, same {len(spans)} spans in both orders")
         self.assertGreater(tested, 0, "no local game DLLs to test")
 
 

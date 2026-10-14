@@ -323,10 +323,11 @@ GAME_LAYOUT = {}
 # shared source; the profile supplies the value.
 # `squad_roster` is the squad AI facet's roster getter. It is a logic.dll class
 # slot, but the game.dll payload reaches the same object, so both tables carry
-# it: the per-module offset maps cannot see a cross-DLL use. `ai_can_attack`
-# is every AI facet's "can attack this target kind" (kind, enabled ammo only);
-# `ai_attack_order` the AI test the attack command applies to each recipient,
-# `ai_attack_ready` the one the order buttons apply after `ai_can_attack`.
+# it: the per-module offset maps cannot see a cross-DLL use. `squad_transport`
+# is the same facet's transport getter (the vehicle or building it is in).
+# `ai_can_attack` is every AI facet's "can attack this target kind" (kind,
+# enabled ammo only); `ai_attack_order` the AI test the attack command
+# applies to each recipient, `ai_attack_ready` the one the order buttons apply after `ai_can_attack`.
 # The game layout maps `call [rax+0x368]` to another class's slot, so the
 # latter must be a symbol: symbols are substituted after the layout.
 # `gun_selected_ammo` is the logic.dll Gun's selected-ammo getter, which the
@@ -335,7 +336,7 @@ GAME_LAYOUT = {}
 REFERENCE_SYMBOLS = {"lie_down_frame": 0x70, "stand_up_frame": 0x60,
                      "gunner_count": 0x130, "gunner_get": 0x120,
                      "ammo_pool_get": 0x1b8, "squad_roster": 0x3b8,
-                     "ai_can_attack": 0x390}
+                     "squad_transport": 0x3d0, "ai_can_attack": 0x390}
 SYMBOLS = dict(REFERENCE_SYMBOLS)
 REFERENCE_GAME_SYMBOLS = {"gunner_count": 0x130, "gunner_get": 0x120, "squad_roster": 0x3b8,
                           "ai_can_attack": 0x390, "ai_attack_order": 0x368,
