@@ -320,14 +320,16 @@ pub fn unload(owner: usize, retain: bool) -> Result<Loaded, UnloadError> {
     if !plugin.reloadable {
         return Err(UnloadError::NotReloadable);
     }
-    // Stop future observer calls before consulting stop or tearing down code.
-    // A callback already on its stack makes the module busy until it returns.
-    if !crate::squad_panel::retire_owner(owner) {
+    // The safe point skips the calling thread; a reload on a game thread
+    // (before a mission is built) must not be inside the plugin itself. This
+    // refusal changes nothing, so the plugin keeps its observers.
+    if on_own_stack(&plugin.code) {
         return Err(UnloadError::Busy);
     }
-    // The safe point skips the calling thread; a reload on a game thread
-    // (before a mission is built) must not be inside the plugin itself.
-    if on_own_stack(&plugin.code) {
+    // Stop future observer calls before consulting stop or tearing down code.
+    // A callback already on another thread's stack makes the module busy until
+    // it returns; the plugin stays loaded but inactive.
+    if !crate::squad_panel::retire_owner(owner) {
         return Err(UnloadError::Busy);
     }
     if let Some(stop) = plugin.stop {

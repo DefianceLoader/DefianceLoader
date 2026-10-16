@@ -276,7 +276,42 @@ pub fn embed_all_units() {
     embed_selected_units(None);
 }
 
+/// Write `$OUT_DIR/signatures.rs`: the descriptor of every tracked build's
+/// every unit, whatever its plugin, as a `&[(build, name, descriptor)]` slice
+/// expression for `include!`. What Core matches an unrecognised build against:
+/// a build is told apart by all of its sites, not only by Core's own.
+pub fn embed_unit_signatures() {
+    let mut out = String::from("&[\n");
+    for (build, name, json, _) in tracked_units(None) {
+        out += &format!(
+            "    ({build:?}, {name:?}, include_str!({:?})),\n",
+            json.display().to_string()
+        );
+    }
+    out += "]\n";
+    let target = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("signatures.rs");
+    std::fs::write(target, out).expect("writing signatures.rs");
+}
+
 fn embed_selected_units(plugins: Option<&[&str]>) {
+    let mut out = String::from("&[\n");
+    for (build, name, json, bin) in tracked_units(plugins) {
+        out += &format!(
+            "    defiance_feature_sdk::units::Embedded {{ build: {build:?}, name: {name:?}, \
+             descriptor: include_str!({:?}), code: include_bytes!({:?}) }},\n",
+            json.display().to_string(),
+            bin.display().to_string()
+        );
+    }
+    out += "]\n";
+    let target = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("units.rs");
+    std::fs::write(target, out).expect("writing units.rs");
+}
+
+/// Every tracked build's units whose plugin is one of `plugins` (all of them
+/// for `None`), as (build, name, descriptor path, blob path), in build then
+/// name order. The crate rebuilds when any of them changes.
+fn tracked_units(plugins: Option<&[&str]>) -> Vec<(String, String, PathBuf, PathBuf)> {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let variants = manifest
         .ancestors()
@@ -291,7 +326,7 @@ fn embed_selected_units(plugins: Option<&[&str]>) {
         .filter(|dir| dir.is_dir())
         .collect();
     builds.sort();
-    let mut out = String::from("&[\n");
+    let mut found = Vec::new();
     for units in builds {
         println!("cargo:rerun-if-changed={}", units.display());
         let build = units
@@ -324,15 +359,8 @@ fn embed_selected_units(plugins: Option<&[&str]>) {
             let bin = units.join(format!("{name}.bin"));
             println!("cargo:rerun-if-changed={}", json.display());
             println!("cargo:rerun-if-changed={}", bin.display());
-            out += &format!(
-                "    defiance_feature_sdk::units::Embedded {{ build: {build:?}, name: {name:?}, \
-                 descriptor: include_str!({:?}), code: include_bytes!({:?}) }},\n",
-                json.display().to_string(),
-                bin.display().to_string()
-            );
+            found.push((build.clone(), name, json, bin));
         }
     }
-    out += "]\n";
-    let target = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("units.rs");
-    std::fs::write(target, out).expect("writing units.rs");
+    found
 }

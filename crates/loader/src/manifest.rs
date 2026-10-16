@@ -774,6 +774,54 @@ mod tests {
         assert!(parse(&manifest("author.display", "1"), "x.dll").is_err());
     }
 
+    /// Every committed plugin manifest either declares `multiplayer_safe`, is
+    /// locked out of it by [`builtin::NOT_MULTIPLAYER_SAFE`], or is exempt
+    /// below, so a new gameplay plugin cannot ship without a decision.
+    #[test]
+    fn every_committed_plugin_decides_multiplayer_safety() {
+        // Private test plugins, never packaged (`tools/package.py`).
+        const PRIVATE: &[&str] = &["lbox-cover", "testing-god-mode"];
+        // Shipped plugins that change only what the local player sees.
+        const DISPLAY_ONLY: &[&str] = &["defiance.cover-markers"];
+
+        let plugins = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins");
+        let mut ids = BTreeSet::new();
+        for folder in std::fs::read_dir(&plugins).unwrap() {
+            let folder = folder.unwrap().path();
+            let name = folder.file_name().unwrap().to_string_lossy().into_owned();
+            if PRIVATE.contains(&name.as_str()) {
+                continue;
+            }
+            for file in std::fs::read_dir(&folder).unwrap() {
+                let file = file.unwrap().path();
+                let file_name = file.file_name().unwrap().to_string_lossy().into_owned();
+                let Some(stem) = file_name.strip_suffix(".plugin.json") else {
+                    continue;
+                };
+                let text = std::fs::read_to_string(&file).unwrap();
+                let manifest = parse(&text, &format!("{stem}.dll"))
+                    .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+                let locked = builtin::NOT_MULTIPLAYER_SAFE.contains(&manifest.id.as_str());
+                assert!(
+                    manifest.multiplayer_safe
+                        || locked
+                        || DISPLAY_ONLY.contains(&manifest.id.as_str()),
+                    "{}: `{}` neither declares multiplayer_safe nor is listed in \
+                     NOT_MULTIPLAYER_SAFE",
+                    file.display(),
+                    manifest.id
+                );
+                ids.insert(manifest.id);
+            }
+        }
+        for &id in builtin::NOT_MULTIPLAYER_SAFE.iter().chain(DISPLAY_ONLY) {
+            assert!(
+                ids.contains(id),
+                "{id} has no committed manifest under plugins/"
+            );
+        }
+    }
+
     #[test]
     fn committed_feature_manifests_parse_and_are_ordinary_plugins() {
         let mut ids = Vec::new();

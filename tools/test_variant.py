@@ -104,6 +104,10 @@ class FakeModule:
         self.md.detail = True
         self.functions = type("Functions", (), {"function_of": staticmethod(functions or (lambda rva: None))})()
 
+    def matches(self, pattern, mask):
+        return [rva for rva in range(len(self.image) - len(pattern) + 1)
+                if all(not m or self.image[rva + i] == b for i, (b, m) in enumerate(zip(pattern, mask)))]
+
 
 class FakeTarget(variant.Target):
     def __init__(self, module):
@@ -134,8 +138,11 @@ def guards():
     # Two sites of one reference function, found in two target functions.
     descriptor = {"sites": [
         {"site_name": "a", "site_start": 0x100, "site_group": 0x100, "site_offset": 0, "site_pattern": "90"},
-        {"site_name": "b", "site_start": 0x140, "site_group": 0x100, "site_offset": 0, "site_pattern": "90"}]}
-    split = FakeTarget(FakeModule(functions=lambda rva: (rva & ~0xfff, (rva & ~0xfff) + 0x100)))
+        {"site_name": "b", "site_start": 0x140, "site_group": 0x100, "site_offset": 0, "site_pattern": "cc"}]}
+    # Each site's byte once, where it moved to: relocated() re-reads patterns.
+    code = bytearray(0x1200)
+    code[0x1100], code[0x1148] = 0x90, 0xcc
+    split = FakeTarget(FakeModule(bytes(code), functions=lambda rva: (rva & ~0xfff, (rva & ~0xfff) + 0x100)))
     check("sites of one function split across two target functions are refused",
           refused(lambda: variant.Sites(descriptor, ref, split, {"a": 0x1100, "b": 0x2140})))
     together = variant.Sites(descriptor, ref, split, {"a": 0x1100, "b": 0x1148})

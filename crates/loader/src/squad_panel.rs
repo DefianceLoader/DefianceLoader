@@ -781,4 +781,47 @@ mod tests {
         *BLOCK.get().unwrap().lock().unwrap() = None;
         clear(owner, core_owner);
     }
+
+    #[test]
+    fn unload_refused_on_its_own_stack_keeps_observers() {
+        let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+        let core_owner = 0x5801;
+        let owner = 0x5802;
+        setup_core(core_owner, true);
+        let token = subscribe_consumer(
+            owner,
+            "test.own-stack",
+            Some(record),
+            58usize as *mut c_void,
+        );
+        crate::services::finish(owner, true);
+        activate_owner(owner);
+        STOPPED.store(0, Ordering::Release);
+        crate::lifecycle::record(crate::lifecycle::Loaded {
+            owner,
+            id: "test.own-stack".into(),
+            version: None,
+            name: "own-stack fixture".into(),
+            path: Default::default(),
+            shadow: Default::default(),
+            module: 0,
+            // Every address, so the calling thread is always inside it.
+            code: vec![(0, usize::MAX)],
+            stop: Some(stop_counter),
+            reloadable: true,
+            stamp: None,
+            multiplayer_safe: true,
+            manifest_settings: None,
+        });
+        assert_eq!(
+            crate::lifecycle::unload(owner, true).err(),
+            Some(crate::lifecycle::UnloadError::Busy)
+        );
+        assert_eq!(STOPPED.load(Ordering::Acquire), 0);
+        dispatch(1usize as *mut c_void);
+        assert_eq!(*SEEN.lock().unwrap(), [58]);
+        assert_eq!(unsubscribe(token), 0);
+        crate::lifecycle::forget(owner);
+        clear(owner, core_owner);
+    }
 }

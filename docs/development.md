@@ -128,6 +128,15 @@ failure, and reload messages use the global level; crash-report session notes
 retain plugin messages independently of the output filters. Filtering changes
 output only: active diagnostic probes still capture and decode data.
 
+### Startup dependency view
+
+At `level = debug` the log draws every plugin, its state, and what it depends
+on once plugins have started. `[logging] startup_view` picks the drawing:
+`graph` (the default) draws each dependency as a line, like `git log --graph`;
+`tree` nests each plugin under its deepest dependency and lists the others as
+"also needs". A dependency that another dependency already brings in is left
+out of both.
+
 ## Tests
 
 ```sh

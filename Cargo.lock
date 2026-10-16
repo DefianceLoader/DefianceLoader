@@ -24,7 +24,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-loader"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "defiance-api",
  "defiance-build-support",
@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "defiance-plugin-core"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "defiance-api",
  "defiance-build-support",

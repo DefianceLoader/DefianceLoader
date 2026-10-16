@@ -92,14 +92,14 @@ pub fn materialize(existing: &str, group: &str) -> (String, bool) {
             continue;
         }
         changed = true;
-        let section_present = present
-            .iter()
-            .any(|(name, _)| name.eq_ignore_ascii_case(section));
-        if !section_present {
+        // Keys append at the end, so they need their own header unless that
+        // section is the one still open there; a repeated header merges.
+        if !current.eq_ignore_ascii_case(section) {
             if !text.ends_with("\n\n") && !text.is_empty() {
                 text.push('\n');
             }
             text.push_str(&format!("[{section}]\n"));
+            current = section.to_ascii_lowercase();
         }
         for decl in missing {
             text.push_str(&setting_help(decl.description, decl.default, "\n"));
@@ -329,6 +329,12 @@ mod tests {
         assert!(text.contains("[loader]"));
         // The missing loader keys were appended under a fresh header.
         assert!(text.contains("wait = 60"));
+        // Logging keys added after other sections still land in `[logging]`.
+        let document = super::super::parse::parse(&text);
+        assert!(document.issues.is_empty(), "{:?}", document.issues);
+        assert!(document.lookup(LOGGING_SECTION, "startup_view").is_some());
+        assert!(document.lookup(LOADER_SECTION, "startup_view").is_none());
+        assert!(!materialize(&text, "core").1);
     }
 
     #[test]

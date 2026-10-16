@@ -60,6 +60,11 @@ def unhex(text):
     return bytes.fromhex(text)
 
 
+def target_pattern(pattern, code):
+    """`pattern`'s wildcards over `code`'s bytes, as signature text."""
+    return "".join("??" if pattern[2 * i:2 * i + 2] == "??" else f"{b:02x}" for i, b in enumerate(code))
+
+
 def masked_instructions(md, code, address):
     """[(bytes with immediates and displacements zeroed, size), ...] for `code`,
     or None if it does not disassemble completely."""
@@ -125,6 +130,7 @@ class Sites:
         the base is not the reference."""
         overrides = overrides or {}
         base_sites = {e["site_name"]: e for e in via[1]["sites"]} if via else {}
+        self.target = target
         self.windows, failed = [], []
         self.how = collections.Counter()
         for entry in descriptor["sites"]:
@@ -229,14 +235,51 @@ class Sites:
         """The site entries at the target's addresses. `site_start` moves with
         the window it names and `site_group` becomes the target function holding
         it, so a caller that ties a detour to its site by `site_start == hook_rva`
-        still finds it, and the sites of one function still share a group."""
+        still finds it, and the sites of one function still share a group.
+        `site_pattern` is re-read from the target's bytes under the same
+        wildcards: a site found with its fields wildcarded has different bytes
+        there, and a pattern must match the build it describes, once."""
         out = []
         for entry, new_start, _new_site in self.windows:
             moved = dict(entry)
             moved["site_start"] = new_start
+            moved["site_pattern"] = self.unique_pattern(entry, new_start)
             moved["site_group"] = self.groups[entry["site_name"]]
             out.append(moved)
         return out
+
+    def unique_pattern(self, entry, new_start, most=64):
+        """The site's signature in the target. Where its bytes are the
+        reference's, the reference pattern; where they changed (fields, and
+        so perhaps instruction lengths), the target's whole instructions over
+        at least the reference window, distance fields wildcarded as
+        `sigs.Module.masked` does. Either is extended by such instructions
+        until it matches only there: a build may hold a twin of the function
+        the reference's bytes told apart."""
+        module, name = self.target.module, entry["site_name"]
+        length = len(entry["site_pattern"]) // 2
+        text = entry["site_pattern"]
+        if target_pattern(text, self.target.read(new_start, length, name)) != text:
+            text = ""
+        end = new_start + len(text) // 2
+        while True:
+            if len(text) // 2 < length:
+                found = None
+            else:
+                pattern = bytes(0 if text[i:i + 2] == "??" else int(text[i:i + 2], 16)
+                                for i in range(0, len(text), 2))
+                mask = bytes(0 if text[i:i + 2] == "??" else 1 for i in range(0, len(text), 2))
+                found = self.target.matches(pattern, mask)
+                if found == [new_start]:
+                    return text
+                if len(text) // 2 >= length + most:
+                    raise SystemExit(f"{name}: its window at {new_start:#x} matches {len(found)} places in the target")
+            ins = next(module.md.disasm(self.target.read(end, 16, name), end), None)
+            if ins is None:
+                raise SystemExit(f"{name}: cannot disassemble its window at {end:#x}")
+            code, keep = module.masked(ins)
+            text += "".join(f"{b:02x}" if k else "??" for b, k in zip(code, keep))
+            end += ins.size
 
     def at(self, rva, what):
         # the window's end is included: a resume point may sit just past it

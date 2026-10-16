@@ -151,7 +151,14 @@ def check_full(executable=DEFAULT_EXE, build_table=builds, game_dir=None, varian
         if install is None:
             print(f"skip DEFIANCE_GAME_DIR: no logic.dll/game.dll pair in {game_dir} or {game_dir / 'bin'}")
         else:
-            _scan(executable, install)
+            # The installed game changes with every update, and the loader
+            # probes and reports its build at startup, so a pair the injector
+            # cannot place only warns; the committed builds above stay strict.
+            try:
+                _scan(executable, install)
+            except subprocess.CalledProcessError:
+                print(f"warning: the injector cannot place its units in {install}; "
+                      f"the loader will report this build at startup", flush=True)
     return names
 
 

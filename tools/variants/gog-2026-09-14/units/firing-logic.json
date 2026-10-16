@@ -94,14 +94,14 @@
    "site_name": "squad_flag",
    "site_start": 2870748,
    "site_group": 2870560,
-   "site_pattern": "48ffa080030000cccccccccccccccccccccccccc488b89f0010000",
+   "site_pattern": "48ffa098030000cccccccccccccccccccccccccc488b89f0010000",
    "site_offset": 0
   },
   {
    "site_name": "firing_call",
    "site_start": 2987659,
    "site_group": 2987440,
-   "site_pattern": "ff908003000084c07527488b4f20488b01ff90b0000000488b4838",
+   "site_pattern": "ff909803000084c07527488b4f20488b01ff90b0000000488b4838",
    "site_offset": 0
   }
  ],

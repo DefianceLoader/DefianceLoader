@@ -251,15 +251,16 @@ pub fn run() {
         crate::multiplayer::guarded,
     );
     remember_startup(&plan, &result, &stamps);
-    for (node, state) in plan.nodes.iter().zip(&result.states) {
-        match state {
-            RunState::Active => crate::log::debug(&format!("{} active", node.id)),
-            RunState::Blocked(reason) => {
-                crate::log::error(&format!("{} blocked: {reason}", node.id))
-            }
-            RunState::Failed(reason) => crate::log::error(&format!("{} failed: {reason}", node.id)),
-            _ => {}
-        }
+    let view = config.text(crate::config::builtin::LOGGING_SECTION, "startup_view");
+    let startup = match view.as_deref() {
+        Some("tree") => startup_tree(&plan, &result.states),
+        _ => startup_graph(&plan, &result.states),
+    };
+    for line in startup {
+        crate::log::debug(&line);
+    }
+    for line in problem_tree(&plan, &result.states) {
+        crate::log::error(&line);
     }
     let active: Vec<bool> = result
         .states
@@ -399,6 +400,522 @@ pub(crate) fn retry_finished(id: &str, result: &Result<(), String>) {
             },
         );
     crate::log::info(&format!("plugin summary: {}", plugin_summary()));
+}
+
+/// Every plugin that failed or was blocked, as a tree: each one that is
+/// inactive for a reason of its own is a root, and under it, nested, the
+/// plugins that are inactive only because something above them is. A plugin
+/// waiting on several inactive dependencies sits under the first, the one
+/// `run_plan` reported, and names the rest. Disabled and ignored plugins
+/// appear only when something is waiting on them, since those are choices.
+fn problem_tree(plan: &crate::plan::Plan, states: &[RunState]) -> Vec<String> {
+    let n = plan.nodes.len();
+    let by_id: std::collections::HashMap<String, usize> = plan
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(i, node)| (node.id.to_ascii_lowercase(), i))
+        .collect();
+    let inactive = |i: usize| states[i] != RunState::Active;
+    let waiting_on = |i: usize| -> Vec<usize> {
+        if !matches!(states[i], RunState::Blocked(_)) {
+            return Vec::new();
+        }
+        plan.nodes[i]
+            .depends
+            .iter()
+            .filter_map(|id| by_id.get(&id.to_ascii_lowercase()).copied())
+            .filter(|&d| d != i && inactive(d))
+            .collect()
+    };
+    let mut parent: Vec<Option<usize>> = (0..n).map(|i| waiting_on(i).first().copied()).collect();
+    // A dependency cycle has no root of its own; each member that leads back
+    // to itself becomes one.
+    for i in 0..n {
+        let mut at = parent[i];
+        for _ in 0..n {
+            match at {
+                Some(p) if p == i => {
+                    parent[i] = None;
+                    break;
+                }
+                Some(p) => at = parent[p],
+                None => break,
+            }
+        }
+    }
+    let mut children = vec![Vec::new(); n];
+    for i in 0..n {
+        if let Some(p) = parent[i] {
+            children[p].push(i);
+        }
+    }
+    let by_name =
+        |list: &mut Vec<usize>| list.sort_by(|&a, &b| plan.nodes[a].id.cmp(&plan.nodes[b].id));
+    children.iter_mut().for_each(by_name);
+    let mut roots: Vec<usize> = (0..n)
+        .filter(|&i| inactive(i) && parent[i].is_none())
+        .filter(|&i| {
+            matches!(states[i], RunState::Failed(_) | RunState::Blocked(_))
+                || !children[i].is_empty()
+        })
+        .collect();
+    roots.sort_by_key(|&i| {
+        let rank = match states[i] {
+            RunState::Failed(_) => 0,
+            RunState::Blocked(_) => 1,
+            _ => 2,
+        };
+        (rank, plan.nodes[i].id.clone())
+    });
+    if roots.is_empty() {
+        return Vec::new();
+    }
+
+    fn count(children: &[Vec<usize>], i: usize) -> usize {
+        children[i].iter().map(|&c| 1 + count(children, c)).sum()
+    }
+    let held: usize = roots.iter().map(|&r| count(&children, r)).sum();
+    let mut lines = vec![format!(
+        "{} plugin{} could not start{}:",
+        roots.len(),
+        if roots.len() == 1 { "" } else { "s" },
+        match held {
+            0 => String::new(),
+            1 => ", holding back 1 that depends on them".into(),
+            _ => format!(", holding back {held} that depend on them"),
+        }
+    )];
+    let describe = |i: usize| match &states[i] {
+        RunState::Failed(reason) => format!("{} failed: {reason}", plan.nodes[i].id),
+        RunState::Blocked(reason) => format!("{} blocked: {reason}", plan.nodes[i].id),
+        RunState::Disabled => format!("{} disabled", plan.nodes[i].id),
+        RunState::Ignored => format!("{} ignored", plan.nodes[i].id),
+        RunState::Active => plan.nodes[i].id.clone(),
+    };
+    let label = |c: usize| {
+        let also: Vec<&str> = waiting_on(c)
+            .into_iter()
+            .skip(1)
+            .map(|d| plan.nodes[d].id.as_str())
+            .collect();
+        let mut text = plan.nodes[c].id.clone();
+        if !also.is_empty() {
+            text += &format!(" (also needs {})", also.join(", "));
+        }
+        // The tree already says what it waits on; any other reason is news.
+        if let RunState::Blocked(reason) = &states[c] {
+            if !reason.starts_with("required `") {
+                text += &format!(": {reason}");
+            }
+        }
+        text
+    };
+    for &root in &roots {
+        lines.push(format!("  {}", describe(root)));
+        walk(root, "  ", &children, &label, &mut lines);
+    }
+    lines
+}
+
+/// The plan's dependencies between plugins, by index into its nodes, for
+/// drawing them.
+struct Dependencies {
+    /// What each plugin needs in the plan, without what it already needs
+    /// through another of those: a plugin needing Core and Selection, where
+    /// Selection needs Core, needs only Selection here.
+    needs: Vec<Vec<usize>>,
+    /// The longest chain of dependencies below each plugin.
+    depth: Vec<usize>,
+}
+
+impl Dependencies {
+    fn of(plan: &crate::plan::Plan) -> Self {
+        let n = plan.nodes.len();
+        let by_id: std::collections::HashMap<String, usize> = plan
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(i, node)| (node.id.to_ascii_lowercase(), i))
+            .collect();
+        let direct: Vec<Vec<usize>> = (0..n)
+            .map(|i| {
+                let mut seen = Vec::new();
+                for d in plan.nodes[i]
+                    .depends
+                    .iter()
+                    .filter_map(|id| by_id.get(&id.to_ascii_lowercase()).copied())
+                {
+                    if d != i && !seen.contains(&d) {
+                        seen.push(d);
+                    }
+                }
+                seen
+            })
+            .collect();
+        let reach: Vec<Vec<bool>> = (0..n)
+            .map(|i| {
+                let mut seen = vec![false; n];
+                let mut stack = direct[i].clone();
+                while let Some(d) = stack.pop() {
+                    if !seen[d] {
+                        seen[d] = true;
+                        stack.extend(&direct[d]);
+                    }
+                }
+                seen
+            })
+            .collect();
+        // Two dependencies in a cycle reach each other; both stay.
+        let needs: Vec<Vec<usize>> = (0..n)
+            .map(|i| {
+                direct[i]
+                    .iter()
+                    .copied()
+                    .filter(|&d| {
+                        !direct[i]
+                            .iter()
+                            .any(|&e| e != d && reach[e][d] && !reach[d][e])
+                    })
+                    .collect()
+            })
+            .collect();
+        // Edges inside a cycle do not count, so this settles within n rounds.
+        let mut depth = vec![0; n];
+        for _ in 0..n {
+            for i in 0..n {
+                for &d in &needs[i] {
+                    if !reach[d][i] {
+                        depth[i] = depth[i].max(depth[d] + 1);
+                    }
+                }
+            }
+        }
+        Self { needs, depth }
+    }
+
+    /// The dependency `i` is drawn from: when it is blocked, one that did not
+    /// start, so it hangs from its cause; otherwise the deepest, so it sits
+    /// at the end of the longest chain it extends. Ties go to the one the
+    /// plugin names first.
+    fn primary(&self, i: usize, states: &[RunState]) -> Option<usize> {
+        let inactive: Vec<usize> = self.needs[i]
+            .iter()
+            .copied()
+            .filter(|&d| states[d] != RunState::Active)
+            .collect();
+        let pool = if matches!(states[i], RunState::Blocked(_)) && !inactive.is_empty() {
+            &inactive
+        } else {
+            &self.needs[i]
+        };
+        pool.iter().copied().rev().max_by_key(|&d| self.depth[d])
+    }
+}
+
+/// A plugin's state for the debug log: "active", or "failed: why".
+fn state_label(id: &str, state: &RunState) -> String {
+    let mut text = id.to_string();
+    text += match state {
+        RunState::Active => " active",
+        RunState::Disabled => " disabled",
+        RunState::Ignored => " ignored",
+        RunState::Blocked(_) => " blocked",
+        RunState::Failed(_) => " failed",
+    };
+    match state {
+        RunState::Failed(reason) => text += &format!(": {reason}"),
+        // The drawing already says what it waits on; any other reason is news.
+        RunState::Blocked(reason) if !reason.starts_with("required `") => {
+            text += &format!(": {reason}")
+        }
+        _ => {}
+    }
+    text
+}
+
+/// Every plugin as a tree of what it depends on, with its state: each sits
+/// under the dependency [`Dependencies::primary`] picks, so a blocked plugin
+/// hangs from its cause, and names its other [`Dependencies::needs`].
+/// Plugins that depend on nothing in the plan are the roots. For the debug
+/// log; `problem_tree` is the error log's.
+fn startup_tree(plan: &crate::plan::Plan, states: &[RunState]) -> Vec<String> {
+    let n = plan.nodes.len();
+    let deps = Dependencies::of(plan);
+    let mut parent: Vec<Option<usize>> = (0..n).map(|i| deps.primary(i, states)).collect();
+    // A dependency cycle has no root of its own; each member that leads back
+    // to itself becomes one.
+    for i in 0..n {
+        let mut at = parent[i];
+        for _ in 0..n {
+            match at {
+                Some(p) if p == i => {
+                    parent[i] = None;
+                    break;
+                }
+                Some(p) => at = parent[p],
+                None => break,
+            }
+        }
+    }
+    let mut children = vec![Vec::new(); n];
+    for i in 0..n {
+        if let Some(p) = parent[i] {
+            children[p].push(i);
+        }
+    }
+    let by_name =
+        |list: &mut Vec<usize>| list.sort_by(|&a, &b| plan.nodes[a].id.cmp(&plan.nodes[b].id));
+    children.iter_mut().for_each(by_name);
+    let mut roots: Vec<usize> = (0..n).filter(|&i| parent[i].is_none()).collect();
+    by_name(&mut roots);
+
+    let label = |i: usize| {
+        let mut text = state_label(&plan.nodes[i].id, &states[i]);
+        let also: Vec<&str> = deps.needs[i]
+            .iter()
+            .copied()
+            .filter(|&d| Some(d) != parent[i])
+            .map(|d| plan.nodes[d].id.as_str())
+            .collect();
+        if !also.is_empty() {
+            text += &format!(" (also needs {})", also.join(", "));
+        }
+        text
+    };
+    let mut lines = vec![format!("startup tree: {}", summarize(states.iter()))];
+    for &root in &roots {
+        lines.push(format!("  {}", label(root)));
+        walk(root, "  ", &children, &label, &mut lines);
+    }
+    lines
+}
+
+/// Draw `i`'s descendants under it, one line each, indented by `prefix`.
+fn walk(
+    i: usize,
+    prefix: &str,
+    children: &[Vec<usize>],
+    label: &dyn Fn(usize) -> String,
+    lines: &mut Vec<String>,
+) {
+    for (k, &c) in children[i].iter().enumerate() {
+        let last = k + 1 == children[i].len();
+        lines.push(format!(
+            "{prefix}{} {}",
+            if last { "└─" } else { "├─" },
+            label(c)
+        ));
+        let deeper = format!("{prefix}{}", if last { "   " } else { "│  " });
+        walk(c, &deeper, children, label, lines);
+    }
+}
+
+/// Every plugin as a graph in the style of `git log --graph`: one line per
+/// plugin, dependencies above what needs them, and a line from each plugin
+/// to each of its [`Dependencies::needs`], so a plugin with two shows both
+/// rather than naming one. For the debug log, beside `startup_tree`.
+///
+/// The lanes are laid out from the bottom up, as git lays out history from
+/// the newest commit: a lane waits for the dependency it leads to, a plugin
+/// whose dependency already has a lane joins it at once, so a plugin many
+/// others need keeps one lane rather than one per dependent. The rows are
+/// then turned upside down.
+fn startup_graph(plan: &crate::plan::Plan, states: &[RunState]) -> Vec<String> {
+    const UP: u8 = 1;
+    const DOWN: u8 = 2;
+    const LEFT: u8 = 4;
+    const RIGHT: u8 = 8;
+    struct Row {
+        /// Each lane's connections, or its marker on a plugin's own row.
+        cells: Vec<Result<u8, char>>,
+        /// Whether a line runs between a lane and the next.
+        joined: Vec<bool>,
+        plugin: Option<usize>,
+    }
+
+    let n = plan.nodes.len();
+    let deps = Dependencies::of(plan);
+    let by_name = |a: &usize, b: &usize| plan.nodes[*a].id.cmp(&plan.nodes[*b].id);
+    let mut dependents = vec![Vec::new(); n];
+    for i in 0..n {
+        for &d in &deps.needs[i] {
+            dependents[d].push(i);
+        }
+    }
+    dependents.iter_mut().for_each(|list| list.sort_by(by_name));
+
+    // Top to bottom: roots by name, each followed by what needs it, depth
+    // first so a chain stays together. A plugin that only a cycle reaches
+    // comes after the rest.
+    fn visit(i: usize, dependents: &[Vec<usize>], seen: &mut [bool], post: &mut Vec<usize>) {
+        if !seen[i] {
+            seen[i] = true;
+            for &c in dependents[i].iter().rev() {
+                visit(c, dependents, seen, post);
+            }
+            post.push(i);
+        }
+    }
+    let mut seen = vec![false; n];
+    let mut everything: Vec<usize> = (0..n).collect();
+    everything.sort_by(by_name);
+    let mut upward = Vec::new();
+    for &i in everything.iter().rev() {
+        if deps.needs[i].is_empty() {
+            visit(i, &dependents, &mut seen, &mut upward);
+        }
+    }
+    let mut rest = Vec::new();
+    for &i in everything.iter().rev() {
+        visit(i, &dependents, &mut seen, &mut rest);
+    }
+    // Laid out bottom up, so in the reverse of the order drawn.
+    let order: Vec<usize> = rest.into_iter().chain(upward).collect();
+    let mut position = vec![0; n];
+    for (k, &i) in order.iter().enumerate() {
+        position[i] = k;
+    }
+
+    let mut rows = Vec::new();
+    let mut lanes: Vec<Option<usize>> = Vec::new();
+    for &c in &order {
+        let col = match lanes.iter().position(|&l| l == Some(c)) {
+            Some(col) => col,
+            None => match lanes.iter().position(Option::is_none) {
+                Some(free) => free,
+                None => {
+                    lanes.push(None);
+                    lanes.len() - 1
+                }
+            },
+        };
+        let marker = match states[c] {
+            RunState::Active => '●',
+            RunState::Failed(_) => '✗',
+            _ => '○',
+        };
+        rows.push(Row {
+            cells: (0..lanes.len())
+                .map(|k| match k == col {
+                    true => Err(marker),
+                    false if lanes[k].is_some() => Ok(UP | DOWN),
+                    false => Ok(0),
+                })
+                .collect(),
+            joined: vec![false; lanes.len()],
+            plugin: Some(c),
+        });
+
+        // The primary dependency continues this lane when no lane waits for
+        // it yet; the rest join the lane that waits for them, or open one.
+        // A dependency drawn earlier is part of a cycle and gets no line.
+        let mut above: Vec<bool> = lanes.iter().map(Option::is_some).collect();
+        above[col] = true;
+        lanes[col] = None;
+        let primary = deps.primary(c, states);
+        let mut needs: Vec<usize> = primary.into_iter().collect();
+        needs.extend(
+            deps.needs[c]
+                .iter()
+                .copied()
+                .filter(|&d| Some(d) != primary),
+        );
+        let mut targets = Vec::new();
+        for d in needs.into_iter().filter(|&d| position[d] > position[c]) {
+            if let Some(lane) = lanes.iter().position(|&l| l == Some(d)) {
+                targets.push(lane);
+            } else if lanes[col].is_none() {
+                lanes[col] = Some(d);
+            } else {
+                let lane = match (col + 1..lanes.len()).find(|&k| lanes[k].is_none() && !above[k]) {
+                    Some(lane) => lane,
+                    None => {
+                        lanes.push(None);
+                        above.push(false);
+                        lanes.len() - 1
+                    }
+                };
+                lanes[lane] = Some(d);
+                targets.push(lane);
+            }
+        }
+        if !targets.is_empty() {
+            let spans: Vec<(usize, usize)> =
+                targets.iter().map(|&t| (t.min(col), t.max(col))).collect();
+            rows.push(Row {
+                cells: (0..lanes.len())
+                    .map(|k| {
+                        let mut bits = 0;
+                        if above[k] {
+                            bits |= UP;
+                        }
+                        if lanes[k].is_some() {
+                            bits |= DOWN;
+                        }
+                        // A lane the line only passes is drawn over it, so
+                        // that `┼` always means a join.
+                        if k != col && !targets.contains(&k) && bits != 0 {
+                            return Ok(bits);
+                        }
+                        if spans.iter().any(|&(lo, hi)| lo < k && k <= hi) {
+                            bits |= LEFT;
+                        }
+                        if spans.iter().any(|&(lo, hi)| lo <= k && k < hi) {
+                            bits |= RIGHT;
+                        }
+                        Ok(bits)
+                    })
+                    .collect(),
+                joined: (0..lanes.len())
+                    .map(|k| spans.iter().any(|&(lo, hi)| lo <= k && k < hi))
+                    .collect(),
+                plugin: None,
+            });
+        }
+        while lanes.last() == Some(&None) {
+            lanes.pop();
+        }
+    }
+
+    // Drawn top down, so what led up now leads down.
+    let glyph = |bits: u8| -> char {
+        let (up, down) = (bits & DOWN != 0, bits & UP != 0);
+        match (up, down, bits & LEFT != 0, bits & RIGHT != 0) {
+            (false, false, false, false) => ' ',
+            (_, _, false, false) => '│',
+            (false, false, _, _) => '─',
+            (true, true, true, true) => '┼',
+            (true, true, false, true) => '├',
+            (true, true, true, false) => '┤',
+            (true, false, true, true) => '┴',
+            (false, true, true, true) => '┬',
+            (true, false, true, false) => '╯',
+            (true, false, false, true) => '╰',
+            (false, true, true, false) => '╮',
+            (false, true, false, true) => '╭',
+        }
+    };
+    let mut lines = vec![format!("startup graph: {}", summarize(states.iter()))];
+    for row in rows.iter().rev() {
+        let mut text = String::from("  ");
+        for (k, cell) in row.cells.iter().enumerate() {
+            if k > 0 {
+                text.push(if row.joined[k - 1] { '─' } else { ' ' });
+            }
+            text.push(match *cell {
+                Ok(bits) => glyph(bits),
+                Err(marker) => marker,
+            });
+        }
+        let mut text = text.trim_end().to_string();
+        if let Some(i) = row.plugin {
+            text += " ";
+            text += &state_label(&plan.nodes[i].id, &states[i]);
+        }
+        lines.push(text);
+    }
+    lines
 }
 
 /// The plan without the multiplayer guard's gate, for tests of the rest.
@@ -907,6 +1424,143 @@ mod startup_tests {
             .map(|state| *state == RunState::Active)
             .collect();
         assert_eq!(crate::multiplayer::blockers(&plan, &active), ["gameplay"]);
+    }
+
+    #[test]
+    fn blocked_plugins_are_shown_under_what_blocks_them() {
+        let f = Fixture::new();
+        f.plugin("selection", &[], &[], ABI_VERSION);
+        f.plugin("ammunition", &["selection"], &[], ABI_VERSION);
+        f.plugin("ammo-menu", &["ammunition"], &[], ABI_VERSION);
+        f.plugin("attack", &["selection", "broken"], &[], ABI_VERSION);
+        f.plugin("broken", &[], &[], ABI_VERSION);
+        f.plugin("fine", &[], &[], ABI_VERSION);
+        let plan = f.plan();
+        let result = execute_plan(&plan, |node, _| match node.id.as_str() {
+            "selection" | "broken" => Err(LoadFailure::plain("init returned 1")),
+            _ => Ok(()),
+        });
+        assert_eq!(
+            problem_tree(&plan, &result.states),
+            [
+                "2 plugins could not start, holding back 3 that depend on them:",
+                "  broken failed: init returned 1",
+                "  selection failed: init returned 1",
+                "  ├─ ammunition",
+                "  │  └─ ammo-menu",
+                "  └─ attack (also needs broken)",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_startup_tree_shows_every_plugin_under_what_it_needs() {
+        let f = Fixture::new();
+        f.plugin("selection", &[], &[], ABI_VERSION);
+        f.plugin("ammunition", &["selection"], &[], ABI_VERSION);
+        f.plugin("ammo-menu", &["ammunition"], &[], ABI_VERSION);
+        f.plugin("attack", &["selection", "broken"], &[], ABI_VERSION);
+        f.plugin("broken", &[], &[], ABI_VERSION);
+        f.plugin("fine", &[], &[], ABI_VERSION);
+        let plan = f.plan();
+        let result = execute_plan(&plan, |node, _| match node.id.as_str() {
+            "broken" => Err(LoadFailure::plain("init returned 1")),
+            _ => Ok(()),
+        });
+        assert_eq!(
+            startup_tree(&plan, &result.states),
+            [
+                "startup tree: 4 active, 0 disabled, 1 blocked, 0 ignored, 1 failed",
+                "  broken failed: init returned 1",
+                "  └─ attack blocked (also needs selection)",
+                "  fine active",
+                "  selection active",
+                "  └─ ammunition active",
+                "     └─ ammo-menu active",
+            ]
+        );
+    }
+
+    /// Core under everything, a chain through Selection, a plugin needing two
+    /// unrelated ones, and a failure.
+    fn layered() -> (crate::plan::Plan, StartupResult) {
+        let f = Fixture::new();
+        f.plugin("core", &[], &[], ABI_VERSION);
+        f.plugin("selection", &["core"], &[], ABI_VERSION);
+        f.plugin("posture", &["core", "selection"], &[], ABI_VERSION);
+        f.plugin(
+            "movement",
+            &["core", "selection", "posture"],
+            &[],
+            ABI_VERSION,
+        );
+        f.plugin("markers", &["core"], &[], ABI_VERSION);
+        f.plugin("cover", &["core", "markers", "selection"], &[], ABI_VERSION);
+        f.plugin("broken", &["core"], &[], ABI_VERSION);
+        f.plugin("attack", &["core", "selection", "broken"], &[], ABI_VERSION);
+        f.plugin("alone", &[], &[], ABI_VERSION);
+        let plan = f.plan();
+        let result = execute_plan(&plan, |node, _| match node.id.as_str() {
+            "broken" => Err(LoadFailure::plain("init returned 1")),
+            _ => Ok(()),
+        });
+        (plan, result)
+    }
+
+    #[test]
+    fn the_startup_tree_leaves_out_what_another_dependency_implies() {
+        let (plan, result) = layered();
+        assert_eq!(
+            startup_tree(&plan, &result.states),
+            [
+                "startup tree: 7 active, 0 disabled, 1 blocked, 0 ignored, 1 failed",
+                "  alone active",
+                "  core active",
+                "  ├─ broken failed: init returned 1",
+                "  │  └─ attack blocked (also needs selection)",
+                "  ├─ markers active",
+                "  │  └─ cover active (also needs selection)",
+                "  └─ selection active",
+                "     └─ posture active",
+                "        └─ movement active",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_startup_graph_draws_every_dependency() {
+        let (plan, result) = layered();
+        let lines = startup_graph(&plan, &result.states);
+        assert_eq!(
+            lines,
+            [
+                "startup graph: 7 active, 0 disabled, 1 blocked, 0 ignored, 1 failed",
+                "  ● alone active",
+                "  ● core active",
+                "  ├───╮",
+                "  │   ✗ broken failed: init returned 1",
+                "  ├─╮ │",
+                "  │ ● │ markers active",
+                "  ● │ │ selection active",
+                "  ├─│─┤",
+                "  │ │ ○ attack blocked",
+                "  ├─┤",
+                "  │ ● cover active",
+                "  ● posture active",
+                "  ● movement active",
+            ],
+            "\n{}",
+            lines.join("\n")
+        );
+    }
+
+    #[test]
+    fn a_clean_start_has_no_tree() {
+        let f = Fixture::new();
+        f.plugin("a", &[], &[], ABI_VERSION);
+        let plan = f.plan();
+        let result = execute_plan(&plan, |_, _| Ok(()));
+        assert!(problem_tree(&plan, &result.states).is_empty());
     }
 
     #[test]

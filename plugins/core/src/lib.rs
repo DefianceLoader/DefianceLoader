@@ -176,6 +176,96 @@ fn choose(
     (allow_unknown && !logic_known && !game_known).then_some(Choice::Unknown)
 }
 
+/// Every tracked build's unit descriptors, every plugin's: (build, name,
+/// descriptor). Core installs only its own units, but tells an unrecognized
+/// build's layout apart by all of them.
+static SIGNATURES: &[(&str, &str, &str)] = include!(concat!(env!("OUT_DIR"), "/signatures.rs"));
+
+/// What probing an unrecognized pair found: the build whose units it takes
+/// and that build's roster slot, or why each build was turned down.
+type Probe = Result<(&'static str, usize), Vec<String>>;
+
+/// The candidates for an unrecognized pair, newest variant first and the
+/// reference last: a modded build is likeliest to have been made from the
+/// latest release.
+fn candidates() -> impl Iterator<Item = (&'static str, usize)> {
+    VARIANTS
+        .iter()
+        .rev()
+        .map(|v| (v.build, v.roster_slot))
+        .chain([(REFERENCE, REFERENCE_ROSTER_SLOT)])
+}
+
+/// The first candidate build every one of whose units, every plugin's, finds
+/// all its sites once and unmoved apart in `logic` and `game`. A build is
+/// taken whole or not at all, so every plugin and both modules get the units
+/// of one layout; a pair that is like a build in some sites only is not that
+/// build. The probe is quiet: relocation explains a miss once units are
+/// chosen.
+fn probe(logic: &[u8], game: &[u8]) -> Probe {
+    // Builds share most of their patterns: each is looked for once per module.
+    let mut seen: std::collections::HashMap<(bool, Vec<Option<u8>>), Vec<usize>> =
+        Default::default();
+    let mut rejected = Vec::new();
+    'builds: for (build, roster_slot) in candidates() {
+        for &(_, name, descriptor) in SIGNATURES.iter().filter(|(b, _, _)| *b == build) {
+            let unit = match Unit::parse(descriptor) {
+                Ok(unit) => unit,
+                Err(e) => {
+                    rejected.push(format!("{build} {name}: {e}"));
+                    continue 'builds;
+                }
+            };
+            let (is_logic, image) = match unit.module.as_str() {
+                "logic.dll" => (true, logic),
+                "game.dll" => (false, game),
+                other => {
+                    rejected.push(format!("{build} {name}: no module {other}"));
+                    continue 'builds;
+                }
+            };
+            let found = defiance_core::scan::Moves::find_by(&unit.sites, |pattern| {
+                seen.entry((is_logic, pattern.to_vec()))
+                    .or_insert_with(|| defiance_core::scan::scan(image, pattern))
+                    .clone()
+            });
+            if let Err((e, _)) = found {
+                rejected.push(format!("{build}: {name}: {e}"));
+                continue 'builds;
+            }
+        }
+        return Ok((build, roster_slot));
+    }
+    Err(rejected)
+}
+
+/// One probe per process: init and the patch contract must patch an
+/// unrecognized pair as the same build, and the scan is not free. `images`
+/// reads the unmodified (logic.dll, game.dll) images when nothing has
+/// probed yet.
+static PROBED: std::sync::OnceLock<Probe> = std::sync::OnceLock::new();
+
+fn probed(
+    images: impl FnOnce() -> Result<(Vec<u8>, Vec<u8>), String>,
+) -> Result<&'static Probe, String> {
+    if let Some(found) = PROBED.get() {
+        return Ok(found);
+    }
+    let (logic, game) = images()?;
+    Ok(PROBED.get_or_init(|| probe(&logic, &game)))
+}
+
+/// The build whose units patch `choice`, and its roster slot. An unknown
+/// pair takes the probed build, or the reference when no build matches, so
+/// relocation fails with the reference's near misses.
+fn build_for(choice: &Choice, probe: Option<&Probe>) -> (&'static str, usize) {
+    match (choice, probe) {
+        (Choice::Variant(v), _) => (v.build, v.roster_slot),
+        (Choice::Unknown, Some(Ok(found))) => *found,
+        _ => (REFERENCE, REFERENCE_ROSTER_SLOT),
+    }
+}
+
 /// A build's units, parsed, each beside its embedded form.
 fn units_of(build: &str) -> Result<Vec<(Unit, &'static Embedded)>, String> {
     UNITS
@@ -224,9 +314,22 @@ fn native_hook_sites(api: &Api) -> Result<(Option<usize>, Option<(usize, usize)>
         scan == Scan::Unknown,
     )
     .ok_or("logic.dll and game.dll are not a supported build pair")?;
-    let (_, units) = match choice {
-        Choice::Variant(variant) => (variant.build, units_of(variant.build)?),
-        Choice::Reference | Choice::Unknown => (REFERENCE, reference),
+    let outcome = match choice {
+        Choice::Unknown => Some(probed(|| {
+            let original = |target: &Target, name: &str| {
+                plan::original_image(target.base as *const u8, target.size)
+                    .ok_or_else(|| format!("{name} is unreadable"))
+            };
+            Ok((
+                original(&logic_target, "logic.dll")?,
+                original(&game_target, "game.dll")?,
+            ))
+        })?),
+        _ => None,
+    };
+    let units = match build_for(&choice, outcome) {
+        (REFERENCE, _) => reference,
+        (build, _) => units_of(build)?,
     };
     let own = core_unit(&units, "game.dll")?;
     let pristine = needs_relocation(&game_sha, &own.source_sha256, &own.verified, scan)
@@ -514,35 +617,62 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
                  refusing rather than patching mismatched modules"
             )
         })?;
-        game::set_roster_slot(match choice {
-            Choice::Variant(v) => v.roster_slot,
-            Choice::Reference | Choice::Unknown => REFERENCE_ROSTER_SLOT,
-        });
-        let known_build = !matches!(choice, Choice::Unknown);
-        let (build, units) = match choice {
-            Choice::Variant(v) => {
-                say(
-                    api,
-                    LOG_INFO,
-                    &format!(
-                        "both modules match the supported build {}; using its units",
-                        v.build
-                    ),
-                );
-                (v.build, units_of(v.build)?)
-            }
-            Choice::Reference => (REFERENCE, reference),
+        // An unknown pair's unmodified images, read once: the probe matches
+        // every build's sites against them, and relocation reuses them.
+        let mut images = [None, None];
+        let outcome = match choice {
             Choice::Unknown => {
-                say(api, LOG_WARN, "allow_unknown_build: patching an unrecognized logic.dll/game.dll pair by signature");
-                (REFERENCE, reference)
+                let logic = module_image(&logic_target)?;
+                let game = module_image(&game_target)?;
+                let found = PROBED.get_or_init(|| probe(&logic, &game));
+                images = [Some(logic), Some(game)];
+                Some(found)
             }
+            _ => None,
+        };
+        let (build, roster_slot) = build_for(&choice, outcome);
+        game::set_roster_slot(roster_slot);
+        let known_build = !matches!(choice, Choice::Unknown);
+        match (&choice, outcome) {
+            (Choice::Variant(_), _) => say(
+                api,
+                LOG_INFO,
+                &format!("both modules match the supported build {build}; using its units"),
+            ),
+            (Choice::Unknown, Some(Ok(_))) => say(
+                api,
+                LOG_INFO,
+                &format!(
+                    "allow_unknown_build: logic.dll and game.dll are unrecognized, but every \
+                     site of the {build} units matches them; patching them with those units, \
+                     relocated by signature"
+                ),
+            ),
+            (Choice::Unknown, Some(Err(rejected))) => say(
+                api,
+                LOG_WARN,
+                &format!(
+                    "allow_unknown_build: logic.dll and game.dll are unrecognized and no \
+                     supported build's sites all match them ({}); trying the reference units \
+                     by signature",
+                    rejected.join("; ")
+                ),
+            ),
+            _ => {}
+        }
+        let units = match build {
+            REFERENCE => reference,
+            build => units_of(build)?,
         };
         // Resolve both unmodified modules before any feature installs hooks:
         // a build found by signature keeps the image as it is now, so a later
         // feature's signatures are matched against it, not against another
         // feature's writes.
         let mut modules = Vec::new();
-        for (target, sha) in [(logic_target, logic_sha), (game_target, game_sha)] {
+        for ((target, sha), image) in [(logic_target, logic_sha), (game_target, game_sha)]
+            .into_iter()
+            .zip(images)
+        {
             let name = target
                 .path
                 .file_name()
@@ -551,7 +681,7 @@ unsafe extern "C" fn init(api: *const Api) -> i32 {
                 .to_ascii_lowercase();
             let own = core_unit(&units, &name)?;
             let pristine = needs_relocation(&sha, &own.source_sha256, &own.verified, scan)
-                .then(|| module_image(&target))
+                .then(|| image.map_or_else(|| module_image(&target), Ok))
                 .transpose()?;
             let own = match &pristine {
                 Some(image) => own
@@ -1003,6 +1133,213 @@ mod tests {
             pick("unknown", "also unknown", true),
             Some(Choice::Unknown)
         ));
+    }
+
+    /// (logic.dll, game.dll) images holding exactly `build`'s sites, where
+    /// that build has them; zero where a site leaves a byte free.
+    fn images_like(build: &str) -> (Vec<u8>, Vec<u8>) {
+        let mut images = (vec![0u8; 0x100], vec![0u8; 0x100]);
+        for &(_, _, descriptor) in SIGNATURES.iter().filter(|(b, _, _)| *b == build) {
+            let unit = Unit::parse(descriptor).unwrap();
+            let image = match unit.module.as_str() {
+                "logic.dll" => &mut images.0,
+                _ => &mut images.1,
+            };
+            for site in &unit.sites {
+                let end = site.start + site.pattern.len();
+                if image.len() < end {
+                    image.resize(end + 0x100, 0);
+                }
+                for (at, byte) in (site.start..).zip(&site.pattern) {
+                    if let Some(byte) = byte {
+                        image[at] = *byte;
+                    }
+                }
+            }
+        }
+        images
+    }
+
+    /// Every site of `build`'s units, by unit and site, as what the probe can
+    /// tell a build by: its pattern and how far it lies into its function's
+    /// sites. Where the function moved does not count.
+    fn layout(
+        build: &str,
+    ) -> std::collections::BTreeMap<(String, String), (Vec<Option<u8>>, usize)> {
+        let mut out = std::collections::BTreeMap::new();
+        for &(_, name, descriptor) in SIGNATURES.iter().filter(|(b, _, _)| *b == build) {
+            let sites = Unit::parse(descriptor).unwrap().sites;
+            for site in &sites {
+                let first = sites
+                    .iter()
+                    .filter(|other| other.group == site.group)
+                    .map(|other| other.start)
+                    .min()
+                    .unwrap();
+                let key = (name.to_string(), site.name.clone());
+                out.insert(key, (site.pattern.clone(), site.start - first));
+            }
+        }
+        out
+    }
+
+    /// `allow_unknown_build` patches a pair it does not recognize as the
+    /// first build, newest first, whose every site matches it; a pair that
+    /// is some build in all its sites gets that build's units and slot, or
+    /// those of a newer build whose sites are the same bytes laid out alike.
+    #[test]
+    fn an_unknown_pair_takes_the_build_its_sites_match() {
+        let order: Vec<_> = candidates().map(|(build, _)| build).collect();
+        assert_eq!(order.last(), Some(&REFERENCE));
+        assert_eq!(order[0], VARIANTS.last().unwrap().build);
+        for (at, (build, roster_slot)) in candidates().enumerate() {
+            let (logic, game) = images_like(build);
+            let (found, slot) = probe(&logic, &game).unwrap_or_else(|why| {
+                panic!("{build}'s own sites are not found: {}", why.join("; "))
+            });
+            let first_alike = order
+                .iter()
+                .position(|other| layout(other) == layout(build))
+                .unwrap();
+            assert!(first_alike <= at);
+            assert_eq!(
+                found, order[first_alike],
+                "{build}'s sites were taken for {found}'s"
+            );
+            assert_eq!(slot, roster_slot);
+            let choice = Choice::Unknown;
+            let outcome = Ok((found, slot));
+            assert_eq!(build_for(&choice, Some(&outcome)), (found, roster_slot));
+            assert!(units_of(found)
+                .unwrap()
+                .iter()
+                .all(|(unit, _)| unit.plugin == "core"));
+        }
+    }
+
+    /// A pair no build's sites all match is patched with the reference
+    /// units, whose relocation then fails naming the site and its near miss.
+    #[test]
+    fn an_unknown_pair_like_no_build_fails_on_the_reference_sites() {
+        let (mut logic, game) = images_like(REFERENCE);
+        // One reference site changed in one byte: the reference no longer
+        // matches, and no variant does either.
+        let unit = Unit::parse(
+            SIGNATURES
+                .iter()
+                .find(|(b, name, _)| *b == REFERENCE && *name == "core-logic")
+                .unwrap()
+                .2,
+        )
+        .unwrap();
+        let site = &unit.sites[0];
+        let at = site.start + site.pattern.iter().position(Option::is_some).unwrap();
+        logic[at] ^= 0xff;
+        let rejected = probe(&logic, &game).unwrap_err();
+        assert_eq!(rejected.len(), candidates().count(), "{rejected:?}");
+        assert!(
+            rejected
+                .iter()
+                .all(|why| why.contains("is not in this build")),
+            "{rejected:?}"
+        );
+        let outcome = Err(rejected);
+        assert_eq!(
+            build_for(&Choice::Unknown, Some(&outcome)),
+            (REFERENCE, REFERENCE_ROSTER_SLOT)
+        );
+        let reference = units_of(REFERENCE).unwrap();
+        let err = core_unit(&reference, "logic.dll")
+            .unwrap()
+            .relocate(&logic, "unknown")
+            .unwrap_err();
+        assert!(err.contains("site is not in this build"), "{err}");
+        assert!(err.contains("differs in 1 of its"), "{err}");
+    }
+
+    /// Every reference build in `bin/` probes as the reference. Skips the
+    /// builds this checkout lacks; the game files are never committed.
+    /// `--nocapture` shows what each probe costs at startup.
+    #[test]
+    fn the_reference_builds_in_bin_probe_as_the_reference() {
+        for (build, logic, game) in builds_in_bin(|build| build.ends_with("2025-12-23")) {
+            let found = timed_probe(build, &logic, &game);
+            assert_eq!(found, Ok((REFERENCE, REFERENCE_ROSTER_SLOT)), "{build}");
+        }
+    }
+
+    /// Every variant build in `bin/` probes as a build whose sites land, in
+    /// that build's DLLs, on the rvas of its own variant's sites, with its
+    /// own roster slot. Builds alike in every site are interchangeable, so
+    /// this is not always the build's own name: the probe takes the newest.
+    /// Each variant's `site_pattern`s are the bytes of the build it was
+    /// resolved for (`tools/variant.py`).
+    #[test]
+    fn every_variant_in_bin_probes_as_a_build_whose_sites_land_on_its_own() {
+        for (build, logic, game) in builds_in_bin(|build| !build.ends_with("2025-12-23")) {
+            let own = VARIANTS
+                .iter()
+                .find(|v| v.build == build.replace('/', "-"))
+                .unwrap_or_else(|| panic!("{build}: no variant"));
+            let (found, roster_slot) = timed_probe(build, &logic, &game).unwrap();
+            assert_eq!(roster_slot, own.roster_slot, "{build}");
+            // The two builds share most patterns: each is scanned for once.
+            let mut seen = Default::default();
+            assert_eq!(
+                landed(found, &logic, &game, &mut seen),
+                landed(own.build, &logic, &game, &mut seen),
+                "{build}: probed as {found}"
+            );
+        }
+    }
+
+    /// The builds in `bin/` that `wanted` names, with their (logic, game)
+    /// images.
+    fn builds_in_bin(wanted: impl Fn(&str) -> bool) -> Vec<(&'static str, Vec<u8>, Vec<u8>)> {
+        use defiance_core::sites::{reference, BUILDS};
+        BUILDS
+            .iter()
+            .filter(|build| wanted(build))
+            .filter_map(|&build| {
+                let logic = reference(build, "logic.dll")?;
+                let game = reference(build, "game.dll")?;
+                Some((build, logic.image.to_vec(), game.image.to_vec()))
+            })
+            .collect()
+    }
+
+    fn timed_probe(build: &str, logic: &[u8], game: &[u8]) -> Probe {
+        let started = std::time::Instant::now();
+        let found = probe(logic, game);
+        eprintln!("{build}: {found:?} in {:?}", started.elapsed());
+        found
+    }
+
+    /// Where each of `build`'s sites, by unit and site name, lies in `logic`
+    /// and `game`.
+    fn landed(
+        build: &str,
+        logic: &[u8],
+        game: &[u8],
+        seen: &mut std::collections::HashMap<(bool, Vec<Option<u8>>), Vec<usize>>,
+    ) -> std::collections::BTreeMap<(String, String), usize> {
+        let mut out = std::collections::BTreeMap::new();
+        for &(_, name, descriptor) in SIGNATURES.iter().filter(|(b, _, _)| *b == build) {
+            let unit = Unit::parse(descriptor).unwrap();
+            let is_logic = unit.module == "logic.dll";
+            let image = if is_logic { logic } else { game };
+            let moves = defiance_core::scan::Moves::find_by(&unit.sites, |pattern| {
+                seen.entry((is_logic, pattern.to_vec()))
+                    .or_insert_with(|| defiance_core::scan::scan(image, pattern))
+                    .clone()
+            })
+            .unwrap_or_else(|(e, _)| panic!("{build} {name}: {e}"));
+            for site in &unit.sites {
+                let at = moves.at(site.start).unwrap();
+                out.insert((name.to_string(), site.name.clone()), at);
+            }
+        }
+        out
     }
 
     /// The pair table and the reference units' verified lists must agree: a

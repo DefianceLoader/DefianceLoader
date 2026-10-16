@@ -137,6 +137,21 @@ class CheckInjectorTests(unittest.TestCase):
             mock.call([str(exe), "--scan-check", str(install / "bin")], check=True),
         ])
 
+    def test_full_check_only_warns_about_an_unplaceable_installed_pair(self):
+        install = self.root / "installed-game"
+        install.mkdir()
+        for module in ("logic.dll", "game.dll"):
+            (install / module).write_bytes(b"DLL")
+        exe = self.root / "injector.exe"
+        exe.touch()
+
+        def run(args, check):
+            if args[1] == "--scan-check":
+                raise subprocess.CalledProcessError(1, args)
+
+        with mock.patch.object(check_injector.subprocess, "run", side_effect=run):
+            check_injector.check_full(exe, self.table, game_dir=install, variants_dir=self.variants)
+
     def test_full_check_rejects_a_complete_unknown_local_pair(self):
         self.table.on_disk = lambda: [FakeBuild(self.root, "steam-2099-01-01", None)]
         unknown = self.table.on_disk()[0]

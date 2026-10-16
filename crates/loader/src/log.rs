@@ -105,8 +105,12 @@ impl Sink {
         if std::fs::metadata(path).is_ok_and(|m| m.len() >= limit) {
             let _ = std::fs::rename(path, previous(path));
         }
-        let file = OpenOptions::new().create(true).append(true).open(path)?;
-        let written = file.metadata().map_or(0, |m| m.len());
+        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+        let mut written = file.metadata().map_or(0, |m| m.len());
+        // The sink opens once per game start; a blank line separates starts.
+        if written > 0 && file.write_all(b"\n").is_ok() {
+            written += 1;
+        }
         Ok(Self {
             file,
             path: path.to_path_buf(),
@@ -276,6 +280,12 @@ mod tests {
         drop(sink);
         assert_eq!(std::fs::metadata(&old).unwrap().len(), 80);
         assert_eq!(std::fs::read(&path).unwrap(), b"next\n");
+
+        // A later start appends after a blank line.
+        let mut sink = Sink::open(&path, 64).unwrap();
+        sink.write(b"again\n", 64);
+        drop(sink);
+        assert_eq!(std::fs::read(&path).unwrap(), b"next\n\nagain\n");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

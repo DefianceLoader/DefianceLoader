@@ -85,6 +85,104 @@ pub fn scan(image: &[u8], pattern: &[Option<u8>]) -> Vec<usize> {
     out
 }
 
+/// The window in `image` that comes nearest to `pattern`, and the offsets
+/// within it of the fixed bytes that differ, for saying why a site is
+/// missing. Only windows sharing at least one fixed four-byte run with the
+/// pattern are tried; runs of one repeated byte, and runs found too often to
+/// say anything, are not used. `None` when no window shares a run.
+pub fn closest(image: &[u8], pattern: &[Option<u8>]) -> Option<(usize, Vec<usize>)> {
+    const COMMON: usize = 1000;
+    if image.len() < pattern.len() || pattern.len() < 4 {
+        return None;
+    }
+    let mut seeds: std::collections::HashMap<[u8; 4], Vec<usize>> = Default::default();
+    for k in 0..=pattern.len() - 4 {
+        let Some(run) = pattern[k..k + 4]
+            .iter()
+            .copied()
+            .collect::<Option<Vec<u8>>>()
+        else {
+            continue;
+        };
+        if run.iter().all(|&b| b == run[0]) {
+            continue;
+        }
+        seeds
+            .entry([run[0], run[1], run[2], run[3]])
+            .or_default()
+            .push(k);
+    }
+    let mut leads = [false; 256];
+    for run in seeds.keys() {
+        leads[run[0] as usize] = true;
+    }
+    let mut hits: std::collections::HashMap<[u8; 4], usize> = Default::default();
+    let mut candidates = std::collections::BTreeSet::new();
+    let last = image.len() - pattern.len();
+    for at in 0..=image.len() - 4 {
+        if !leads[image[at] as usize] {
+            continue;
+        }
+        let run = [image[at], image[at + 1], image[at + 2], image[at + 3]];
+        let Some(offsets) = seeds.get(&run) else {
+            continue;
+        };
+        let seen = hits.entry(run).or_default();
+        *seen += 1;
+        if *seen > COMMON {
+            continue;
+        }
+        for &k in offsets {
+            if let Some(start) = at.checked_sub(k).filter(|&s| s <= last) {
+                candidates.insert(start);
+            }
+        }
+    }
+    candidates
+        .into_iter()
+        .map(|start| {
+            let differ = pattern
+                .iter()
+                .zip(&image[start..start + pattern.len()])
+                .enumerate()
+                .filter(|(_, (p, &b))| p.is_some_and(|p| p != b))
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>();
+            (start, differ)
+        })
+        .min_by_key(|(_, differ)| differ.len())
+}
+
+/// Why `pattern` is not in `image`, as a clause to follow "is not in this
+/// build". A window that differs in only a few fixed bytes usually means
+/// the code is there but a struct offset or vtable slot in it changed, which
+/// is a different build's layout rather than missing code.
+fn near_miss(image: &[u8], pattern: &[Option<u8>]) -> String {
+    let fixed = pattern.iter().filter(|b| b.is_some()).count();
+    match closest(image, pattern) {
+        Some((start, differ)) if !differ.is_empty() && differ.len() * 4 <= fixed => {
+            let shown = differ
+                .iter()
+                .take(4)
+                .map(|&i| {
+                    format!(
+                        "+{i:#x} {:02x}>{:02x}",
+                        pattern[i].unwrap(),
+                        image[start + i]
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let more = if differ.len() > 4 { ", ..." } else { "" };
+            format!(
+                "; the nearest code, at {start:#x}, differs in {} of its {fixed} fixed bytes ({shown}{more}), which usually means this build's layout changed there",
+                differ.len()
+            )
+        }
+        _ => "; nothing in it comes close".into(),
+    }
+}
+
 /// Where the sites are in this build, as a distance per site.
 #[derive(Debug)]
 pub struct Moves {
@@ -93,17 +191,47 @@ pub struct Moves {
 }
 
 impl Moves {
+    /// Every site found once, and moved with its group; a missing site is
+    /// explained by the nearest code that differs from it.
     pub fn locate(sites: &[Site], image: &[u8]) -> Result<Self, String> {
+        Self::find(sites, image).map_err(|(err, missing)| match missing {
+            Some(site) => format!("{err}{}", near_miss(image, &site.pattern)),
+            None => err,
+        })
+    }
+
+    /// `locate` without the search for the nearest code, which is the slow
+    /// part: for trying a set of sites that is expected to miss. The error
+    /// names the first site that failed, and the site itself when it is
+    /// missing rather than ambiguous or moved apart.
+    pub fn find<'a>(sites: &'a [Site], image: &[u8]) -> Result<Self, (String, Option<&'a Site>)> {
+        Self::find_by(sites, |pattern| scan(image, pattern))
+    }
+
+    /// `find` with the scan supplied, for trying many sets of sites that
+    /// share patterns against one image without scanning it twice for one.
+    pub fn find_by<'a>(
+        sites: &'a [Site],
+        mut scan: impl FnMut(&[Option<u8>]) -> Vec<usize>,
+    ) -> Result<Self, (String, Option<&'a Site>)> {
         let mut deltas = Vec::new();
         for site in sites {
-            match scan(image, &site.pattern).as_slice() {
+            match scan(&site.pattern).as_slice() {
                 [one] => deltas.push(*one as isize - site.start as isize),
-                [] => return Err(format!("the {} site is not in this build", site.name)),
+                [] => {
+                    return Err((
+                        format!("the {} site is not in this build", site.name),
+                        Some(site),
+                    ))
+                }
                 many => {
-                    return Err(format!(
-                        "the {} site's signature matches {} places in this build",
-                        site.name,
-                        many.len()
+                    return Err((
+                        format!(
+                            "the {} site's signature matches {} places in this build",
+                            site.name,
+                            many.len()
+                        ),
+                        None,
                     ))
                 }
             }
@@ -111,9 +239,12 @@ impl Moves {
         for (i, a) in sites.iter().enumerate() {
             for (j, b) in sites.iter().enumerate().skip(i + 1) {
                 if a.group == b.group && deltas[i] != deltas[j] {
-                    return Err(format!(
-                        "the {} and {} sites share a function but have moved apart",
-                        a.name, b.name
+                    return Err((
+                        format!(
+                            "the {} and {} sites share a function but have moved apart",
+                            a.name, b.name
+                        ),
+                        None,
                     ));
                 }
             }
@@ -178,5 +309,25 @@ mod tests {
         let site = Site::from_text("twice", 0, "0000").unwrap();
         let err = Moves::locate(&[site], &image).unwrap_err();
         assert!(err.contains("matches 63 places"), "{err}");
+    }
+
+    #[test]
+    fn a_missing_site_names_the_bytes_that_changed() {
+        let mut image = vec![0u8; 64];
+        image[20..32].copy_from_slice(&[
+            0x48, 0x8b, 0x86, 0xa8, 0x00, 0x00, 0x00, 0x48, 0x85, 0xc0, 0x74, 0x10,
+        ]);
+        let site = Site::from_text("moved", 0, "488b86a0000000 4885c0 74??").unwrap();
+        let err = Moves::locate(&[site], &image).unwrap_err();
+        assert!(err.contains("at 0x14, differs in 1 of its 11"), "{err}");
+        assert!(err.contains("+0x3 a0>a8"), "{err}");
+    }
+
+    #[test]
+    fn a_site_with_nothing_near_says_so() {
+        let image: Vec<u8> = (0..=255).collect();
+        let site = Site::from_text("gone", 0, "488b86a0000000").unwrap();
+        let err = Moves::locate(&[site], &image).unwrap_err();
+        assert!(err.ends_with("nothing in it comes close"), "{err}");
     }
 }
